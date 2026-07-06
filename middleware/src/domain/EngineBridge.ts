@@ -31,6 +31,21 @@ export interface PingResult {
   receivedAtUnixMs?: number;
 }
 
+export interface MeshInspectResult {
+  meshId: string;
+  vertexCount: number;
+  strideInBytes: number;
+  frameIndex: number;
+  checksumFnv1a: number;
+  sample: {
+    index: number;
+    position: [number, number];
+    uv: [number, number];
+    boneIndices: [number, number, number, number];
+    boneWeights: [number, number, number, number];
+  };
+}
+
 export class EngineBridge {
   constructor(
     private readonly server: EnginePipeServer,
@@ -66,6 +81,15 @@ export class EngineBridge {
       return { meshId: binding.meshId, status: "deferred" };
     }
     return session.peer.request<MeshBindResult>("mesh/bind_shared_memory", binding);
+  }
+
+  /**
+   * Inspeção de diagnóstico do plano de dados: snapshot estável, checksum
+   * FNV-1a e amostra de vértice lidos pela engine do buffer compartilhado.
+   */
+  async inspectMesh(meshId: string, sampleIndex = 0): Promise<MeshInspectResult> {
+    const session = this.requireSession();
+    return session.peer.request<MeshInspectResult>("mesh/inspect", { meshId, sampleIndex });
   }
 
   /** Round-trip de vitalidade middleware → engine. */

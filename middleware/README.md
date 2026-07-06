@@ -11,8 +11,15 @@ Camada de orquestração do ecossistema P7M EaaS (Node.js ≥ 22, TypeScript).
   imutáveis validados e aplicados ao blueprint; leituras são projeções congeladas.
 - **Ponte da engine** (`src/domain/EngineBridge.ts`): propaga comandos do AST para a
   sessão ativa e **reidrata** a engine inteira a cada reconexão.
+- **Registro de capacidades** (`src/domain/CapabilityRegistry.ts`): pede
+  `engine/describe` a cada sessão e projeta o manifesto como conceitos de edição
+  visual (`editorConcepts()`) — o proxy entre as possibilidades da engine e a UI.
+- **Plano de dados** (`src/sharedmem/`): `MeshSharedMemoryWriter` publica vértices no
+  memory-mapped file com protocolo seqlock, guiado pelo layout binário publicado pela
+  engine (nunca offsets hardcoded).
 - **Fachada MCP** (`src/mcp/McpFacade.ts`): expõe `engine_status`, `engine_ping`,
-  `skeleton_initialize` e `mesh_bind_shared_memory` a agentes de IA via stdio.
+  `skeleton_initialize`, `mesh_bind_shared_memory`, `mesh_inspect`,
+  `engine_capabilities` e `editor_concepts` a agentes de IA via stdio.
 
 ## Comandos
 

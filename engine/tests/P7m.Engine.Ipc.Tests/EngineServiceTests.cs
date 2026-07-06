@@ -1,3 +1,4 @@
+using P7m.Engine.Core.SharedMemory;
 using P7m.Engine.Ipc.Protocol;
 using P7m.Engine.Runtime;
 using Xunit;
@@ -33,6 +34,7 @@ public class EngineServiceTests : IAsyncLifetime
     {
         await _middleware.DisposeAsync();
         await _engine.DisposeAsync();
+        _service.Dispose();
         _cts.Dispose();
     }
 
@@ -116,7 +118,7 @@ public class EngineServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Mesh_bind_accepts_layout_and_reports_deferred()
+    public async Task Mesh_bind_maps_published_file_and_reports_bound()
     {
         await _middleware.RequestAsync("skeleton/initialize", new
         {
@@ -124,17 +126,124 @@ public class EngineServiceTests : IAsyncLifetime
             bones = new object[] { new { id = 0, parentId = -1, inverseBindMatrix = Identity } },
         }, _cts.Token);
 
+        using var builder = new MeshFileBuilder($"p7m-test-svc-{Guid.NewGuid():N}");
+        builder.Create(128).Publish(new SkinnedVertex2D[128]);
+
         var result = await _middleware.RequestAsync("mesh/bind_shared_memory", new
         {
             meshId = "rig-mesh",
             skeletonId = "rig",
-            sharedMemoryMapName = "p7m-mesh-rig",
+            sharedMemoryMapName = builder.MapName,
             vertexCount = 128,
-            strideInBytes = 32,
+            strideInBytes = 36,
         }, _cts.Token);
 
-        Assert.Equal("deferred", result.GetProperty("status").GetString());
-        Assert.Equal(4096, result.GetProperty("mappedBytes").GetInt64());
+        Assert.Equal("bound", result.GetProperty("status").GetString());
+        Assert.Equal(64 + 128 * 36, result.GetProperty("mappedBytes").GetInt64());
         Assert.True(_service.MeshBindings.ContainsKey("rig-mesh"));
+        Assert.True(_service.MeshReaders.ContainsKey("rig-mesh"));
+    }
+
+    [Fact]
+    public async Task Mesh_bind_without_published_file_reports_shared_memory_unavailable()
+    {
+        await _middleware.RequestAsync("skeleton/initialize", new
+        {
+            skeletonId = "rig2",
+            bones = new object[] { new { id = 0, parentId = -1, inverseBindMatrix = Identity } },
+        }, _cts.Token);
+
+        var ex = await Assert.ThrowsAsync<JsonRpcException>(() =>
+            _middleware.RequestAsync("mesh/bind_shared_memory", new
+            {
+                meshId = "ghost-mesh",
+                skeletonId = "rig2",
+                sharedMemoryMapName = $"p7m-missing-{Guid.NewGuid():N}",
+                vertexCount = 8,
+                strideInBytes = 36,
+            }, _cts.Token));
+        Assert.Equal(RpcErrorCode.SharedMemoryUnavailable, ex.Code);
+    }
+
+    [Fact]
+    public async Task Describe_publishes_capability_manifest_with_real_struct_offsets()
+    {
+        var manifest = await _middleware.RequestAsync("engine/describe", null, _cts.Token);
+
+        Assert.Equal("P7m.Engine.Runtime", manifest.GetProperty("engine").GetProperty("name").GetString());
+        var subsystems = manifest.GetProperty("subsystems");
+
+        var rigging = subsystems.GetProperty("rigging");
+        Assert.Equal("available", rigging.GetProperty("status").GetString());
+        Assert.Equal(256, rigging.GetProperty("limits").GetProperty("maxBonesPerSkeleton").GetInt32());
+        Assert.Equal("rig-editor", rigging.GetProperty("editor").GetProperty("panel").GetString());
+
+        var layout = subsystems.GetProperty("sharedMemory").GetProperty("vertexLayouts")[0];
+        Assert.Equal("SkinnedVertex2D", layout.GetProperty("name").GetString());
+        Assert.Equal(36, layout.GetProperty("strideInBytes").GetInt32());
+        var fields = layout.GetProperty("fields").EnumerateArray()
+            .ToDictionary(f => f.GetProperty("name").GetString()!, f => f.GetProperty("offset").GetInt32());
+        Assert.Equal(0, fields["position"]);
+        Assert.Equal(8, fields["uv"]);
+        Assert.Equal(16, fields["boneIndices"]);
+        Assert.Equal(20, fields["boneWeights"]);
+
+        // subsistemas futuros aparecem como "planned" com a fase do roteiro
+        Assert.Equal("planned", subsystems.GetProperty("lighting").GetProperty("status").GetString());
+        Assert.Equal(3, subsystems.GetProperty("lighting").GetProperty("phase").GetInt32());
+    }
+
+    [Fact]
+    public async Task Inspect_returns_checksum_and_sample_of_live_buffer()
+    {
+        await _middleware.RequestAsync("skeleton/initialize", new
+        {
+            skeletonId = "rig3",
+            bones = new object[] { new { id = 0, parentId = -1, inverseBindMatrix = Identity } },
+        }, _cts.Token);
+
+        using var builder = new MeshFileBuilder($"p7m-test-inspect-{Guid.NewGuid():N}");
+        var vertex = new SkinnedVertex2D
+        {
+            Position = new System.Numerics.Vector2(11, -4),
+            Uv = new System.Numerics.Vector2(0.5f, 0.25f),
+            BoneIndices = SkinnedVertex2D.PackBoneIndices(0, 2, 0, 0),
+            BoneWeights = new System.Numerics.Vector4(0.6f, 0.4f, 0, 0),
+        };
+        builder.Create(1).Publish(vertex);
+
+        await _middleware.RequestAsync("mesh/bind_shared_memory", new
+        {
+            meshId = "live-mesh",
+            skeletonId = "rig3",
+            sharedMemoryMapName = builder.MapName,
+            vertexCount = 1,
+            strideInBytes = 36,
+        }, _cts.Token);
+
+        var inspect = await _middleware.RequestAsync("mesh/inspect", new { meshId = "live-mesh" }, _cts.Token);
+        Assert.Equal(1u, inspect.GetProperty("frameIndex").GetUInt32());
+        var sample = inspect.GetProperty("sample");
+        Assert.Equal(11, sample.GetProperty("position")[0].GetSingle());
+        Assert.Equal(-4, sample.GetProperty("position")[1].GetSingle());
+        Assert.Equal(2, sample.GetProperty("boneIndices")[1].GetInt32());
+
+        var checksumBefore = inspect.GetProperty("checksumFnv1a").GetUInt32();
+
+        // republica com outro conteúdo: a engine deve enxergar sem re-bind
+        vertex.Position = new System.Numerics.Vector2(99, 99);
+        builder.Publish(vertex);
+        var again = await _middleware.RequestAsync("mesh/inspect", new { meshId = "live-mesh" }, _cts.Token);
+        Assert.Equal(2u, again.GetProperty("frameIndex").GetUInt32());
+        Assert.NotEqual(checksumBefore, again.GetProperty("checksumFnv1a").GetUInt32());
+        Assert.Equal(99, again.GetProperty("sample").GetProperty("position")[0].GetSingle());
+    }
+
+    [Fact]
+    public async Task Inspect_unknown_mesh_yields_unknown_mesh_error()
+    {
+        var ex = await Assert.ThrowsAsync<JsonRpcException>(() =>
+            _middleware.RequestAsync("mesh/inspect", new { meshId = "nope" }, _cts.Token));
+        Assert.Equal(RpcErrorCode.UnknownMesh, ex.Code);
     }
 }

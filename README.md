@@ -26,8 +26,11 @@ composto por três macrocamadas independentes e altamente desacopladas:
 
 - [x] **Fase 1 — Infraestrutura Core e IPC:** servidor MCP local em Node.js, canais de
   Named Pipes estáveis e fluxo JSON-RPC 2.0 bidirecional validado com o serviço de engine.
-- [ ] **Fase 2 — Alocação de Memória e Rigs (Shared Memory):** memory-mapped file no
-  Node.js e structs C# com layout sequencial explícito.
+- [x] **Fase 2 — Alocação de Memória e Rigs (Shared Memory):** memory-mapped file
+  escrito pelo Node.js e lido pela struct C# (`LayoutKind.Sequential`), com seqlock,
+  checksum FNV-1a verificado entre os runtimes e **descoberta de capacidades**
+  (`engine/describe`): a engine publica limites e layouts binários por reflexão e o
+  middleware os projeta como conceitos de edição visual para o editor.
 - [ ] **Fase 3 — Motor Gráfico, Shaders e Câmera:** vertex shader HLSL de Linear Blend
   Skinning, pipeline de Deferred Shading 2D (MRT) e integrador físico de segunda ordem.
 - [ ] **Fase 4 — Frontend Electron UX:** grafos de nós para máquinas de estado, editores
@@ -56,15 +59,18 @@ dotnet test
 dotnet run --project src/P7m.Engine.Runtime -- --pipe p7m-engine
 ```
 
-### Validação ponta-a-ponta da Fase 1
+### Validação ponta-a-ponta
 
 ```bash
-./scripts/verify-phase1.sh
+./scripts/verify-phase1.sh   # plano de controle: handshake + JSON-RPC bidirecional
+./scripts/verify-phase2.sh   # plano de dados: MMF + seqlock + checksum entre runtimes
 ```
 
-O script sobe o pipe server do middleware, conecta o host headless da engine e valida o
-handshake e o tráfego JSON-RPC nas duas direções (requests middleware→engine e
-notificações engine→middleware).
+`verify-phase1` sobe o pipe server do middleware, conecta o host headless da engine e
+valida o handshake e o tráfego JSON-RPC nas duas direções. `verify-phase2` inverte os
+papéis: o driver Node.js escreve vértices no memory-mapped file usando o layout binário
+**publicado pela própria engine** (`engine/describe`) e a engine devolve checksum e
+amostras via `mesh/inspect` — compatibilidade byte a byte comprovada entre os runtimes.
 
 ## Documentação
 

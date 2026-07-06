@@ -21,7 +21,28 @@ Duas vias de dados coexistem, cada uma otimizada para seu regime:
    Trafega por Named Pipes (Windows) ou Unix Domain Sockets (Linux/macOS).
 2. **Plano de dados (Shared Memory):** blocos binários grandes e de alta frequência —
    malhas, pesos de ossos, quadros de animação. Trafega por Memory-Mapped Files com
-   layout `LayoutKind.Sequential`, sem serialização JSON (Fase 2).
+   layout `LayoutKind.Sequential`, sem serialização JSON. O contrato binário (header,
+   seqlock, layouts de vértice, checksum FNV-1a) está em
+   [`../contracts/shared-memory-layout.md`](../contracts/shared-memory-layout.md).
+
+## Descoberta de capacidades (proxy engine → editor)
+
+A engine é a fonte de verdade do que ela sabe fazer. No método **`engine/describe`**
+ela publica um manifesto com:
+
+- **limites reais** de cada subsistema, extraídos das constantes do núcleo DOD
+  (ex.: `maxBonesPerSkeleton`);
+- **layouts binários de vértice** derivados por reflexão (`Marshal.OffsetOf`) das
+  structs `LayoutKind.Sequential` — o escritor Node.js usa esses offsets, nunca
+  valores hardcoded, e o teste e2e da Fase 2 confirma a igualdade byte a byte;
+- **ganchos de edição visual** (`editor`): painel, gizmos, tipos de nó e propriedades
+  editáveis (com tipo, faixa e default) que o editor Electron materializa;
+- subsistemas **`planned`** com a fase do roteiro — a UI pode exibi-los como preview.
+
+O middleware cacheia o manifesto no `CapabilityRegistry` a cada sessão e o projeta
+como `editorConcepts()` para a UI e como as ferramentas MCP `engine_capabilities` e
+`editor_concepts` para agentes de IA. Quando a Fase 3 adicionar câmera e iluminação,
+o editor ganha os novos painéis sem mudança de contrato.
 
 ## Framing do plano de controle
 

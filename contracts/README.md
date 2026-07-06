@@ -12,6 +12,15 @@ Fonte única de verdade dos métodos trafegados entre Middleware (Node.js) e Eng
 | `engine/log` | engine → middleware | notification | [`schemas/engine.log.schema.json`](schemas/engine.log.schema.json) |
 | `skeleton/initialize` | middleware → engine | request | [`schemas/skeleton.initialize.schema.json`](schemas/skeleton.initialize.schema.json) |
 | `mesh/bind_shared_memory` | middleware → engine | request | [`schemas/mesh.bind_shared_memory.schema.json`](schemas/mesh.bind_shared_memory.schema.json) |
+| `engine/describe` | middleware → engine | request | [`schemas/engine.describe.schema.json`](schemas/engine.describe.schema.json) |
+| `mesh/inspect` | middleware → engine | request | [`schemas/mesh.inspect.schema.json`](schemas/mesh.inspect.schema.json) |
+
+## Plano de dados
+
+O layout binário do memory-mapped file (header, seqlock, vertex layout, checksum)
+está especificado em [`shared-memory-layout.md`](shared-memory-layout.md). Os offsets
+de vértice publicados em `engine/describe` são derivados por reflexão das structs C# —
+o escritor Node.js deve sempre usar o layout publicado, nunca offsets hardcoded.
 
 ## Versionamento
 

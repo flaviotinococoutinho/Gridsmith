@@ -11,6 +11,7 @@
 
 import { EnginePipeServer, type EngineLogEntry, type EngineSession } from "./ipc/EnginePipeServer.js";
 import { BlueprintStore } from "./domain/BlueprintStore.js";
+import { CapabilityRegistry, type EngineManifest } from "./domain/CapabilityRegistry.js";
 import { EngineBridge } from "./domain/EngineBridge.js";
 import { startMcpStdio } from "./mcp/McpFacade.js";
 
@@ -32,6 +33,20 @@ async function main(): Promise<void> {
     supportedCapabilities: ["skeleton", "mesh", "shared-memory"],
   });
   const bridge = new EngineBridge(pipeServer, new BlueprintStore());
+  const capabilities = new CapabilityRegistry(pipeServer);
+
+  capabilities.on("capabilities", (manifest: EngineManifest) => {
+    const available = Object.entries(manifest.subsystems)
+      .filter(([, s]) => s.status === "available")
+      .map(([name]) => name);
+    console.error(
+      `[p7m] engine capabilities cached: ${manifest.engine.name} v${manifest.engine.version} ` +
+        `(available: ${available.join(", ") || "none"})`,
+    );
+  });
+  capabilities.on("describeError", (err: Error) => {
+    console.error(`[p7m] engine/describe failed: ${err.message}`);
+  });
 
   pipeServer.on("session", (session: EngineSession) => {
     console.error(
@@ -54,7 +69,7 @@ async function main(): Promise<void> {
   console.error(`[p7m] control-plane endpoint listening at ${pipeServer.pipePath}`);
 
   if (mcp) {
-    await startMcpStdio(bridge, pipeServer);
+    await startMcpStdio(bridge, pipeServer, capabilities);
     console.error("[p7m] MCP server ready on stdio");
   }
 

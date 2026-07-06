@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/mesh.inspect",
+  "title": "mesh/inspect",
+  "description": "Inspeção de diagnóstico (middleware → engine): a engine tira um snapshot estável (seqlock) da malha mapeada e devolve checksum FNV-1a e uma amostra de vértice, permitindo asserções ponta-a-ponta de compatibilidade binária entre o escritor Node.js e o leitor .NET.",
+  "type": "object",
+  "properties": {
+    "params": {
+      "type": "object",
+      "properties": {
+        "meshId": { "type": "string", "minLength": 1 },
+        "sampleIndex": { "type": "integer", "minimum": 0, "default": 0 }
+      },
+      "required": ["meshId"],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "meshId": { "type": "string" },
+        "vertexCount": { "type": "integer" },
+        "strideInBytes": { "type": "integer" },
+        "frameIndex": { "type": "integer", "minimum": 0 },
+        "checksumFnv1a": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "sample": {
+          "type": "object",
+          "properties": {
+            "index": { "type": "integer" },
+            "position": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+            "uv": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+            "boneIndices": { "type": "array", "items": { "type": "integer" }, "minItems": 4, "maxItems": 4 },
+            "boneWeights": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+          },
+          "required": ["index", "position", "uv", "boneIndices", "boneWeights"]
+        }
+      },
+      "required": ["meshId", "vertexCount", "strideInBytes", "frameIndex", "checksumFnv1a", "sample"]
+    }
+  }
+}

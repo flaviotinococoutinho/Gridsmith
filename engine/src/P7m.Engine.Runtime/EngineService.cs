@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Text.Json;
 using P7m.Engine.Core.Rigging;
+using P7m.Engine.Core.SharedMemory;
 using P7m.Engine.Ipc;
 using P7m.Engine.Ipc.Protocol;
 
@@ -11,19 +12,23 @@ namespace P7m.Engine.Runtime;
 /// materializa os comandos do middleware no núcleo Data-Oriented.
 ///
 /// Na Fase 3 o host MonoGame (Game loop, GraphicsDevice) acopla-se a esta
-/// classe consumindo <see cref="Skeletons"/>; o plano de controle permanece
-/// inalterado.
+/// classe consumindo <see cref="Skeletons"/> e <see cref="MeshReaders"/>;
+/// o plano de controle permanece inalterado.
 /// </summary>
-public sealed class EngineService
+public sealed class EngineService : IDisposable
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
     public SkeletonStore Skeletons { get; }
 
-    /// <summary>Binds de shared memory aceitos (mapeamento efetivo do MMF é a Fase 2).</summary>
+    /// <summary>Binds de shared memory aceitos.</summary>
     public IReadOnlyDictionary<string, MeshBindParams> MeshBindings => _meshBindings;
 
+    /// <summary>Leitores mapeados do plano de dados, por meshId.</summary>
+    public IReadOnlyDictionary<string, MeshSharedMemoryReader> MeshReaders => _meshReaders;
+
     private readonly Dictionary<string, MeshBindParams> _meshBindings = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MeshSharedMemoryReader> _meshReaders = new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
     /// <summary>Disparado quando um <c>engine/ping</c> originado no middleware é atendido.</summary>
@@ -78,21 +83,94 @@ public sealed class EngineService
                         RpcErrorCode.UnknownSkeleton, $"Skeleton \"{p.SkeletonId}\" is not initialized");
                 }
 
-                if (!_meshBindings.TryAdd(p.MeshId!, p))
+                if (_meshBindings.ContainsKey(p.MeshId!))
                 {
                     throw new JsonRpcException(RpcErrorCode.DuplicateId, $"Mesh \"{p.MeshId}\" is already bound");
                 }
+
+                MeshSharedMemoryReader reader;
+                try
+                {
+                    reader = MeshSharedMemoryReader.Open(
+                        p.SharedMemoryMapName!, p.VertexCount, p.StrideInBytes);
+                }
+                catch (SharedMemoryLayoutException ex)
+                {
+                    throw new JsonRpcException(RpcErrorCode.InvalidBinaryLayout, ex.Message);
+                }
+                catch (Exception ex) when (ex is IOException or FileNotFoundException or UnauthorizedAccessException)
+                {
+                    throw new JsonRpcException(
+                        RpcErrorCode.SharedMemoryUnavailable,
+                        $"Cannot map \"{p.SharedMemoryMapName}\": {ex.Message}");
+                }
+
+                _meshBindings.Add(p.MeshId!, p);
+                _meshReaders.Add(p.MeshId!, reader);
+
+                return ValueTask.FromResult<object?>(new
+                {
+                    meshId = p.MeshId,
+                    mappedBytes = reader.MappedBytes,
+                    status = "bound",
+                });
+            }
+        });
+
+        connection.RegisterMethod("engine/describe", (_, _) =>
+            ValueTask.FromResult<object?>(EngineDescriptor.BuildManifest(Skeletons)));
+
+        connection.RegisterMethod("mesh/inspect", (params_, _) =>
+        {
+            var p = Deserialize<MeshInspectParams>(params_);
+            MeshSharedMemoryReader? reader;
+            lock (_gate)
+            {
+                if (string.IsNullOrEmpty(p.MeshId) || !_meshReaders.TryGetValue(p.MeshId, out reader))
+                {
+                    throw new JsonRpcException(RpcErrorCode.UnknownMesh, $"Mesh \"{p.MeshId}\" is not bound");
+                }
             }
 
-            // O mapeamento físico do memory-mapped file entra na Fase 2;
-            // o contrato prevê exatamente este estado intermediário.
+            if (!reader.TryReadStable(out var snapshot))
+            {
+                throw new JsonRpcException(
+                    RpcErrorCode.SharedMemoryUnavailable,
+                    $"Mesh \"{p.MeshId}\": could not take a stable snapshot (writer busy)");
+            }
+
+            var sampleIndex = Math.Clamp(p.SampleIndex, 0, reader.VertexCount - 1);
+            var v = reader.Vertices[sampleIndex];
             return ValueTask.FromResult<object?>(new
             {
                 meshId = p.MeshId,
-                mappedBytes = (long)p.VertexCount * p.StrideInBytes,
-                status = "deferred",
+                vertexCount = reader.VertexCount,
+                strideInBytes = reader.StrideInBytes,
+                frameIndex = snapshot.FrameIndex,
+                checksumFnv1a = reader.ComputeChecksum(),
+                sample = new
+                {
+                    index = sampleIndex,
+                    position = new[] { v.Position.X, v.Position.Y },
+                    uv = new[] { v.Uv.X, v.Uv.Y },
+                    boneIndices = new int[] { v.BoneIndex(0), v.BoneIndex(1), v.BoneIndex(2), v.BoneIndex(3) },
+                    boneWeights = new[] { v.BoneWeights.X, v.BoneWeights.Y, v.BoneWeights.Z, v.BoneWeights.W },
+                },
             });
         });
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            foreach (var reader in _meshReaders.Values)
+            {
+                reader.Dispose();
+            }
+
+            _meshReaders.Clear();
+        }
     }
 
     private void RegisterSkeleton(SkeletonInitializeParams p)
@@ -259,4 +337,6 @@ public sealed class EngineService
         string? SharedMemoryMapName,
         int VertexCount,
         int StrideInBytes);
+
+    public sealed record MeshInspectParams(string? MeshId, int SampleIndex);
 }

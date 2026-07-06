@@ -9,6 +9,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import type { CapabilityRegistry } from "../domain/CapabilityRegistry.js";
 import type { EngineBridge } from "../domain/EngineBridge.js";
 import type { EnginePipeServer } from "../ipc/EnginePipeServer.js";
 
@@ -18,7 +19,11 @@ const boneSchema = z.object({
   inverseBindMatrix: z.array(z.number()).length(6),
 });
 
-export function createMcpServer(bridge: EngineBridge, pipeServer: EnginePipeServer): McpServer {
+export function createMcpServer(
+  bridge: EngineBridge,
+  pipeServer: EnginePipeServer,
+  capabilities?: CapabilityRegistry,
+): McpServer {
   const server = new McpServer({
     name: "p7m-middleware",
     version: "0.1.0",
@@ -100,11 +105,67 @@ export function createMcpServer(bridge: EngineBridge, pipeServer: EnginePipeServ
     },
   );
 
+  if (capabilities) {
+    server.registerTool(
+      "engine_capabilities",
+      {
+        description:
+          "Manifesto de capacidades publicado pela engine via engine/describe: limites reais dos subsistemas, layouts binários de vértice derivados por reflexão das structs C# e features disponíveis/planejadas.",
+        inputSchema: {},
+      },
+      async () => {
+        const manifest = capabilities.manifest;
+        return {
+          content: [
+            {
+              type: "text",
+              text: manifest
+                ? JSON.stringify(manifest, null, 2)
+                : "No engine manifest cached yet (engine not connected or describe pending).",
+            },
+          ],
+        };
+      },
+    );
+
+    server.registerTool(
+      "editor_concepts",
+      {
+        description:
+          "Projeção do manifesto da engine orientada à edição visual: painéis, gizmos, tipos de nó e propriedades editáveis que o editor Electron deve materializar por subsistema (incluindo subsistemas 'planned' com a fase prevista).",
+        inputSchema: {},
+      },
+      async () => ({
+        content: [{ type: "text", text: JSON.stringify(capabilities.editorConcepts(), null, 2) }],
+      }),
+    );
+
+    server.registerTool(
+      "mesh_inspect",
+      {
+        description:
+          "Pede à engine um snapshot estável (seqlock) da malha mapeada em shared memory: checksum FNV-1a, frameIndex e amostra de vértice — prova de compatibilidade binária do plano de dados.",
+        inputSchema: {
+          meshId: z.string().min(1),
+          sampleIndex: z.number().int().nonnegative().optional(),
+        },
+      },
+      async ({ meshId, sampleIndex }) => {
+        const result = await bridge.inspectMesh(meshId, sampleIndex ?? 0);
+        return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      },
+    );
+  }
+
   return server;
 }
 
-export async function startMcpStdio(bridge: EngineBridge, pipeServer: EnginePipeServer): Promise<McpServer> {
-  const server = createMcpServer(bridge, pipeServer);
+export async function startMcpStdio(
+  bridge: EngineBridge,
+  pipeServer: EnginePipeServer,
+  capabilities?: CapabilityRegistry,
+): Promise<McpServer> {
+  const server = createMcpServer(bridge, pipeServer, capabilities);
   await server.connect(new StdioServerTransport());
   return server;
 }
