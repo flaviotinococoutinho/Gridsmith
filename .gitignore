@@ -1,0 +1,25 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# .NET
+bin/
+obj/
+*.user
+artifacts/
+
+# MonoGame content build
+engine/**/Content/bin/
+engine/**/Content/obj/
+*.xnb
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Runtime artifacts
+*.sock
+*.log

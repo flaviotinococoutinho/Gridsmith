@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>P7m.Engine.Runtime</RootNamespace>
+    <Description>Host do serviço de engine P7M: conecta ao middleware via IPC e materializa o blueprint no núcleo DOD. O host gráfico MonoGame acopla aqui na Fase 3.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../P7m.Engine.Core/P7m.Engine.Core.csproj" />
+    <ProjectReference Include="../P7m.Engine.Ipc/P7m.Engine.Ipc.csproj" />
+  </ItemGroup>
+</Project>

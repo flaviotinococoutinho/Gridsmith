@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/skeleton.initialize",
+  "title": "skeleton/initialize",
+  "description": "Registra a topologia de um esqueleto na engine. 'inverseBindMatrix' é uma matriz 3x2 afim 2D em ordem coluna-maior (6 floats: m11, m12, m21, m22, m31, m32).",
+  "type": "object",
+  "properties": {
+    "params": {
+      "type": "object",
+      "properties": {
+        "skeletonId": { "type": "string", "minLength": 1 },
+        "bones": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "integer", "minimum": 0 },
+              "parentId": {
+                "type": "integer",
+                "minimum": -1,
+                "description": "-1 indica osso raiz"
+              },
+              "inverseBindMatrix": {
+                "type": "array",
+                "items": { "type": "number" },
+                "minItems": 6,
+                "maxItems": 6
+              }
+            },
+            "required": ["id", "parentId", "inverseBindMatrix"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["skeletonId", "bones"],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "skeletonId": { "type": "string" },
+        "boneCount": { "type": "integer", "minimum": 1 },
+        "status": { "enum": ["initialized"] }
+      },
+      "required": ["skeletonId", "boneCount", "status"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+
+jobs:
+  middleware:
+    name: Middleware (Node.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: middleware
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: middleware/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  engine:
+    name: Engine (.NET 8)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet build --nologo
+      - run: dotnet test --no-build --nologo
+
+  phase1-e2e:
+    name: Fase 1 — verificação ponta-a-ponta
+    runs-on: ubuntu-latest
+    needs: [middleware, engine]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: middleware/package-lock.json
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: cd middleware && npm ci
+      - run: ./scripts/verify-phase1.sh

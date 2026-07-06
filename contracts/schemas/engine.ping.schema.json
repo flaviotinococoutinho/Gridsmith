@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/engine.ping",
+  "title": "engine/ping",
+  "description": "Request de verificação de vitalidade, válido em ambas as direções. O payload é ecoado de volta em 'echo'.",
+  "type": "object",
+  "properties": {
+    "params": {
+      "type": "object",
+      "properties": {
+        "payload": { "type": "string", "maxLength": 4096 },
+        "sentAtUnixMs": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["payload"],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "echo": { "type": "string" },
+        "receivedAtUnixMs": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["echo"],
+      "additionalProperties": false
+    }
+  }
+}

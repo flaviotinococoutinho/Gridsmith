@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/mesh.bind_shared_memory",
+  "title": "mesh/bind_shared_memory",
+  "description": "Instrui a engine a mapear o memory-mapped file que contém os vértices da malha (posições, UVs e BoneWeights) em layout binário sequencial.",
+  "type": "object",
+  "properties": {
+    "params": {
+      "type": "object",
+      "properties": {
+        "meshId": { "type": "string", "minLength": 1 },
+        "skeletonId": { "type": "string", "minLength": 1 },
+        "sharedMemoryMapName": { "type": "string", "minLength": 1 },
+        "vertexCount": { "type": "integer", "minimum": 1 },
+        "strideInBytes": { "type": "integer", "minimum": 4 }
+      },
+      "required": [
+        "meshId",
+        "skeletonId",
+        "sharedMemoryMapName",
+        "vertexCount",
+        "strideInBytes"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "meshId": { "type": "string" },
+        "mappedBytes": { "type": "integer", "minimum": 4 },
+        "status": { "enum": ["bound", "deferred"] }
+      },
+      "required": ["meshId", "status"],
+      "additionalProperties": false
+    }
+  }
+}

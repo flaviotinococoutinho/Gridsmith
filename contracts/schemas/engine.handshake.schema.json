@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/engine.handshake",
+  "title": "engine/handshake",
+  "description": "Primeiro request enviado pela engine ao conectar. O middleware valida a versão de protocolo e responde com a identidade da sessão.",
+  "type": "object",
+  "properties": {
+    "params": {
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string", "minLength": 1 },
+        "clientVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+" },
+        "protocolVersion": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      },
+      "required": ["clientName", "clientVersion", "protocolVersion"],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "minLength": 1 },
+        "serverName": { "type": "string" },
+        "protocolVersion": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
+        "acceptedCapabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["sessionId", "serverName", "protocolVersion"],
+      "additionalProperties": false
+    }
+  }
+}
