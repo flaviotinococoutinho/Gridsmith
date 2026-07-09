@@ -4,6 +4,15 @@ Camada de orquestração do ecossistema P7M EaaS (Node.js ≥ 22, TypeScript).
 
 ## Responsabilidades
 
+- **Modelo canônico** (`src/canonical/`): `CanonicalOrchestrator` (o único caminho de
+  mutação: filters → AST → actions → projeção), `HookBus` (actions/filters com
+  prioridade, inspecionável), `ArtifactStore` (artefatos versionáveis com hash estável
+  e proveniência) e `PipelineRunner` (estágios como cadeias de filters).
+- **Runtimes** (`src/runtime/`): `RuntimeAdapter` (contrato de projeção),
+  `MonoGameAdapter`, `RuntimeProfileRegistry` (perfis versionados por família em
+  `profiles/`) e `ExperienceGovernor` (matriz de decisões perfil × manifesto vivo).
+  Ver [`../docs/CANONICAL-MODEL.md`](../docs/CANONICAL-MODEL.md).
+
 - **Endpoint IPC do plano de controle** (`src/ipc/`): aceita a conexão da engine via
   Named Pipe (Windows) ou Unix Domain Socket (Linux/macOS), com framing binário
   `uint32 LE + JSON-RPC 2.0` e peer full-duplex simétrico.

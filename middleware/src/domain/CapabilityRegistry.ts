@@ -17,6 +17,8 @@ export interface EngineIdentity {
   name: string;
   version: string;
   protocolVersion: string;
+  /** Identidade do runtime hospedeiro — alimenta a resolução de perfil. */
+  runtime?: { family: string; version: string };
 }
 
 export interface EditorPropertyHint {

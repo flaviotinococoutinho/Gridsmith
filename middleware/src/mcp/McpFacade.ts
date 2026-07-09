@@ -9,9 +9,26 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import type { ArtifactStore } from "../canonical/ArtifactStore.js";
+import type { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
+import type { HookBus } from "../canonical/HookBus.js";
 import type { CapabilityRegistry } from "../domain/CapabilityRegistry.js";
+import type { BlueprintCommand } from "../domain/BlueprintStore.js";
 import type { EngineBridge } from "../domain/EngineBridge.js";
 import type { EnginePipeServer } from "../ipc/EnginePipeServer.js";
+import type { ExperienceGovernor } from "../runtime/ExperienceGovernor.js";
+import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
+import type { RuntimeProfileRegistry } from "../runtime/RuntimeProfile.js";
+
+/** Camada canônica opcional exposta às ferramentas MCP. */
+export interface CanonicalServices {
+  orchestrator: CanonicalOrchestrator;
+  artifacts: ArtifactStore;
+  hooks: HookBus;
+  profiles: RuntimeProfileRegistry;
+  governor: ExperienceGovernor;
+  adapter: RuntimeAdapter;
+}
 
 /** Remove chaves undefined (zod .optional() ⇄ exactOptionalPropertyTypes). */
 type StripUndefined<T> = { [K in keyof T]: Exclude<T[K], undefined> };
@@ -31,6 +48,7 @@ export function createMcpServer(
   bridge: EngineBridge,
   pipeServer: EnginePipeServer,
   capabilities?: CapabilityRegistry,
+  canonical?: CanonicalServices,
 ): McpServer {
   const server = new McpServer({
     name: "p7m-middleware",
@@ -274,15 +292,144 @@ export function createMcpServer(
     );
   }
 
+  if (canonical) {
+    registerCanonicalTools(server, canonical);
+  }
+
   return server;
+}
+
+function registerCanonicalTools(server: McpServer, canonical: CanonicalServices): void {
+  server.registerTool(
+    "blueprint_command",
+    {
+      description:
+        "Despacha um comando canônico do Blueprint pelo MESMO caminho validado da UI: filters → validação/AST → evento → actions → projeção no runtime. kinds: skeleton/define, mesh/bind, camera/configure, light/add, light/remove, entitydef/define, entity/place, entity/remove. O payload segue o shape do comando (sem o campo kind).",
+      inputSchema: {
+        kind: z.enum([
+          "skeleton/define",
+          "mesh/bind",
+          "camera/configure",
+          "light/add",
+          "light/remove",
+          "entitydef/define",
+          "entity/place",
+          "entity/remove",
+        ]),
+        payload: z.record(z.unknown()),
+      },
+    },
+    async ({ kind, payload }) => {
+      const command = reshapeCommand(kind, payload);
+      const result = await canonical.orchestrator.dispatch(command);
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.registerTool(
+    "runtime_experience",
+    {
+      description:
+        "Resolve a governança da experiência para uma família+versão de runtime: perfil aplicado, capabilities, constraints e a matriz de decisões por recurso da ferramenta visual (com razões). Omita family/version para usar a identidade do runtime conectado.",
+      inputSchema: {
+        family: z.string().min(1).optional(),
+        version: z.string().regex(/^\d+\.\d+(\.\d+)?$/).optional(),
+      },
+    },
+    async ({ family, version }) => {
+      const identity = canonical.adapter.identify();
+      const resolved = canonical.governor.resolve(
+        family ?? identity?.family ?? canonical.adapter.family,
+        version ?? identity?.version ?? "999.0.0",
+      );
+      return { content: [{ type: "text", text: JSON.stringify(resolved, null, 2) }] };
+    },
+  );
+
+  server.registerTool(
+    "runtime_profiles",
+    {
+      description: "Lista as famílias de runtime conhecidas e as versões de perfil registradas para cada uma.",
+      inputSchema: {},
+    },
+    async () => {
+      const families = canonical.profiles.families().map((family) => ({
+        family,
+        versions: canonical.profiles.versionsOf(family),
+      }));
+      return { content: [{ type: "text", text: JSON.stringify(families, null, 2) }] };
+    },
+  );
+
+  server.registerTool(
+    "artifact_get",
+    {
+      description:
+        "Consulta artefatos versionáveis do modelo canônico. Sem artifactId lista as últimas revisões (opcionalmente por kind); com artifactId retorna a revisão pedida (ou a última) e o histórico de hashes.",
+      inputSchema: {
+        artifactId: z.string().min(1).optional(),
+        kind: z.string().min(1).optional(),
+        revision: z.number().int().positive().optional(),
+      },
+    },
+    async ({ artifactId, kind, revision }) => {
+      if (artifactId === undefined) {
+        return {
+          content: [{ type: "text", text: JSON.stringify(canonical.artifacts.list(kind), null, 2) }],
+        };
+      }
+      const envelope = canonical.artifacts.get(artifactId, revision);
+      const history = canonical.artifacts
+        .history(artifactId)
+        .map((e) => ({ revision: e.revision, contentHash: e.contentHash, createdBy: e.metadata.createdBy }));
+      return {
+        content: [{ type: "text", text: JSON.stringify({ envelope: envelope ?? null, history }, null, 2) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    "hooks_list",
+    {
+      description:
+        "Inventário dos pontos de extensão do modelo canônico (actions e filters registrados, com prioridades) — descoberta de integração para agentes.",
+      inputSchema: {},
+    },
+    async () => ({
+      content: [{ type: "text", text: JSON.stringify(canonical.hooks.listHooks(), null, 2) }],
+    }),
+  );
+}
+
+/** Reconstrói o BlueprintCommand a partir do par (kind, payload) da borda MCP. */
+function reshapeCommand(kind: BlueprintCommand["kind"], payload: Record<string, unknown>): BlueprintCommand {
+  switch (kind) {
+    case "skeleton/define":
+      return { kind, skeleton: payload as never };
+    case "mesh/bind":
+      return { kind, binding: payload as never };
+    case "camera/configure":
+      return { kind, settings: payload as never };
+    case "light/add":
+      return { kind, light: payload as never };
+    case "light/remove":
+      return { kind, lightId: payload["lightId"] as string };
+    case "entitydef/define":
+      return { kind, definition: payload as never };
+    case "entity/place":
+      return { kind, entity: payload as never };
+    case "entity/remove":
+      return { kind, entityId: payload["entityId"] as string };
+  }
 }
 
 export async function startMcpStdio(
   bridge: EngineBridge,
   pipeServer: EnginePipeServer,
   capabilities?: CapabilityRegistry,
+  canonical?: CanonicalServices,
 ): Promise<McpServer> {
-  const server = createMcpServer(bridge, pipeServer, capabilities);
+  const server = createMcpServer(bridge, pipeServer, capabilities, canonical);
   await server.connect(new StdioServerTransport());
   return server;
 }

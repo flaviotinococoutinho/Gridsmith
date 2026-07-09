@@ -18,6 +18,16 @@ Fonte única de verdade dos métodos trafegados entre Middleware (Node.js) e Eng
 | `lighting/add`, `lighting/remove`, `lighting/inspect`, `lighting/evaluate` | middleware → engine | request | [`schemas/lighting.methods.schema.json`](schemas/lighting.methods.schema.json) |
 | `tilemap/define`, `tilemap/inspect` | middleware → engine | request | [`schemas/level.methods.schema.json`](schemas/level.methods.schema.json) |
 
+## Modelo canônico e governança
+
+| Contrato | Esquema |
+|---|---|
+| Envelope de artefato versionável | [`schemas/artifact.envelope.schema.json`](schemas/artifact.envelope.schema.json) |
+| Perfil versionado de runtime | [`schemas/runtime.profile.schema.json`](schemas/runtime.profile.schema.json) |
+
+O desenho completo (comandos, eventos, hooks, filters, pipelines, adapters e
+governança da experiência) está em [`../docs/CANONICAL-MODEL.md`](../docs/CANONICAL-MODEL.md).
+
 ## Plano de dados
 
 O layout binário do memory-mapped file (header, seqlock, vertex layout, checksum)

@@ -18,6 +18,12 @@ namespace P7m.Engine.Runtime;
 /// </summary>
 public static class EngineDescriptor
 {
+    /// <summary>Família tecnológica do runtime hospedeiro (resolução de perfil no middleware).</summary>
+    public const string RuntimeFamily = "monogame";
+
+    /// <summary>Versão do runtime hospedeiro (MonoGame.Framework.DesktopGL referenciado em Graphics).</summary>
+    public const string RuntimeVersion = "3.8.2";
+
     public static object BuildManifest(SkeletonStore skeletons, LightStore lights, TilemapStore tilemaps) => new
     {
         engine = new
@@ -25,6 +31,7 @@ public static class EngineDescriptor
             name = EngineChannel.ClientName,
             version = EngineChannel.ClientVersion,
             protocolVersion = JsonRpcProtocol.ProtocolVersion,
+            runtime = new { family = RuntimeFamily, version = RuntimeVersion },
         },
         subsystems = new
         {

@@ -170,7 +170,12 @@ public class EngineServiceTests : IAsyncLifetime
     {
         var manifest = await _middleware.RequestAsync("engine/describe", null, _cts.Token);
 
-        Assert.Equal("P7m.Engine.Runtime", manifest.GetProperty("engine").GetProperty("name").GetString());
+        var engine = manifest.GetProperty("engine");
+        Assert.Equal("P7m.Engine.Runtime", engine.GetProperty("name").GetString());
+        // identidade do runtime hospedeiro: alimenta a resolução de perfil no middleware
+        var runtime = engine.GetProperty("runtime");
+        Assert.Equal("monogame", runtime.GetProperty("family").GetString());
+        Assert.Matches(@"^\d+\.\d+", runtime.GetProperty("version").GetString());
         var subsystems = manifest.GetProperty("subsystems");
 
         var rigging = subsystems.GetProperty("rigging");

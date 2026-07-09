@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/runtime.profile",
+  "title": "Perfil versionado de runtime",
+  "description": "Governança da experiência por runtime (docs/CANONICAL-MODEL.md §3): a família define o grupo tecnológico, a versão define o perfil concreto de compatibilidade, e capabilities + editorRules determinam quais recursos da ferramenta visual existem para a combinação. Perfis publicados são imutáveis — mudanças entram como nova versão. Resolução: match exato, senão o perfil mais alto ≤ versão pedida.",
+  "type": "object",
+  "properties": {
+    "family": { "type": "string", "minLength": 1, "description": "Grupo tecnológico (ex.: monogame)" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+(\\.\\d+)?$" },
+    "displayName": { "type": "string", "minLength": 1 },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Capacidades tecnológicas namespaced (ex.: content-pipeline.mgcb, render.spritebatch, preview.embedded-host)",
+      "uniqueItems": true
+    },
+    "editorRules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "feature": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Recurso da ferramenta visual governado pela regra (ex.: assets.mgcb-compile, preview.embedded)"
+          },
+          "effect": { "enum": ["enable", "disable"] },
+          "requiresCapability": {
+            "type": "string",
+            "description": "Capability do perfil exigida para habilitar"
+          },
+          "requiresSubsystem": {
+            "type": "string",
+            "description": "Subsistema que deve estar \"available\" no manifesto vivo (engine/describe); sem engine conectada a decisão é fail-safe (desabilitado)"
+          },
+          "reason": { "type": "string", "minLength": 1, "description": "Justificativa exibida na UI e nas respostas MCP" }
+        },
+        "required": ["feature", "effect", "reason"]
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": { "type": "number" },
+      "description": "Limites numéricos da combinação (ex.: maxTextureSize)"
+    }
+  },
+  "required": ["family", "version", "displayName", "capabilities", "editorRules"]
+}

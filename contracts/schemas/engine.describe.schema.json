@@ -17,7 +17,16 @@
           "properties": {
             "name": { "type": "string" },
             "version": { "type": "string" },
-            "protocolVersion": { "type": "string" }
+            "protocolVersion": { "type": "string" },
+            "runtime": {
+              "type": "object",
+              "description": "Identidade do runtime hospedeiro — a família define o grupo tecnológico e a versão seleciona o perfil de capacidades (contracts/schemas/runtime.profile.schema.json)",
+              "properties": {
+                "family": { "type": "string", "minLength": 1 },
+                "version": { "type": "string", "pattern": "^\\d+\\.\\d+(\\.\\d+)?$" }
+              },
+              "required": ["family", "version"]
+            }
           },
           "required": ["name", "version", "protocolVersion"]
         },

@@ -12,6 +12,15 @@ composto por três macrocamadas independentes e altamente desacopladas:
 
 ## Princípios arquiteturais
 
+O P7M é uma ferramenta visual **fortemente orientada a domínio**: o usuário
+edita um **modelo canônico próprio** (comandos → eventos, hooks/filters,
+pipelines e artefatos versionáveis), que não depende de runtime. **Adapters**
+projetam o modelo em runtimes concretos (MonoGame hoje), e a experiência
+visual é **governada por perfis versionados de capacidades** por
+família+versão de runtime — a ferramenta consulta o perfil e o manifesto vivo
+da engine, nunca assume suporte. Desenho completo em
+[`docs/CANONICAL-MODEL.md`](docs/CANONICAL-MODEL.md).
+
 - **CQRS no editor (Electron):** leituras (projeções da árvore de nós) separadas de escritas
   (Commands imutáveis aplicados ao Blueprint centralizado).
 - **Data-Oriented Design (MonoGame):** arrays contíguos de structs (SoA) nos hot loops;
@@ -46,6 +55,15 @@ composto por três macrocamadas independentes e altamente desacopladas:
   **importador Aseprite** (frameTags → clipes com pingpong expandido, slices →
   pivô/9-slice) e **TilemapStore** DOD na engine com consolidação em buffer estático
   único (`tilemap/define`/`tilemap/inspect`, checksum determinístico entre runtimes).
+- [x] **Fase 3.6 — Modelo canônico e governança de runtimes:** orquestração por
+  comandos/eventos com **hooks e filters** extensíveis (`HookBus`), **pipelines** cujos
+  estágios são cadeias de filters, **artefatos versionáveis** (revisões append-only,
+  hash de conteúdo estável, dedup, proveniência obrigatória), **adapter MonoGame**
+  projetando eventos canônicos no runtime (skipped/deferred com razão), **perfis
+  versionados** por família+versão (`monogame@3.8.0`/`3.8.2`) e **ExperienceGovernor**
+  cruzando perfil estático + manifesto vivo em uma matriz de decisões auto-explicativa.
+  Ferramentas MCP: `blueprint_command`, `runtime_experience`, `runtime_profiles`,
+  `artifact_get`, `hooks_list`.
 - [ ] **Fase 4 — Frontend Electron UX:** grafos de máquinas de estado com semântica Gum
   (estado = conjunto nomeado de atribuições; transições interpolam com easing Bézier),
   editores de curvas, painel de níveis LDtk-like (pincel de IntGrid + preview de regras),

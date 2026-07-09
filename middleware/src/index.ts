@@ -10,10 +10,19 @@
  */
 
 import { EnginePipeServer, type EngineLogEntry, type EngineSession } from "./ipc/EnginePipeServer.js";
+import { ArtifactStore } from "./canonical/ArtifactStore.js";
+import { CanonicalOrchestrator } from "./canonical/CanonicalOrchestrator.js";
+import { HookBus } from "./canonical/HookBus.js";
+import { ASEPRITE_PIPELINE, PipelineRunner } from "./canonical/Pipeline.js";
+import { importAseprite } from "./assets/AsepriteImporter.js";
 import { BlueprintStore } from "./domain/BlueprintStore.js";
 import { CapabilityRegistry, type EngineManifest } from "./domain/CapabilityRegistry.js";
 import { EngineBridge } from "./domain/EngineBridge.js";
 import { startMcpStdio } from "./mcp/McpFacade.js";
+import { ExperienceGovernor } from "./runtime/ExperienceGovernor.js";
+import { MonoGameAdapter } from "./runtime/MonoGameAdapter.js";
+import { RuntimeProfileRegistry } from "./runtime/RuntimeProfile.js";
+import { MONOGAME_PROFILES } from "./runtime/profiles/monogame.js";
 
 function parseArgs(argv: string[]): { pipeName?: string; mcp: boolean } {
   let pipeName: string | undefined;
@@ -32,8 +41,26 @@ async function main(): Promise<void> {
     ...(pipeName !== undefined ? { pipeName } : {}),
     supportedCapabilities: ["skeleton", "mesh", "shared-memory"],
   });
-  const bridge = new EngineBridge(pipeServer, new BlueprintStore());
+  const store = new BlueprintStore();
+  const bridge = new EngineBridge(pipeServer, store);
   const capabilities = new CapabilityRegistry(pipeServer);
+
+  // ---- Modelo canônico + governança de runtime (docs/CANONICAL-MODEL.md) ----
+  const hooks = new HookBus();
+  const artifacts = new ArtifactStore();
+  const pipelines = new PipelineRunner(hooks, artifacts);
+  pipelines.register(ASEPRITE_PIPELINE);
+  hooks.addFilter(
+    `pipeline:${ASEPRITE_PIPELINE.pipelineId}:parse`,
+    (raw) => importAseprite(raw),
+    { id: "aseprite-parse", priority: 10 },
+  );
+
+  const profiles = new RuntimeProfileRegistry();
+  for (const profile of MONOGAME_PROFILES) profiles.register(profile);
+  const governor = new ExperienceGovernor(profiles, capabilities);
+  const adapter = new MonoGameAdapter(pipeServer, capabilities);
+  const orchestrator = new CanonicalOrchestrator(store, hooks, adapter);
 
   capabilities.on("capabilities", (manifest: EngineManifest) => {
     const available = Object.entries(manifest.subsystems)
@@ -69,8 +96,15 @@ async function main(): Promise<void> {
   console.error(`[p7m] control-plane endpoint listening at ${pipeServer.pipePath}`);
 
   if (mcp) {
-    await startMcpStdio(bridge, pipeServer, capabilities);
-    console.error("[p7m] MCP server ready on stdio");
+    await startMcpStdio(bridge, pipeServer, capabilities, {
+      orchestrator,
+      artifacts,
+      hooks,
+      profiles,
+      governor,
+      adapter,
+    });
+    console.error("[p7m] MCP server ready on stdio (canonical model + runtime governance)");
   }
 
   const shutdown = async (): Promise<void> => {
