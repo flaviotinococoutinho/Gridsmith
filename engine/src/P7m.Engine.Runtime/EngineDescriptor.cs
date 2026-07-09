@@ -1,3 +1,4 @@
+using P7m.Engine.Core.Level;
 using P7m.Engine.Core.Lighting;
 using P7m.Engine.Core.Rigging;
 using P7m.Engine.Core.SharedMemory;
@@ -17,7 +18,7 @@ namespace P7m.Engine.Runtime;
 /// </summary>
 public static class EngineDescriptor
 {
-    public static object BuildManifest(SkeletonStore skeletons, LightStore lights) => new
+    public static object BuildManifest(SkeletonStore skeletons, LightStore lights, TilemapStore tilemaps) => new
     {
         engine = new
         {
@@ -40,7 +41,8 @@ public static class EngineDescriptor
                 editor = new
                 {
                     panel = "rig-editor",
-                    gizmos = new[] { "bone", "ik-chain", "weight-brush" },
+                    // onion-skin: quadros fantasma antes/depois (padrão Aseprite)
+                    gizmos = new[] { "bone", "ik-chain", "weight-brush", "onion-skin" },
                     nodeTypes = new[] { "skeleton", "bone", "ik-target" },
                     properties = new object[]
                     {
@@ -128,16 +130,62 @@ public static class EngineDescriptor
                     },
                 },
             },
+            level = new
+            {
+                status = "available",
+                limits = new Dictionary<string, double>
+                {
+                    ["maxTilemaps"] = tilemaps.Capacity,
+                    ["maxCellsPerTilemap"] = TilemapStore.MaxCells,
+                },
+                // auto-tiling resolvido no middleware (função pura com seed);
+                // a engine consolida os tiles em buffer estático único
+                features = new[]
+                {
+                    "intgrid", "auto-tiling-middleware", "static-batch-consolidation",
+                    "deterministic-checksum",
+                },
+                editor = new
+                {
+                    panel = "level-editor",
+                    gizmos = new[] { "intgrid-brush", "rule-preview", "tile-picker" },
+                    nodeTypes = new[] { "intgrid-layer", "auto-layer", "entity-layer" },
+                    properties = new object[]
+                    {
+                        new { name = "tileSize", type = "int", min = 1.0, max = 256.0, @default = 16.0 },
+                        new { name = "seed", type = "int", min = 0.0, @default = 0.0 },
+                    },
+                },
+            },
+            stateMachines = new
+            {
+                // semântica Gum: estado = conjunto nomeado de atribuições de
+                // propriedades; transições interpolam com curvas de easing
+                status = "planned",
+                phase = 4,
+                features = new[] { "named-property-sets", "state-interpolation", "bezier-easing", "event-hooks" },
+                editor = new
+                {
+                    panel = "state-graph",
+                    gizmos = new[] { "transition-arrow", "state-preview" },
+                    nodeTypes = new[] { "state", "transition", "event-hook" },
+                    properties = Array.Empty<object>(),
+                },
+            },
             assets = new
             {
                 status = "planned",
                 phase = 4,
-                features = new[] { "tag-taxonomy", "ai-spritesheet-pipeline", "mgcb-xnb-compile" },
+                features = new[]
+                {
+                    "tag-taxonomy", "aseprite-import", "frame-tags-to-clips", "slices-to-pivots",
+                    "ai-spritesheet-pipeline", "mgcb-xnb-compile",
+                },
                 editor = new
                 {
                     panel = "asset-taxonomy",
-                    gizmos = Array.Empty<string>(),
-                    nodeTypes = new[] { "tag", "sprite-sheet", "generation-job" },
+                    gizmos = new[] { "pivot-handle", "nine-slice-guides" },
+                    nodeTypes = new[] { "tag", "sprite-sheet", "animation-clip", "generation-job" },
                     properties = Array.Empty<object>(),
                 },
             },

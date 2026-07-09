@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/level.methods",
+  "title": "tilemap/* (subsistema de níveis)",
+  "description": "Métodos do subsistema de níveis (middleware → engine), inspirados em LDtk/Tiled (docs/RESEARCH-EDITOR-LANDSCAPE.md). O auto-tiling (IntGrid + regras → tiles) é resolvido no MIDDLEWARE como função pura determinística com seed; a engine recebe os tiles prontos e os consolida em buffer estático único. Grids são linha-maior; limite de 65536 células por tilemap (mapas maiores entram por chunks via shared memory na Fase 5). Métodos em $defs.",
+  "$defs": {
+    "tilemap/define": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "tilemapId": { "type": "string", "minLength": 1 },
+          "width": { "type": "integer", "minimum": 1 },
+          "height": { "type": "integer", "minimum": 1 },
+          "tileSize": { "type": "integer", "minimum": 1, "default": 16 },
+          "intGrid": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0, "maximum": 32767 },
+            "description": "Significado pintado pelo designer (0 = vazio); width×height valores"
+          },
+          "tiles": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": -1 },
+            "description": "TileId resolvido pelo AutoTiler (-1 = sem tile); width×height valores"
+          }
+        },
+        "required": ["tilemapId", "width", "height", "intGrid", "tiles"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "tilemapId": { "type": "string" },
+          "nonEmptyTiles": { "type": "integer", "minimum": 0 },
+          "checksumFnv1a": {
+            "type": "integer",
+            "description": "FNV-1a dos tiles (int32 LE) — asserção de determinismo entre runtimes"
+          },
+          "staticBatches": { "type": "integer", "minimum": 1 },
+          "status": { "enum": ["defined"] }
+        },
+        "required": ["tilemapId", "nonEmptyTiles", "checksumFnv1a", "staticBatches", "status"]
+      }
+    },
+    "tilemap/inspect": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "tilemapId": { "type": "string", "minLength": 1 },
+          "cell": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0 },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": ["tilemapId"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "tilemapId": { "type": "string" },
+          "width": { "type": "integer" },
+          "height": { "type": "integer" },
+          "tileSize": { "type": "integer" },
+          "nonEmptyTiles": { "type": "integer" },
+          "checksumFnv1a": { "type": "integer" },
+          "cell": {
+            "type": ["object", "null"],
+            "properties": {
+              "x": { "type": "integer" },
+              "y": { "type": "integer" },
+              "intGridValue": { "type": "integer" },
+              "tileId": { "type": "integer", "minimum": -1 }
+            }
+          }
+        },
+        "required": ["tilemapId", "width", "height", "nonEmptyTiles", "checksumFnv1a"]
+      }
+    }
+  }
+}

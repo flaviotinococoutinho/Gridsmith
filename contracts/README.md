@@ -16,6 +16,7 @@ Fonte única de verdade dos métodos trafegados entre Middleware (Node.js) e Eng
 | `mesh/inspect` | middleware → engine | request | [`schemas/mesh.inspect.schema.json`](schemas/mesh.inspect.schema.json) |
 | `camera/configure`, `camera/shake`, `camera/simulate` | middleware → engine | request | [`schemas/camera.methods.schema.json`](schemas/camera.methods.schema.json) |
 | `lighting/add`, `lighting/remove`, `lighting/inspect`, `lighting/evaluate` | middleware → engine | request | [`schemas/lighting.methods.schema.json`](schemas/lighting.methods.schema.json) |
+| `tilemap/define`, `tilemap/inspect` | middleware → engine | request | [`schemas/level.methods.schema.json`](schemas/level.methods.schema.json) |
 
 ## Plano de dados
 

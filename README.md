@@ -37,8 +37,20 @@ composto por três macrocamadas independentes e altamente desacopladas:
   com antecipação preditiva e screen shake procedural. Cada shader tem uma **referência
   de CPU espelhada e testada** (`Lighting2D`, `ColorLut`, `LinearBlendSkinning`), e as
   equações são verificadas entre runtimes via `lighting/evaluate` e `camera/simulate`.
-- [ ] **Fase 4 — Frontend Electron UX:** grafos de nós para máquinas de estado, editores
-  de curvas de Bézier e painel taxonômico de assets.
+- [x] **Fase 3.5 — Pesquisa de editores e subsistema de níveis:** investigação de
+  FlatRedBall, LDtk, Tiled, Gum, Ogmo 3 e Aseprite
+  ([docs/RESEARCH-EDITOR-LANDSCAPE.md](docs/RESEARCH-EDITOR-LANDSCAPE.md)) e absorção
+  dos melhores conceitos: **AutoTiler** determinístico (IntGrid + regras com wildcards,
+  chance e variantes por seed), **definições de entidade com campos tipados** no
+  Blueprint (int/float/bool/string/enum/point/color com faixas e defaults),
+  **importador Aseprite** (frameTags → clipes com pingpong expandido, slices →
+  pivô/9-slice) e **TilemapStore** DOD na engine com consolidação em buffer estático
+  único (`tilemap/define`/`tilemap/inspect`, checksum determinístico entre runtimes).
+- [ ] **Fase 4 — Frontend Electron UX:** grafos de máquinas de estado com semântica Gum
+  (estado = conjunto nomeado de atribuições; transições interpolam com easing Bézier),
+  editores de curvas, painel de níveis LDtk-like (pincel de IntGrid + preview de regras),
+  world map, painel taxonômico de assets com watcher do CLI Aseprite + compile MGCB, e
+  live edit de variáveis tunáveis via RPCs por subsistema.
 - [ ] **Fase 5 — Automação de Testes e Sandbox (Harness):** ambiente headless no MonoGame
   para simulações em *physics slices* com asserções lógicas.
 
@@ -81,4 +93,7 @@ amostras via `mesh/inspect` — compatibilidade byte a byte comprovada entre os 
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — visão geral das camadas, protocolo de
   framing e ciclo de vida da conexão.
+- [`docs/RESEARCH-EDITOR-LANDSCAPE.md`](docs/RESEARCH-EDITOR-LANDSCAPE.md) — pesquisa das
+  ferramentas de referência (LDtk, Tiled, Ogmo, Aseprite, FlatRedBall, Gum) e as decisões
+  de integração adotadas.
 - [`contracts/`](contracts/) — esquemas JSON Schema dos métodos JSON-RPC.

@@ -22,6 +22,7 @@ import { EnginePipeServer } from "../ipc/EnginePipeServer.js";
 import { BlueprintStore } from "../domain/BlueprintStore.js";
 import { CapabilityRegistry } from "../domain/CapabilityRegistry.js";
 import { EngineBridge } from "../domain/EngineBridge.js";
+import { resolveAutoTiles, type AutoTileRule, type IntGrid } from "../leveldesign/AutoTiler.js";
 
 function step(label: string, message: string): void {
   console.log(`  [${label.padEnd(10)}] ${message}`);
@@ -57,6 +58,19 @@ function evaluatePointLight(
   const att = Math.max(0, 1 - x * x) ** 2;
   const scale = intensity * att * ndotl;
   return [color[0] * scale, color[1] * scale, color[2] * scale];
+}
+
+/** FNV-1a 32-bit sobre int32 little-endian — espelho de TilemapStore.ComputeChecksum. */
+function fnv1aInt32(values: Int32Array): number {
+  let hash = 0x811c9dc5;
+  for (const value of values) {
+    const v = value >>> 0;
+    for (const byte of [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]) {
+      hash ^= byte;
+      hash = Math.imul(hash, 0x01000193);
+    }
+  }
+  return hash >>> 0;
 }
 
 async function main(): Promise<void> {
@@ -161,7 +175,57 @@ async function main(): Promise<void> {
     const after = await bridge.inspectLighting();
     assert(after.count === 0, "light removed from the engine store");
 
-    console.log("PHASE 3 DRIVER PASS: camera physics and deferred lighting verified across runtimes");
+    // 5. Nível (pesquisa LDtk/Tiled): o middleware resolve o auto-tiling e a
+    //    engine deve enxergar EXATAMENTE os mesmos tiles (checksum cruzado)
+    const grid: IntGrid = {
+      width: 8,
+      height: 4,
+      values: [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 1, 1, 1, 1, 0, 0,
+        1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1,
+      ],
+    };
+    const rules: AutoTileRule[] = [
+      {
+        name: "grass-top",
+        patternSize: 3,
+        pattern: [null, 0, null, null, 1, null, null, null, null],
+        tileIds: [100, 101],
+      },
+      { name: "dirt", patternSize: 1, pattern: [1], tileIds: [200] },
+    ];
+    const resolved = resolveAutoTiles(grid, rules, 1234);
+    const localChecksum = fnv1aInt32(resolved.tiles);
+
+    const session = server.currentSession!;
+    const defined = (await session.peer.request("tilemap/define", {
+      tilemapId: "verify-level",
+      width: grid.width,
+      height: grid.height,
+      tileSize: 16,
+      intGrid: grid.values,
+      tiles: [...resolved.tiles],
+    })) as { nonEmptyTiles: number; checksumFnv1a: number; staticBatches: number };
+
+    assert(defined.staticBatches === 1, "tiles consolidated into a single static batch");
+    assert(
+      defined.checksumFnv1a === localChecksum,
+      `auto-tiled level checksum matches across runtimes (0x${localChecksum.toString(16)})`,
+    );
+
+    const cellInfo = (await session.peer.request("tilemap/inspect", {
+      tilemapId: "verify-level",
+      cell: [2, 1], // primeiro tile da plataforma superior: topo exposto
+    })) as { cell: { intGridValue: number; tileId: number } };
+    assert(cellInfo.cell.intGridValue === 1, "engine reads back the painted IntGrid meaning");
+    assert(
+      cellInfo.cell.tileId === 100 || cellInfo.cell.tileId === 101,
+      `grass-top rule applied with deterministic variant (tile ${cellInfo.cell.tileId})`,
+    );
+
+    console.log("PHASE 3 DRIVER PASS: camera physics, deferred lighting and auto-tiled level verified across runtimes");
   } finally {
     await server.close();
   }

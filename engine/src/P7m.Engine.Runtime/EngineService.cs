@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Text.Json;
 using P7m.Engine.Core.Camera;
+using P7m.Engine.Core.Level;
 using P7m.Engine.Core.Lighting;
 using P7m.Engine.Core.Rigging;
 using P7m.Engine.Core.SharedMemory;
@@ -29,6 +30,9 @@ public sealed class EngineService : IDisposable
     /// <summary>Luzes do pipeline deferred (Fase 3).</summary>
     public LightStore Lights { get; }
 
+    /// <summary>Tilemaps resolvidos pelo middleware (subsistema de níveis).</summary>
+    public TilemapStore Tilemaps { get; }
+
     /// <summary>Binds de shared memory aceitos.</summary>
     public IReadOnlyDictionary<string, MeshBindParams> MeshBindings => _meshBindings;
 
@@ -42,11 +46,12 @@ public sealed class EngineService : IDisposable
     /// <summary>Disparado quando um <c>engine/ping</c> originado no middleware é atendido.</summary>
     public event Action<string>? PingReceived;
 
-    public EngineService(int maxSkeletons = 64, int maxLights = 256)
+    public EngineService(int maxSkeletons = 64, int maxLights = 256, int maxTilemaps = 8)
     {
         Skeletons = new SkeletonStore(maxSkeletons);
         Camera = new CinematicCamera(CameraConfig.Default);
         Lights = new LightStore(maxLights);
+        Tilemaps = new TilemapStore(maxTilemaps);
     }
 
     public void RegisterHandlers(JsonRpcConnection connection)
@@ -128,10 +133,11 @@ public sealed class EngineService : IDisposable
         });
 
         connection.RegisterMethod("engine/describe", (_, _) =>
-            ValueTask.FromResult<object?>(EngineDescriptor.BuildManifest(Skeletons, Lights)));
+            ValueTask.FromResult<object?>(EngineDescriptor.BuildManifest(Skeletons, Lights, Tilemaps)));
 
         RegisterCameraHandlers(connection);
         RegisterLightingHandlers(connection);
+        RegisterTilemapHandlers(connection);
 
         connection.RegisterMethod("mesh/inspect", (params_, _) =>
         {
@@ -360,6 +366,107 @@ public sealed class EngineService : IDisposable
             {
                 var rgb = Lights.Accumulate(surface, normal);
                 return ValueTask.FromResult<object?>(new { rgb = new[] { rgb.X, rgb.Y, rgb.Z } });
+            }
+        });
+    }
+
+    private void RegisterTilemapHandlers(JsonRpcConnection connection)
+    {
+        connection.RegisterMethod("tilemap/define", (params_, _) =>
+        {
+            var p = Deserialize<TilemapDefineParams>(params_);
+            if (string.IsNullOrEmpty(p.TilemapId))
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"tilemapId\" must be a non-empty string");
+            }
+
+            if (p.Width < 1 || p.Height < 1 || (long)p.Width * p.Height > TilemapStore.MaxCells)
+            {
+                throw new JsonRpcException(
+                    RpcErrorCode.InvalidParams,
+                    $"tilemap must have between 1 and {TilemapStore.MaxCells} cells");
+            }
+
+            var cellCount = p.Width * p.Height;
+            if (p.IntGrid is null || p.IntGrid.Length != cellCount ||
+                p.Tiles is null || p.Tiles.Length != cellCount)
+            {
+                throw new JsonRpcException(
+                    RpcErrorCode.InvalidBinaryLayout,
+                    $"\"intGrid\" and \"tiles\" must have exactly {cellCount} cells");
+            }
+
+            lock (_gate)
+            {
+                if (Tilemaps.Find(p.TilemapId).IsValid)
+                {
+                    throw new JsonRpcException(RpcErrorCode.DuplicateId, $"Tilemap \"{p.TilemapId}\" is already defined");
+                }
+
+                TilemapHandle handle;
+                try
+                {
+                    handle = Tilemaps.Define(
+                        p.TilemapId, p.Width, p.Height, p.TileSize > 0 ? p.TileSize : 16,
+                        p.IntGrid, p.Tiles);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    throw new JsonRpcException(RpcErrorCode.InternalError, ex.Message);
+                }
+
+                return ValueTask.FromResult<object?>(new
+                {
+                    tilemapId = p.TilemapId,
+                    nonEmptyTiles = Tilemaps.NonEmptyTiles(handle),
+                    checksumFnv1a = Tilemaps.ComputeChecksum(handle),
+                    // consolidação: um único buffer estático por tilemap
+                    staticBatches = 1,
+                    status = "defined",
+                });
+            }
+        });
+
+        connection.RegisterMethod("tilemap/inspect", (params_, _) =>
+        {
+            var p = Deserialize<TilemapInspectParams>(params_);
+            lock (_gate)
+            {
+                var handle = Tilemaps.Find(p.TilemapId ?? "");
+                if (!handle.IsValid)
+                {
+                    throw new JsonRpcException(RpcErrorCode.InvalidParams, $"Tilemap \"{p.TilemapId}\" is not defined");
+                }
+
+                object? cell = null;
+                if (p.Cell is { Length: 2 })
+                {
+                    var x = p.Cell[0];
+                    var y = p.Cell[1];
+                    if (x < 0 || y < 0 || x >= Tilemaps.Width(handle) || y >= Tilemaps.Height(handle))
+                    {
+                        throw new JsonRpcException(RpcErrorCode.InvalidParams, $"cell ({x}, {y}) out of bounds");
+                    }
+
+                    cell = new
+                    {
+                        x,
+                        y,
+                        intGridValue = (int)Tilemaps.IntGridAt(handle, x, y),
+                        tileId = Tilemaps.TileAt(handle, x, y),
+                    };
+                }
+
+                return ValueTask.FromResult<object?>(new
+                {
+                    tilemapId = p.TilemapId,
+                    width = Tilemaps.Width(handle),
+                    height = Tilemaps.Height(handle),
+                    tileSize = Tilemaps.TileSize(handle),
+                    nonEmptyTiles = Tilemaps.NonEmptyTiles(handle),
+                    checksumFnv1a = Tilemaps.ComputeChecksum(handle),
+                    cell,
+                });
             }
         });
     }
@@ -672,4 +779,14 @@ public sealed class EngineService : IDisposable
     public sealed record LightingRemoveParams(int LightId);
 
     public sealed record LightingEvaluateParams(float[]? Surface, float[]? Normal);
+
+    public sealed record TilemapDefineParams(
+        string? TilemapId,
+        int Width,
+        int Height,
+        int TileSize,
+        short[]? IntGrid,
+        int[]? Tiles);
+
+    public sealed record TilemapInspectParams(string? TilemapId, int[]? Cell);
 }

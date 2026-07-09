@@ -17,6 +17,11 @@ Camada de orquestração do ecossistema P7M EaaS (Node.js ≥ 22, TypeScript).
 - **Plano de dados** (`src/sharedmem/`): `MeshSharedMemoryWriter` publica vértices no
   memory-mapped file com protocolo seqlock, guiado pelo layout binário publicado pela
   engine (nunca offsets hardcoded).
+- **Level design** (`src/leveldesign/AutoTiler.ts`): auto-tiling determinístico por
+  regras de padrão (LDtk/Tiled) — função pura `(IntGrid, regras, seed) → tiles`,
+  consumida pela engine via `tilemap/define`.
+- **Assets** (`src/assets/AsepriteImporter.ts`): normaliza o export CLI do Aseprite
+  (frameTags → clipes com direção expandida, slices → pivô/9-slice).
 - **Fachada MCP** (`src/mcp/McpFacade.ts`): expõe `engine_status`, `engine_ping`,
   `skeleton_initialize`, `mesh_bind_shared_memory`, `mesh_inspect`,
   `engine_capabilities` e `editor_concepts` a agentes de IA via stdio.

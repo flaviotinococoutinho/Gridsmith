@@ -57,19 +57,56 @@ export interface LightSpec {
   readonly outerConeDegrees?: number;
 }
 
+/**
+ * Campo tipado de uma definição de entidade — o schema que gera a UI do
+ * editor (LDtk entity fields / Ogmo templates / Tiled property types; ver
+ * docs/RESEARCH-EDITOR-LANDSCAPE.md).
+ */
+export interface EntityFieldDef {
+  readonly name: string;
+  readonly type: "int" | "float" | "bool" | "string" | "enum" | "point" | "color";
+  readonly default?: unknown;
+  readonly min?: number;
+  readonly max?: number;
+  /** Obrigatório para type "enum". */
+  readonly options?: readonly string[];
+}
+
+export interface EntityDefinition {
+  readonly entityDefId: string;
+  readonly fields: readonly EntityFieldDef[];
+  /** Taxonomia (painel de assets / paleta do editor). */
+  readonly tags?: readonly string[];
+  readonly editor?: { readonly color?: string; readonly icon?: string };
+}
+
+export interface EntityInstance {
+  readonly entityId: string;
+  readonly entityDefId: string;
+  readonly position: readonly [number, number];
+  /** Valores por campo; ausentes assumem o default da definição. */
+  readonly fields: Readonly<Record<string, unknown>>;
+}
+
 export type BlueprintCommand =
   | { readonly kind: "skeleton/define"; readonly skeleton: SkeletonBlueprint }
   | { readonly kind: "mesh/bind"; readonly binding: MeshBinding }
   | { readonly kind: "camera/configure"; readonly settings: CameraSettings }
   | { readonly kind: "light/add"; readonly light: LightSpec }
-  | { readonly kind: "light/remove"; readonly lightId: string };
+  | { readonly kind: "light/remove"; readonly lightId: string }
+  | { readonly kind: "entitydef/define"; readonly definition: EntityDefinition }
+  | { readonly kind: "entity/place"; readonly entity: EntityInstance }
+  | { readonly kind: "entity/remove"; readonly entityId: string };
 
 export type BlueprintEvent =
   | { readonly kind: "skeletonDefined"; readonly skeleton: SkeletonBlueprint }
   | { readonly kind: "meshBound"; readonly binding: MeshBinding }
   | { readonly kind: "cameraConfigured"; readonly settings: CameraSettings }
   | { readonly kind: "lightAdded"; readonly light: LightSpec }
-  | { readonly kind: "lightRemoved"; readonly lightId: string };
+  | { readonly kind: "lightRemoved"; readonly lightId: string }
+  | { readonly kind: "entityDefDefined"; readonly definition: EntityDefinition }
+  | { readonly kind: "entityPlaced"; readonly entity: EntityInstance }
+  | { readonly kind: "entityRemoved"; readonly entityId: string };
 
 /**
  * Eventos: "event" (BlueprintEvent) após cada comando aplicado com sucesso.
@@ -78,6 +115,8 @@ export class BlueprintStore extends EventEmitter {
   private readonly skeletons = new Map<string, SkeletonBlueprint>();
   private readonly meshes = new Map<string, MeshBinding>();
   private readonly lights = new Map<string, LightSpec>();
+  private readonly entityDefs = new Map<string, EntityDefinition>();
+  private readonly entities = new Map<string, EntityInstance>();
   private camera: CameraSettings = {};
 
   apply(command: BlueprintCommand): BlueprintEvent {
@@ -105,6 +144,48 @@ export class BlueprintStore extends EventEmitter {
           throw new JsonRpcError(RpcErrorCode.InvalidParams, `Light "${command.lightId}" does not exist`);
         }
         const event: BlueprintEvent = { kind: "lightRemoved", lightId: command.lightId };
+        this.emit("event", event);
+        return event;
+      }
+      case "entitydef/define": {
+        const definition = command.definition;
+        validateEntityDefinition(definition);
+        if (this.entityDefs.has(definition.entityDefId)) {
+          throw new JsonRpcError(
+            RpcErrorCode.DuplicateId,
+            `Entity definition "${definition.entityDefId}" already exists`,
+          );
+        }
+        this.entityDefs.set(definition.entityDefId, Object.freeze({ ...definition }));
+        const event: BlueprintEvent = { kind: "entityDefDefined", definition };
+        this.emit("event", event);
+        return event;
+      }
+      case "entity/place": {
+        const definition = this.entityDefs.get(command.entity.entityDefId);
+        if (!definition) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Entity definition "${command.entity.entityDefId}" is not defined`,
+          );
+        }
+        if (this.entities.has(command.entity.entityId)) {
+          throw new JsonRpcError(
+            RpcErrorCode.DuplicateId,
+            `Entity "${command.entity.entityId}" already exists`,
+          );
+        }
+        const entity = resolveEntityFields(command.entity, definition);
+        this.entities.set(entity.entityId, entity);
+        const event: BlueprintEvent = { kind: "entityPlaced", entity };
+        this.emit("event", event);
+        return event;
+      }
+      case "entity/remove": {
+        if (!this.entities.delete(command.entityId)) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `Entity "${command.entityId}" does not exist`);
+        }
+        const event: BlueprintEvent = { kind: "entityRemoved", entityId: command.entityId };
         this.emit("event", event);
         return event;
       }
@@ -165,6 +246,137 @@ export class BlueprintStore extends EventEmitter {
 
   listLights(): readonly LightSpec[] {
     return [...this.lights.values()];
+  }
+
+  getEntityDef(entityDefId: string): EntityDefinition | undefined {
+    return this.entityDefs.get(entityDefId);
+  }
+
+  listEntityDefs(): readonly EntityDefinition[] {
+    return [...this.entityDefs.values()];
+  }
+
+  getEntity(entityId: string): EntityInstance | undefined {
+    return this.entities.get(entityId);
+  }
+
+  listEntities(): readonly EntityInstance[] {
+    return [...this.entities.values()];
+  }
+}
+
+const FIELD_TYPES = ["int", "float", "bool", "string", "enum", "point", "color"] as const;
+
+function validateEntityDefinition(def: EntityDefinition): void {
+  if (typeof def.entityDefId !== "string" || def.entityDefId.length === 0) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"entityDefId" must be a non-empty string`);
+  }
+  if (!Array.isArray(def.fields)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"fields" must be an array`);
+  }
+  const seen = new Set<string>();
+  for (const field of def.fields) {
+    if (typeof field.name !== "string" || field.name.length === 0) {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `Field name must be a non-empty string`);
+    }
+    if (seen.has(field.name)) {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `Duplicate field "${field.name}"`);
+    }
+    seen.add(field.name);
+    if (!FIELD_TYPES.includes(field.type)) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `Field "${field.name}": unknown type "${field.type}"`,
+      );
+    }
+    if (field.type === "enum" && (!Array.isArray(field.options) || field.options.length === 0)) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `Field "${field.name}": enum fields require non-empty "options"`,
+      );
+    }
+    if (field.default !== undefined) {
+      validateFieldValue(field, field.default, `default of "${field.name}"`);
+    }
+  }
+}
+
+/** Valida os valores da instância e materializa os defaults da definição. */
+function resolveEntityFields(entity: EntityInstance, def: EntityDefinition): EntityInstance {
+  if (typeof entity.entityId !== "string" || entity.entityId.length === 0) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"entityId" must be a non-empty string`);
+  }
+  if (!Array.isArray(entity.position) || entity.position.length !== 2) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"position" must contain 2 numbers`);
+  }
+
+  const known = new Map(def.fields.map((f) => [f.name, f]));
+  for (const name of Object.keys(entity.fields ?? {})) {
+    if (!known.has(name)) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `Entity "${entity.entityId}": field "${name}" is not declared in "${def.entityDefId}"`,
+      );
+    }
+  }
+
+  const resolved: Record<string, unknown> = {};
+  for (const field of def.fields) {
+    const provided = entity.fields?.[field.name];
+    if (provided !== undefined) {
+      validateFieldValue(field, provided, `"${field.name}" of entity "${entity.entityId}"`);
+      resolved[field.name] = provided;
+    } else if (field.default !== undefined) {
+      resolved[field.name] = field.default;
+    } else {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `Entity "${entity.entityId}": field "${field.name}" has no value and no default`,
+      );
+    }
+  }
+
+  return Object.freeze({ ...entity, fields: Object.freeze(resolved) });
+}
+
+function validateFieldValue(field: EntityFieldDef, value: unknown, context: string): void {
+  const fail = (why: string): never => {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `Invalid ${context}: ${why}`);
+  };
+
+  switch (field.type) {
+    case "int":
+      if (!Number.isInteger(value)) fail(`expected integer, got ${JSON.stringify(value)}`);
+      break;
+    case "float":
+      if (typeof value !== "number" || !Number.isFinite(value)) fail(`expected number`);
+      break;
+    case "bool":
+      if (typeof value !== "boolean") fail(`expected boolean`);
+      break;
+    case "string":
+      if (typeof value !== "string") fail(`expected string`);
+      break;
+    case "enum":
+      if (typeof value !== "string" || !field.options!.includes(value)) {
+        fail(`expected one of [${field.options!.join(", ")}]`);
+      }
+      break;
+    case "point":
+      if (!Array.isArray(value) || value.length !== 2 || value.some((v) => typeof v !== "number")) {
+        fail(`expected [x, y]`);
+      }
+      break;
+    case "color":
+      if (typeof value !== "string" || !/^#[0-9a-fA-F]{6}$/.test(value)) {
+        fail(`expected "#rrggbb"`);
+      }
+      break;
+  }
+
+  if ((field.type === "int" || field.type === "float") && typeof value === "number") {
+    if (field.min !== undefined && value < field.min) fail(`${value} < min ${field.min}`);
+    if (field.max !== undefined && value > field.max) fail(`${value} > max ${field.max}`);
   }
 }
 
