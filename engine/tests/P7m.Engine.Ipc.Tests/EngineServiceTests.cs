@@ -188,9 +188,14 @@ public class EngineServiceTests : IAsyncLifetime
         Assert.Equal(16, fields["boneIndices"]);
         Assert.Equal(20, fields["boneWeights"]);
 
-        // subsistemas futuros aparecem como "planned" com a fase do roteiro
-        Assert.Equal("planned", subsystems.GetProperty("lighting").GetProperty("status").GetString());
-        Assert.Equal(3, subsystems.GetProperty("lighting").GetProperty("phase").GetInt32());
+        // Fase 3 entregue: câmera e iluminação disponíveis com hints de edição
+        Assert.Equal("available", subsystems.GetProperty("camera").GetProperty("status").GetString());
+        Assert.Equal("available", subsystems.GetProperty("lighting").GetProperty("status").GetString());
+        Assert.Equal(256, subsystems.GetProperty("lighting").GetProperty("limits").GetProperty("maxLights").GetInt32());
+
+        // subsistemas futuros seguem como "planned" com a fase do roteiro
+        Assert.Equal("planned", subsystems.GetProperty("assets").GetProperty("status").GetString());
+        Assert.Equal(4, subsystems.GetProperty("assets").GetProperty("phase").GetInt32());
     }
 
     [Fact]

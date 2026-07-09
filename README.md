@@ -31,8 +31,12 @@ composto por três macrocamadas independentes e altamente desacopladas:
   checksum FNV-1a verificado entre os runtimes e **descoberta de capacidades**
   (`engine/describe`): a engine publica limites e layouts binários por reflexão e o
   middleware os projeta como conceitos de edição visual para o editor.
-- [ ] **Fase 3 — Motor Gráfico, Shaders e Câmera:** vertex shader HLSL de Linear Blend
-  Skinning, pipeline de Deferred Shading 2D (MRT) e integrador físico de segunda ordem.
+- [x] **Fase 3 — Motor Gráfico, Shaders e Câmera:** vertex shader HLSL de Linear Blend
+  Skinning, pipeline de Deferred Shading 2D (MRT: G-Buffer albedo+normal, Light Pass
+  aditivo, composição com Color LUT), câmera massa-mola-amortecedor de segunda ordem
+  com antecipação preditiva e screen shake procedural. Cada shader tem uma **referência
+  de CPU espelhada e testada** (`Lighting2D`, `ColorLut`, `LinearBlendSkinning`), e as
+  equações são verificadas entre runtimes via `lighting/evaluate` e `camera/simulate`.
 - [ ] **Fase 4 — Frontend Electron UX:** grafos de nós para máquinas de estado, editores
   de curvas de Bézier e painel taxonômico de assets.
 - [ ] **Fase 5 — Automação de Testes e Sandbox (Harness):** ambiente headless no MonoGame
@@ -64,6 +68,7 @@ dotnet run --project src/P7m.Engine.Runtime -- --pipe p7m-engine
 ```bash
 ./scripts/verify-phase1.sh   # plano de controle: handshake + JSON-RPC bidirecional
 ./scripts/verify-phase2.sh   # plano de dados: MMF + seqlock + checksum entre runtimes
+./scripts/verify-phase3.sh   # câmera (física + determinismo) e equação de luz do shader
 ```
 
 `verify-phase1` sobe o pipe server do middleware, conecta o host headless da engine e

@@ -9,6 +9,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/P7m.Engine.Core/P7m.Engine.Core.csproj" />
+    <ProjectReference Include="../../src/P7m.Engine.Graphics/P7m.Engine.Graphics.csproj" />
     <ProjectReference Include="../../src/P7m.Engine.Ipc/P7m.Engine.Ipc.csproj" />
     <ProjectReference Include="../../src/P7m.Engine.Runtime/P7m.Engine.Runtime.csproj" />
   </ItemGroup>

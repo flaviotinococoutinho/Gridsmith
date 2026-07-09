@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/camera.methods",
+  "title": "camera/* (Fase 3)",
+  "description": "Métodos da câmera cinemática (middleware → engine): integrador massa-mola-amortecedor de segunda ordem com antecipação preditiva e screen shake procedural harmônico. Todos os métodos abaixo em $defs, indexados pelo nome JSON-RPC.",
+  "$defs": {
+    "camera/configure": {
+      "description": "Configuração parcial (merge sobre o estado corrente). Responde a config completa consolidada.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "frequency": { "type": "number", "exclusiveMinimum": 0, "description": "Frequência natural (Hz)" },
+          "damping": { "type": "number", "minimum": 0, "description": "ζ: 1 = crítico (sem overshoot); < 1 oscila" },
+          "response": { "type": "number", "description": "r: > 0 antecipa; < 0 recua antes de seguir" },
+          "anticipationSeconds": { "type": "number", "minimum": 0, "description": "Antecipação preditiva: alvo percebido = posição + velocidade × t" },
+          "shakeFrequencyHz": { "type": "number", "exclusiveMinimum": 0 },
+          "shakeMaxOffset": { "type": "number", "minimum": 0 },
+          "shakeMaxRotationRadians": { "type": "number", "minimum": 0 },
+          "shakeTraumaDecayPerSecond": { "type": "number", "exclusiveMinimum": 0 },
+          "shakeSeed": { "type": "integer", "minimum": 0, "description": "Determinismo: mesmo seed → mesmo padrão de shake" }
+        },
+        "additionalProperties": false
+      },
+      "result": { "description": "Config completa consolidada (mesmas propriedades de params, todas presentes)" }
+    },
+    "camera/shake": {
+      "description": "Impulso transiente: acumula trauma (0,1]; amplitude efetiva = trauma².",
+      "params": {
+        "type": "object",
+        "properties": { "trauma": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 } },
+        "required": ["trauma"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": { "trauma": { "type": "number" } },
+        "required": ["trauma"]
+      }
+    },
+    "camera/simulate": {
+      "description": "Simulação determinística em câmera efêmera com a config corrente (preview do editor; não perturba a câmera viva). Trajetória amostrada em até ~64 pontos.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "steps": { "type": "integer", "minimum": 1, "maximum": 100000 },
+          "deltaSeconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+          "target": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+          "targetVelocity": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+          "initial": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+          "trauma": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "required": ["steps", "deltaSeconds", "target"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "final": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+          "finalVelocity": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+          "samples": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 } },
+          "maxShakeMagnitude": { "type": "number", "minimum": 0 },
+          "finalTrauma": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "required": ["final", "finalVelocity", "samples", "maxShakeMagnitude", "finalTrauma"]
+      }
+    }
+  }
+}

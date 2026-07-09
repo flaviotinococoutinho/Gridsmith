@@ -29,13 +29,47 @@ export interface MeshBinding {
   readonly strideInBytes: number;
 }
 
+/** Configuração parcial da câmera cinemática (merge sobre o estado corrente). */
+export interface CameraSettings {
+  readonly frequency?: number;
+  readonly damping?: number;
+  readonly response?: number;
+  readonly anticipationSeconds?: number;
+  readonly shakeFrequencyHz?: number;
+  readonly shakeMaxOffset?: number;
+  readonly shakeMaxRotationRadians?: number;
+  readonly shakeTraumaDecayPerSecond?: number;
+  readonly shakeSeed?: number;
+}
+
+export type LightKind = "directional" | "point" | "spot";
+
+export interface LightSpec {
+  readonly lightId: string;
+  readonly type: LightKind;
+  readonly position?: readonly [number, number];
+  readonly height?: number;
+  readonly direction?: readonly [number, number];
+  readonly color: readonly [number, number, number];
+  readonly intensity: number;
+  readonly radius?: number;
+  readonly innerConeDegrees?: number;
+  readonly outerConeDegrees?: number;
+}
+
 export type BlueprintCommand =
   | { readonly kind: "skeleton/define"; readonly skeleton: SkeletonBlueprint }
-  | { readonly kind: "mesh/bind"; readonly binding: MeshBinding };
+  | { readonly kind: "mesh/bind"; readonly binding: MeshBinding }
+  | { readonly kind: "camera/configure"; readonly settings: CameraSettings }
+  | { readonly kind: "light/add"; readonly light: LightSpec }
+  | { readonly kind: "light/remove"; readonly lightId: string };
 
 export type BlueprintEvent =
   | { readonly kind: "skeletonDefined"; readonly skeleton: SkeletonBlueprint }
-  | { readonly kind: "meshBound"; readonly binding: MeshBinding };
+  | { readonly kind: "meshBound"; readonly binding: MeshBinding }
+  | { readonly kind: "cameraConfigured"; readonly settings: CameraSettings }
+  | { readonly kind: "lightAdded"; readonly light: LightSpec }
+  | { readonly kind: "lightRemoved"; readonly lightId: string };
 
 /**
  * Eventos: "event" (BlueprintEvent) após cada comando aplicado com sucesso.
@@ -43,9 +77,37 @@ export type BlueprintEvent =
 export class BlueprintStore extends EventEmitter {
   private readonly skeletons = new Map<string, SkeletonBlueprint>();
   private readonly meshes = new Map<string, MeshBinding>();
+  private readonly lights = new Map<string, LightSpec>();
+  private camera: CameraSettings = {};
 
   apply(command: BlueprintCommand): BlueprintEvent {
     switch (command.kind) {
+      case "camera/configure": {
+        validateCameraSettings(command.settings);
+        this.camera = Object.freeze({ ...this.camera, ...command.settings });
+        const event: BlueprintEvent = { kind: "cameraConfigured", settings: this.camera };
+        this.emit("event", event);
+        return event;
+      }
+      case "light/add": {
+        const light = command.light;
+        validateLight(light);
+        if (this.lights.has(light.lightId)) {
+          throw new JsonRpcError(RpcErrorCode.DuplicateId, `Light "${light.lightId}" already exists`);
+        }
+        this.lights.set(light.lightId, Object.freeze({ ...light }));
+        const event: BlueprintEvent = { kind: "lightAdded", light };
+        this.emit("event", event);
+        return event;
+      }
+      case "light/remove": {
+        if (!this.lights.delete(command.lightId)) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `Light "${command.lightId}" does not exist`);
+        }
+        const event: BlueprintEvent = { kind: "lightRemoved", lightId: command.lightId };
+        this.emit("event", event);
+        return event;
+      }
       case "skeleton/define": {
         const s = command.skeleton;
         validateSkeleton(s);
@@ -90,6 +152,59 @@ export class BlueprintStore extends EventEmitter {
 
   listMeshes(): readonly MeshBinding[] {
     return [...this.meshes.values()];
+  }
+
+  /** Configuração acumulada da câmera ({} = defaults da engine). */
+  get cameraSettings(): CameraSettings {
+    return this.camera;
+  }
+
+  getLight(lightId: string): LightSpec | undefined {
+    return this.lights.get(lightId);
+  }
+
+  listLights(): readonly LightSpec[] {
+    return [...this.lights.values()];
+  }
+}
+
+function validateCameraSettings(s: CameraSettings): void {
+  if (s.frequency !== undefined && !(s.frequency > 0)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"frequency" must be > 0`);
+  }
+  if (s.damping !== undefined && !(s.damping >= 0)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"damping" must be >= 0`);
+  }
+  if (s.anticipationSeconds !== undefined && !(s.anticipationSeconds >= 0)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"anticipationSeconds" must be >= 0`);
+  }
+}
+
+function validateLight(light: LightSpec): void {
+  if (typeof light.lightId !== "string" || light.lightId.length === 0) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"lightId" must be a non-empty string`);
+  }
+  if (!["directional", "point", "spot"].includes(light.type)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"type" must be "directional", "point" or "spot"`);
+  }
+  if (!Array.isArray(light.color) || light.color.length !== 3) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"color" must contain 3 numbers`);
+  }
+  if (!(light.intensity > 0)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"intensity" must be > 0`);
+  }
+  if ((light.type === "point" || light.type === "spot") && !(light.radius !== undefined && light.radius > 0)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"radius" must be > 0 for ${light.type} lights`);
+  }
+  if (light.type === "spot") {
+    const inner = light.innerConeDegrees;
+    const outer = light.outerConeDegrees;
+    if (!(inner !== undefined && outer !== undefined && inner > 0 && outer >= inner && outer < 180)) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `spot lights require 0 < innerConeDegrees <= outerConeDegrees < 180`,
+      );
+    }
   }
 }
 

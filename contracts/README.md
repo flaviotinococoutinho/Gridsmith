@@ -14,6 +14,8 @@ Fonte única de verdade dos métodos trafegados entre Middleware (Node.js) e Eng
 | `mesh/bind_shared_memory` | middleware → engine | request | [`schemas/mesh.bind_shared_memory.schema.json`](schemas/mesh.bind_shared_memory.schema.json) |
 | `engine/describe` | middleware → engine | request | [`schemas/engine.describe.schema.json`](schemas/engine.describe.schema.json) |
 | `mesh/inspect` | middleware → engine | request | [`schemas/mesh.inspect.schema.json`](schemas/mesh.inspect.schema.json) |
+| `camera/configure`, `camera/shake`, `camera/simulate` | middleware → engine | request | [`schemas/camera.methods.schema.json`](schemas/camera.methods.schema.json) |
+| `lighting/add`, `lighting/remove`, `lighting/inspect`, `lighting/evaluate` | middleware → engine | request | [`schemas/lighting.methods.schema.json`](schemas/lighting.methods.schema.json) |
 
 ## Plano de dados
 

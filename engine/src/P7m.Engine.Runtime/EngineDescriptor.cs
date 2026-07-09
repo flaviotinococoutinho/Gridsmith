@@ -1,3 +1,4 @@
+using P7m.Engine.Core.Lighting;
 using P7m.Engine.Core.Rigging;
 using P7m.Engine.Core.SharedMemory;
 using P7m.Engine.Ipc;
@@ -16,7 +17,7 @@ namespace P7m.Engine.Runtime;
 /// </summary>
 public static class EngineDescriptor
 {
-    public static object BuildManifest(SkeletonStore skeletons) => new
+    public static object BuildManifest(SkeletonStore skeletons, LightStore lights) => new
     {
         engine = new
         {
@@ -80,36 +81,50 @@ public static class EngineDescriptor
             },
             camera = new
             {
-                status = "planned",
-                phase = 3,
-                features = new[] { "second-order-spring-damper", "predictive-lookahead", "procedural-shake" },
+                status = "available",
+                features = new[]
+                {
+                    "second-order-spring-damper", "predictive-lookahead",
+                    "procedural-harmonic-shake", "deterministic-simulation",
+                },
                 editor = new
                 {
                     panel = "camera-rig",
-                    gizmos = new[] { "follow-target", "deadzone-rect" },
+                    gizmos = new[] { "follow-target", "anticipation-vector", "shake-preview" },
                     nodeTypes = new[] { "camera", "shake-layer" },
                     properties = new object[]
                     {
                         new { name = "frequency", type = "float", min = 0.1, max = 10.0, @default = 2.0 },
                         new { name = "damping", type = "float", min = 0.0, max = 2.0, @default = 1.0 },
-                        new { name = "anticipation", type = "float", min = 0.0, max = 1.0, @default = 0.25 },
+                        new { name = "response", type = "float", min = -2.0, max = 2.0, @default = 0.0 },
+                        new { name = "anticipationSeconds", type = "float", min = 0.0, max = 1.0, @default = 0.25 },
+                        new { name = "shakeMaxOffset", type = "float", min = 0.0, max = 128.0, @default = 24.0 },
+                        new { name = "shakeFrequencyHz", type = "float", min = 1.0, max = 60.0, @default = 18.0 },
                     },
                 },
             },
             lighting = new
             {
-                status = "planned",
-                phase = 3,
-                features = new[] { "deferred-2d", "mrt-gbuffer", "normal-maps", "color-lut" },
+                status = "available",
+                limits = new Dictionary<string, double>
+                {
+                    ["maxLights"] = lights.Capacity,
+                },
+                features = new[] { "deferred-2d", "mrt-gbuffer", "normal-maps", "color-lut", "cpu-reference-eval" },
+                vertexLayouts = Array.Empty<object>(),
                 editor = new
                 {
                     panel = "lighting-pipeline",
-                    gizmos = new[] { "light-radius", "spot-cone" },
+                    gizmos = new[] { "light-radius", "spot-cone", "direction-arrow" },
                     nodeTypes = new[] { "point-light", "directional-light", "spot-light", "lut-grade" },
                     properties = new object[]
                     {
                         new { name = "intensity", type = "float", min = 0.0, max = 16.0, @default = 1.0 },
                         new { name = "color", type = "color", @default = "#ffffff" },
+                        new { name = "radius", type = "float", min = 1.0, max = 4096.0, @default = 256.0 },
+                        new { name = "innerConeDegrees", type = "float", min = 1.0, max = 179.0, @default = 30.0 },
+                        new { name = "outerConeDegrees", type = "float", min = 1.0, max = 179.0, @default = 60.0 },
+                        new { name = "lutStrength", type = "float", min = 0.0, max = 1.0, @default = 0.0 },
                     },
                 },
             },

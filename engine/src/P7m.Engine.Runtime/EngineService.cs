@@ -1,5 +1,7 @@
 using System.Numerics;
 using System.Text.Json;
+using P7m.Engine.Core.Camera;
+using P7m.Engine.Core.Lighting;
 using P7m.Engine.Core.Rigging;
 using P7m.Engine.Core.SharedMemory;
 using P7m.Engine.Ipc;
@@ -21,6 +23,12 @@ public sealed class EngineService : IDisposable
 
     public SkeletonStore Skeletons { get; }
 
+    /// <summary>Câmera cinemática do serviço (Fase 3).</summary>
+    public CinematicCamera Camera { get; }
+
+    /// <summary>Luzes do pipeline deferred (Fase 3).</summary>
+    public LightStore Lights { get; }
+
     /// <summary>Binds de shared memory aceitos.</summary>
     public IReadOnlyDictionary<string, MeshBindParams> MeshBindings => _meshBindings;
 
@@ -34,9 +42,11 @@ public sealed class EngineService : IDisposable
     /// <summary>Disparado quando um <c>engine/ping</c> originado no middleware é atendido.</summary>
     public event Action<string>? PingReceived;
 
-    public EngineService(int maxSkeletons = 64)
+    public EngineService(int maxSkeletons = 64, int maxLights = 256)
     {
         Skeletons = new SkeletonStore(maxSkeletons);
+        Camera = new CinematicCamera(CameraConfig.Default);
+        Lights = new LightStore(maxLights);
     }
 
     public void RegisterHandlers(JsonRpcConnection connection)
@@ -118,7 +128,10 @@ public sealed class EngineService : IDisposable
         });
 
         connection.RegisterMethod("engine/describe", (_, _) =>
-            ValueTask.FromResult<object?>(EngineDescriptor.BuildManifest(Skeletons)));
+            ValueTask.FromResult<object?>(EngineDescriptor.BuildManifest(Skeletons, Lights)));
+
+        RegisterCameraHandlers(connection);
+        RegisterLightingHandlers(connection);
 
         connection.RegisterMethod("mesh/inspect", (params_, _) =>
         {
@@ -171,6 +184,290 @@ public sealed class EngineService : IDisposable
 
             _meshReaders.Clear();
         }
+    }
+
+    private void RegisterCameraHandlers(JsonRpcConnection connection)
+    {
+        connection.RegisterMethod("camera/configure", (params_, _) =>
+        {
+            var p = Deserialize<CameraConfigureParams>(params_);
+            CameraConfig config;
+            lock (_gate)
+            {
+                config = MergeConfig(Camera.Config, p);
+                Camera.Reconfigure(config);
+            }
+
+            return ValueTask.FromResult<object?>(ConfigToWire(config));
+        });
+
+        connection.RegisterMethod("camera/shake", (params_, _) =>
+        {
+            var p = Deserialize<CameraShakeParams>(params_);
+            if (p.Trauma is not (> 0f and <= 1f))
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"trauma\" must be in (0, 1]");
+            }
+
+            lock (_gate)
+            {
+                Camera.AddTrauma(p.Trauma);
+                return ValueTask.FromResult<object?>(new { trauma = Camera.Trauma });
+            }
+        });
+
+        connection.RegisterMethod("camera/simulate", (params_, _) =>
+        {
+            var p = Deserialize<CameraSimulateParams>(params_);
+            if (p.Steps is < 1 or > 100_000)
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"steps\" must be in [1, 100000]");
+            }
+
+            if (p.DeltaSeconds is not (> 0f and <= 1f))
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"deltaSeconds\" must be in (0, 1]");
+            }
+
+            var target = ToVector2(p.Target, "target");
+            var velocity = p.TargetVelocity is null ? Vector2.Zero : ToVector2(p.TargetVelocity, "targetVelocity");
+            var initial = p.Initial is null ? Vector2.Zero : ToVector2(p.Initial, "initial");
+
+            // Simulação determinística em uma câmera efêmera com a config
+            // corrente — não perturba a câmera viva do serviço.
+            CameraConfig config;
+            lock (_gate)
+            {
+                config = Camera.Config;
+            }
+
+            var sim = new CinematicCamera(config, initial);
+            sim.Snap(initial);
+            if (p.Trauma is > 0f)
+            {
+                sim.AddTrauma(Math.Clamp(p.Trauma.Value, 0f, 1f));
+            }
+
+            var sampleEvery = Math.Max(1, p.Steps / 64);
+            var samples = new List<float[]>(70);
+            var maxShakeMagnitude = 0f;
+            for (var step = 0; step < p.Steps; step++)
+            {
+                sim.Update(p.DeltaSeconds, target, velocity);
+                maxShakeMagnitude = MathF.Max(maxShakeMagnitude, sim.ShakeOffset.Length());
+                if (step % sampleEvery == 0 || step == p.Steps - 1)
+                {
+                    samples.Add([sim.Position.X, sim.Position.Y]);
+                }
+            }
+
+            return ValueTask.FromResult<object?>(new
+            {
+                final = new[] { sim.Position.X, sim.Position.Y },
+                finalVelocity = new[] { sim.Velocity.X, sim.Velocity.Y },
+                samples,
+                maxShakeMagnitude,
+                finalTrauma = sim.Trauma,
+            });
+        });
+    }
+
+    private void RegisterLightingHandlers(JsonRpcConnection connection)
+    {
+        connection.RegisterMethod("lighting/add", (params_, _) =>
+        {
+            var p = Deserialize<LightingAddParams>(params_);
+            var data = ToLightData(p);
+            lock (_gate)
+            {
+                LightHandle handle;
+                try
+                {
+                    handle = Lights.Add(data);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    throw new JsonRpcException(RpcErrorCode.InternalError, ex.Message);
+                }
+
+                return ValueTask.FromResult<object?>(new { lightId = handle.Slot });
+            }
+        });
+
+        connection.RegisterMethod("lighting/remove", (params_, _) =>
+        {
+            var p = Deserialize<LightingRemoveParams>(params_);
+            lock (_gate)
+            {
+                var handle = new LightHandle(p.LightId);
+                if (!Lights.IsActive(handle))
+                {
+                    throw new JsonRpcException(RpcErrorCode.InvalidParams, $"Light {p.LightId} is not active");
+                }
+
+                Lights.Remove(handle);
+                return ValueTask.FromResult<object?>(new { removed = p.LightId });
+            }
+        });
+
+        connection.RegisterMethod("lighting/inspect", (_, _) =>
+        {
+            lock (_gate)
+            {
+                var lights = new List<object>(Lights.LiveCount);
+                for (var slot = 0; slot < Lights.Capacity; slot++)
+                {
+                    var handle = new LightHandle(slot);
+                    if (!Lights.IsActive(handle))
+                    {
+                        continue;
+                    }
+
+                    var d = Lights.Get(handle);
+                    lights.Add(new
+                    {
+                        lightId = slot,
+                        type = d.Type.ToString().ToLowerInvariant(),
+                        position = new[] { d.Position.X, d.Position.Y },
+                        height = d.Height,
+                        direction = new[] { d.Direction.X, d.Direction.Y },
+                        color = new[] { d.Color.X, d.Color.Y, d.Color.Z },
+                        intensity = d.Intensity,
+                        radius = d.Radius,
+                    });
+                }
+
+                return ValueTask.FromResult<object?>(new
+                {
+                    count = Lights.LiveCount,
+                    capacity = Lights.Capacity,
+                    lights,
+                });
+            }
+        });
+
+        connection.RegisterMethod("lighting/evaluate", (params_, _) =>
+        {
+            var p = Deserialize<LightingEvaluateParams>(params_);
+            var surface = ToVector2(p.Surface, "surface");
+            if (p.Normal is not { Length: 3 })
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"normal\" must contain 3 floats");
+            }
+
+            var normal = new Vector3(p.Normal[0], p.Normal[1], p.Normal[2]);
+            lock (_gate)
+            {
+                var rgb = Lights.Accumulate(surface, normal);
+                return ValueTask.FromResult<object?>(new { rgb = new[] { rgb.X, rgb.Y, rgb.Z } });
+            }
+        });
+    }
+
+    private static CameraConfig MergeConfig(in CameraConfig current, CameraConfigureParams p)
+    {
+        var config = current with
+        {
+            Frequency = p.Frequency ?? current.Frequency,
+            Damping = p.Damping ?? current.Damping,
+            Response = p.Response ?? current.Response,
+            AnticipationSeconds = p.AnticipationSeconds ?? current.AnticipationSeconds,
+            ShakeFrequencyHz = p.ShakeFrequencyHz ?? current.ShakeFrequencyHz,
+            ShakeMaxOffset = p.ShakeMaxOffset ?? current.ShakeMaxOffset,
+            ShakeMaxRotationRadians = p.ShakeMaxRotationRadians ?? current.ShakeMaxRotationRadians,
+            ShakeTraumaDecayPerSecond = p.ShakeTraumaDecayPerSecond ?? current.ShakeTraumaDecayPerSecond,
+            ShakeSeed = p.ShakeSeed ?? current.ShakeSeed,
+        };
+
+        if (config.Frequency <= 0f || config.Damping < 0f)
+        {
+            throw new JsonRpcException(
+                RpcErrorCode.InvalidParams, "\"frequency\" must be > 0 and \"damping\" >= 0");
+        }
+
+        return config;
+    }
+
+    private static object ConfigToWire(in CameraConfig c) => new
+    {
+        frequency = c.Frequency,
+        damping = c.Damping,
+        response = c.Response,
+        anticipationSeconds = c.AnticipationSeconds,
+        shakeFrequencyHz = c.ShakeFrequencyHz,
+        shakeMaxOffset = c.ShakeMaxOffset,
+        shakeMaxRotationRadians = c.ShakeMaxRotationRadians,
+        shakeTraumaDecayPerSecond = c.ShakeTraumaDecayPerSecond,
+        shakeSeed = c.ShakeSeed,
+    };
+
+    private static LightData ToLightData(LightingAddParams p)
+    {
+        var type = p.Type switch
+        {
+            "directional" => LightType.Directional,
+            "point" => LightType.Point,
+            "spot" => LightType.Spot,
+            _ => throw new JsonRpcException(
+                RpcErrorCode.InvalidParams, "\"type\" must be \"directional\", \"point\" or \"spot\""),
+        };
+
+        if (p.Color is not { Length: 3 })
+        {
+            throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"color\" must contain 3 floats");
+        }
+
+        if (p.Intensity is not > 0f)
+        {
+            throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"intensity\" must be > 0");
+        }
+
+        var position = p.Position is null ? Vector2.Zero : ToVector2(p.Position, "position");
+        var direction = p.Direction is null ? new Vector2(0f, -1f) : ToVector2(p.Direction, "direction");
+
+        if (type is LightType.Point or LightType.Spot && p.Radius is not > 0f)
+        {
+            throw new JsonRpcException(
+                RpcErrorCode.InvalidParams, $"\"radius\" must be > 0 for {p.Type} lights");
+        }
+
+        var innerCos = 1f;
+        var outerCos = 0f;
+        if (type is LightType.Spot)
+        {
+            if (p.InnerConeDegrees is not (> 0f and < 180f) ||
+                p.OuterConeDegrees is not (> 0f and < 180f) ||
+                p.OuterConeDegrees < p.InnerConeDegrees)
+            {
+                throw new JsonRpcException(
+                    RpcErrorCode.InvalidParams,
+                    "spot lights require 0 < innerConeDegrees <= outerConeDegrees < 180");
+            }
+
+            innerCos = MathF.Cos(p.InnerConeDegrees.Value * MathF.PI / 180f / 2f);
+            outerCos = MathF.Cos(p.OuterConeDegrees.Value * MathF.PI / 180f / 2f);
+        }
+
+        return new LightData(
+            type,
+            position,
+            p.Height ?? 0f,
+            direction,
+            new Vector3(p.Color[0], p.Color[1], p.Color[2]),
+            p.Intensity.Value,
+            p.Radius ?? 0f,
+            innerCos,
+            outerCos);
+    }
+
+    private static Vector2 ToVector2(float[]? values, string field)
+    {
+        if (values is not { Length: 2 })
+        {
+            throw new JsonRpcException(RpcErrorCode.InvalidParams, $"\"{field}\" must contain 2 floats");
+        }
+
+        return new Vector2(values[0], values[1]);
     }
 
     private void RegisterSkeleton(SkeletonInitializeParams p)
@@ -339,4 +636,40 @@ public sealed class EngineService : IDisposable
         int StrideInBytes);
 
     public sealed record MeshInspectParams(string? MeshId, int SampleIndex);
+
+    public sealed record CameraConfigureParams(
+        float? Frequency,
+        float? Damping,
+        float? Response,
+        float? AnticipationSeconds,
+        float? ShakeFrequencyHz,
+        float? ShakeMaxOffset,
+        float? ShakeMaxRotationRadians,
+        float? ShakeTraumaDecayPerSecond,
+        uint? ShakeSeed);
+
+    public sealed record CameraShakeParams(float Trauma);
+
+    public sealed record CameraSimulateParams(
+        int Steps,
+        float DeltaSeconds,
+        float[]? Target,
+        float[]? TargetVelocity,
+        float[]? Initial,
+        float? Trauma);
+
+    public sealed record LightingAddParams(
+        string? Type,
+        float[]? Position,
+        float? Height,
+        float[]? Direction,
+        float[]? Color,
+        float? Intensity,
+        float? Radius,
+        float? InnerConeDegrees,
+        float? OuterConeDegrees);
+
+    public sealed record LightingRemoveParams(int LightId);
+
+    public sealed record LightingEvaluateParams(float[]? Surface, float[]? Normal);
 }

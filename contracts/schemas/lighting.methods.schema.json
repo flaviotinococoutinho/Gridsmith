@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/lighting.methods",
+  "title": "lighting/* (Fase 3)",
+  "description": "Métodos do pipeline de iluminação deferred 2D (middleware → engine). As equações do Light Pass são espelhadas na referência de CPU (Lighting2D.cs ↔ DeferredLight.fx); lighting/evaluate expõe essa referência via RPC para asserções sem GPU. Métodos em $defs, indexados pelo nome JSON-RPC.",
+  "$defs": {
+    "light": {
+      "type": "object",
+      "properties": {
+        "type": { "enum": ["directional", "point", "spot"] },
+        "position": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "height": { "type": "number", "description": "Altura (z) da luz acima do plano — dá volume à iluminação" },
+        "direction": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "color": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 },
+        "intensity": { "type": "number", "exclusiveMinimum": 0 },
+        "radius": { "type": "number", "exclusiveMinimum": 0, "description": "Obrigatório para point/spot; atenuação (1-(d/r)²)²" },
+        "innerConeDegrees": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 180 },
+        "outerConeDegrees": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 180 }
+      },
+      "required": ["type", "color", "intensity"]
+    },
+    "lighting/add": {
+      "params": { "$ref": "#/$defs/light" },
+      "result": {
+        "type": "object",
+        "properties": { "lightId": { "type": "integer", "minimum": 0, "description": "Slot no LightStore da engine" } },
+        "required": ["lightId"]
+      }
+    },
+    "lighting/remove": {
+      "params": {
+        "type": "object",
+        "properties": { "lightId": { "type": "integer", "minimum": 0 } },
+        "required": ["lightId"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": { "removed": { "type": "integer" } },
+        "required": ["removed"]
+      }
+    },
+    "lighting/inspect": {
+      "params": { "type": "object", "additionalProperties": false },
+      "result": {
+        "type": "object",
+        "properties": {
+          "count": { "type": "integer", "minimum": 0 },
+          "capacity": { "type": "integer", "minimum": 1 },
+          "lights": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "lightId": { "type": "integer" },
+                "type": { "enum": ["directional", "point", "spot"] },
+                "position": { "type": "array", "items": { "type": "number" } },
+                "height": { "type": "number" },
+                "direction": { "type": "array", "items": { "type": "number" } },
+                "color": { "type": "array", "items": { "type": "number" } },
+                "intensity": { "type": "number" },
+                "radius": { "type": "number" }
+              },
+              "required": ["lightId", "type"]
+            }
+          }
+        },
+        "required": ["count", "capacity", "lights"]
+      }
+    },
+    "lighting/evaluate": {
+      "description": "Acumula todas as luzes ativas em um ponto — mesma equação do shader DeferredLight.fx (referência de CPU).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "surface": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+          "normal": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3, "description": "Normal de normal map: componentes em [-1,1], z > 0 para a câmera" }
+        },
+        "required": ["surface", "normal"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": { "rgb": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 } },
+        "required": ["rgb"]
+      }
+    }
+  }
+}
