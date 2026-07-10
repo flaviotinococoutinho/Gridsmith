@@ -64,11 +64,15 @@ da engine, nunca assume suporte. Desenho completo em
   cruzando perfil estático + manifesto vivo em uma matriz de decisões auto-explicativa.
   Ferramentas MCP: `blueprint_command`, `runtime_experience`, `runtime_profiles`,
   `artifact_get`, `hooks_list`.
-- [ ] **Fase 4 — Frontend Electron UX:** grafos de máquinas de estado com semântica Gum
-  (estado = conjunto nomeado de atribuições; transições interpolam com easing Bézier),
-  editores de curvas, painel de níveis LDtk-like (pincel de IntGrid + preview de regras),
-  world map, painel taxonômico de assets com watcher do CLI Aseprite + compile MGCB, e
-  live edit de variáveis tunáveis via RPCs por subsistema.
+- [~] **Fase 4 — Frontend Electron UX** *(fundação entregue)*: **EditorGateway** no
+  middleware (`<pipe>-editor`: handshake, `blueprint/dispatch` canônico,
+  `blueprint/query`, `experience/resolve` e broadcast `blueprint/event` multi-cliente),
+  shell Electron com contextIsolation conectada ao gateway, e os núcleos de domínio do
+  editor testados: **FABRIK 2D**, **easing Bézier cúbico** (Newton + bisseção),
+  **máquina de estados com semântica Gum** (interpolação interrupt-safe com easing) e
+  **ExperienceGate** (painéis governados com razão visível). Restam: editores de canvas
+  (curvas/rigs/grafos em workers), painel de níveis LDtk-like, world map, watcher
+  Aseprite + MGCB e live edit generalizado.
 - [ ] **Fase 5 — Automação de Testes e Sandbox (Harness):** ambiente headless no MonoGame
   para simulações em *physics slices* com asserções lógicas.
 

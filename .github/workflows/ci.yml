@@ -23,6 +23,22 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  frontend:
+    name: Frontend (Editor core)
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: middleware/package-lock.json
+      - run: cd middleware && npm ci && npm run build
+      - run: cd frontend && npm install && npm run build
+      - run: cd frontend && npm test
+
   engine:
     name: Engine (.NET 8)
     runs-on: ubuntu-latest
@@ -38,7 +54,7 @@ jobs:
       - run: dotnet test --no-build --nologo
 
   e2e:
-    name: Verificação ponta-a-ponta (Fases 1–3)
+    name: Verificação ponta-a-ponta (Fases 1–4)
     runs-on: ubuntu-latest
     needs: [middleware, engine]
     steps:
@@ -55,3 +71,4 @@ jobs:
       - run: ./scripts/verify-phase1.sh
       - run: ./scripts/verify-phase2.sh
       - run: ./scripts/verify-phase3.sh
+      - run: ./scripts/verify-phase4.sh

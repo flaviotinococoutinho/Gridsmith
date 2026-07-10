@@ -1,27 +1,43 @@
-# P7M Frontend (Electron) — Fase 4
+# @p7m/frontend — Editor visual (Electron)
 
-Ambiente visual WYSIWYG do ecossistema P7M EaaS. **Esta camada é implementada na
-Fase 4 do roteiro**; este diretório reserva a estrutura e registra as decisões já
-tomadas nas fases anteriores que a restringem.
+Editor visual do ecossistema P7M EaaS. **Shell fina + núcleos de domínio
+testáveis**: nenhuma lógica de jogo vive no Electron — comandos são
+despachados pelo caminho canônico do middleware e o gating de UI vem da
+governança de runtime.
 
-## Arquitetura planejada
+## Estrutura
 
-- **CQRS interno para o estado do editor:** cada ação do usuário gera um Comando
-  imutável enviado ao middleware; a UI (React) renderiza projeções somente-leitura do
-  Blueprint centralizado — o mesmo `BlueprintStore` que já existe no middleware.
-- **Abstração de canvas fora da main thread:** editores de curvas de Bézier cúbicas,
-  grafos de máquinas de estado e manipulação de ossos renderizados via WebGL/Canvas 2D
-  em Worker Threads (`OffscreenCanvas`).
-- **FABRIK interativo:** o solver de cinemática inversa roda no worker de edição de
-  rig; apenas os keyframes resultantes viram Comandos.
-- **Painel taxonômico de assets:** catálogo por tags/sub-tags monitorado por serviço
-  assíncrono, com pipeline de geração via IA (fatiamento de sprite sheets + compilação
-  `MGCB` para `.xnb`) orquestrado pelo middleware.
+| Módulo | Papel |
+|---|---|
+| `src/core/bezier.ts` | Easing Bézier cúbica (convenção CSS, Newton + bisseção) — motor do editor de curvas e das transições de estado |
+| `src/core/fabrik.ts` | Solver FABRIK 2D para edição interativa de rigs (comprimentos preservados, alvo inalcançável estica a cadeia, determinístico) |
+| `src/core/stateMachine.ts` | Máquina de estados visuais com semântica Gum: estado = conjunto nomeado de atribuições; numéricos interpolam com easing (interrupt-safe), discretos aplicam no início |
+| `src/core/experienceGate.ts` | Gate da UI sobre a matriz de decisões da governança — painéis desabilitados carregam a RAZÃO do perfil/manifesto |
+| `src/main/EditorClient.ts` | Cliente do gateway do editor (`<pipe>-editor`), reutilizando o peer JSON-RPC do middleware |
+| `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation, API `window.p7m` (connect/dispatch/query/experience/eventos) |
+| `src/renderer/` | Shell da UI: régua de painéis materializada do ExperienceGate + log de eventos do Blueprint |
 
-## Contratos já fixados pelas Fases 1–3
+## Comandos
 
-- Toda comunicação com o middleware usa os métodos JSON-RPC de
-  [`../contracts/schemas/`](../contracts/schemas/) — o Electron **não** fala
-  diretamente com a engine.
-- Dados de malha em massa (vértices, UVs, `BoneWeights`) são escritos no
-  memory-mapped file (Fase 2) e apenas **anunciados** via `mesh/bind_shared_memory`.
+```bash
+# o middleware precisa estar compilado (dependência file:../middleware)
+cd ../middleware && npm run build && cd ../frontend
+
+npm install        # ELECTRON_SKIP_BINARY_DOWNLOAD=1 para pular o binário (CI)
+npm run build
+npm test           # núcleos + integração real com o EditorGateway
+
+# execução (requer o binário do Electron e um middleware rodando):
+node ../middleware/dist/index.js --pipe p7m-engine --no-mcp &
+npm run app -- --pipe p7m-engine
+```
+
+## Regras da casa
+
+- **CQRS**: o renderer nunca muta estado — despacha comandos canônicos e
+  re-renderiza projeções/eventos.
+- **Governança visível**: painel desabilitado sempre mostra a razão vinda do
+  perfil de runtime ou do manifesto vivo — nunca um genérico "indisponível".
+- Editores de canvas pesados (curvas, rigs, grafos) rodam fora da main thread
+  (Worker Threads/OffscreenCanvas) — os solvers em `src/core/` são puros
+  exatamente para isso.

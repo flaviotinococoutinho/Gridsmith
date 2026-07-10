@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'" />
+    <title>P7M Editor</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>P7M Editor</h1>
+      <span id="runtime-label">conectando…</span>
+    </header>
+    <main>
+      <aside id="panel-rail" aria-label="Painéis do editor"></aside>
+      <section id="workspace">
+        <p id="status">Aguardando conexão com o middleware…</p>
+        <ul id="event-log" aria-label="Eventos do blueprint"></ul>
+      </section>
+    </main>
+    <script type="module" src="renderer.js"></script>
+  </body>
+</html>

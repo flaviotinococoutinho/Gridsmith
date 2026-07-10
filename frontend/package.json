@@ -1,0 +1,25 @@
+{
+  "name": "@p7m/frontend",
+  "version": "0.1.0",
+  "description": "Editor visual Electron do ecossistema P7M EaaS: núcleos de domínio do editor (FABRIK, easing Bézier, máquina de estados Gum-like, gate de experiência) e o shell Electron conectado ao gateway do middleware",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "app": "electron dist/main/main.js"
+  },
+  "dependencies": {
+    "@p7m/middleware": "file:../middleware"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^33.2.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

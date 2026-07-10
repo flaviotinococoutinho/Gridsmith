@@ -9,6 +9,7 @@
  * Uso: p7m-middleware [--pipe <nome>] [--no-mcp]
  */
 
+import { EditorGateway } from "./ipc/EditorGateway.js";
 import { EnginePipeServer, type EngineLogEntry, type EngineSession } from "./ipc/EnginePipeServer.js";
 import { ArtifactStore } from "./canonical/ArtifactStore.js";
 import { CanonicalOrchestrator } from "./canonical/CanonicalOrchestrator.js";
@@ -62,6 +63,21 @@ async function main(): Promise<void> {
   const adapter = new MonoGameAdapter(pipeServer, capabilities);
   const orchestrator = new CanonicalOrchestrator(store, hooks, adapter);
 
+  // Endpoint do editor (Electron/clientes de edição) em <pipe>-editor
+  const editorGateway = new EditorGateway({
+    pipeName: pipeName ?? "p7m-engine",
+    orchestrator,
+    store,
+    governor,
+    adapter,
+  });
+  editorGateway.on("session", (session) => {
+    console.error(`[p7m] editor session ${session.sessionId} established: ${session.clientName}`);
+  });
+  editorGateway.on("sessionClosed", (session) => {
+    console.error(`[p7m] editor session ${session.sessionId} closed`);
+  });
+
   capabilities.on("capabilities", (manifest: EngineManifest) => {
     const available = Object.entries(manifest.subsystems)
       .filter(([, s]) => s.status === "available")
@@ -94,6 +110,8 @@ async function main(): Promise<void> {
 
   await pipeServer.listen();
   console.error(`[p7m] control-plane endpoint listening at ${pipeServer.pipePath}`);
+  await editorGateway.listen();
+  console.error(`[p7m] editor gateway listening at ${editorGateway.pipePath}`);
 
   if (mcp) {
     await startMcpStdio(bridge, pipeServer, capabilities, {
@@ -109,6 +127,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     console.error("[p7m] shutting down");
+    await editorGateway.close();
     await pipeServer.close();
     process.exit(0);
   };

@@ -12,8 +12,8 @@ import { z } from "zod";
 import type { ArtifactStore } from "../canonical/ArtifactStore.js";
 import type { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
 import type { HookBus } from "../canonical/HookBus.js";
+import { reshapeCommand } from "../canonical/commandShape.js";
 import type { CapabilityRegistry } from "../domain/CapabilityRegistry.js";
-import type { BlueprintCommand } from "../domain/BlueprintStore.js";
 import type { EngineBridge } from "../domain/EngineBridge.js";
 import type { EnginePipeServer } from "../ipc/EnginePipeServer.js";
 import type { ExperienceGovernor } from "../runtime/ExperienceGovernor.js";
@@ -399,28 +399,6 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
       content: [{ type: "text", text: JSON.stringify(canonical.hooks.listHooks(), null, 2) }],
     }),
   );
-}
-
-/** Reconstrói o BlueprintCommand a partir do par (kind, payload) da borda MCP. */
-function reshapeCommand(kind: BlueprintCommand["kind"], payload: Record<string, unknown>): BlueprintCommand {
-  switch (kind) {
-    case "skeleton/define":
-      return { kind, skeleton: payload as never };
-    case "mesh/bind":
-      return { kind, binding: payload as never };
-    case "camera/configure":
-      return { kind, settings: payload as never };
-    case "light/add":
-      return { kind, light: payload as never };
-    case "light/remove":
-      return { kind, lightId: payload["lightId"] as string };
-    case "entitydef/define":
-      return { kind, definition: payload as never };
-    case "entity/place":
-      return { kind, entity: payload as never };
-    case "entity/remove":
-      return { kind, entityId: payload["entityId"] as string };
-  }
 }
 
 export async function startMcpStdio(

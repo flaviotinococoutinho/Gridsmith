@@ -16,6 +16,10 @@ Camada de orquestração do ecossistema P7M EaaS (Node.js ≥ 22, TypeScript).
 - **Endpoint IPC do plano de controle** (`src/ipc/`): aceita a conexão da engine via
   Named Pipe (Windows) ou Unix Domain Socket (Linux/macOS), com framing binário
   `uint32 LE + JSON-RPC 2.0` e peer full-duplex simétrico.
+- **Gateway do editor** (`src/ipc/EditorGateway.ts`): endpoint `<pipe>-editor` para o
+  Electron e clientes de edição — `blueprint/dispatch` (caminho canônico),
+  `blueprint/query`, `experience/resolve` e broadcast `blueprint/event` para todos os
+  editores (coerência multi-janela).
 - **Estado declarativo / AST** (`src/domain/BlueprintStore.ts`): CQRS — comandos
   imutáveis validados e aplicados ao blueprint; leituras são projeções congeladas.
 - **Ponte da engine** (`src/domain/EngineBridge.ts`): propaga comandos do AST para a
