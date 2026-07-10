@@ -22,6 +22,8 @@ export interface ProjectionResult {
   readonly status: "projected" | "skipped" | "deferred";
   /** Obrigatória quando skipped/deferred. */
   readonly reason?: string;
+  /** Resposta do runtime à projeção (quando projected) — diagnóstico/UI. */
+  readonly detail?: unknown;
 }
 
 export interface RuntimeAdapter {

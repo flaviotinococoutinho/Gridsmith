@@ -51,6 +51,23 @@ public class TilemapStoreTests
     }
 
     [Fact]
+    public void Remove_frees_the_slot_for_reuse()
+    {
+        var store = new TilemapStore(1);
+        var (grid, tiles) = MakeCells(4, _ => 1, i => i);
+        var handle = store.Define("first", 2, 2, 16, grid, tiles);
+
+        store.Remove(handle);
+        Assert.Equal(0, store.LiveCount);
+        Assert.False(store.Find("first").IsValid);
+        Assert.Throws<InvalidOperationException>(() => store.Remove(handle)); // já liberado
+
+        // capacidade fixa: o slot liberado é reutilizado
+        var reused = store.Define("second", 2, 2, 16, grid, tiles);
+        Assert.Equal(handle.Slot, reused.Slot);
+    }
+
+    [Fact]
     public void Checksum_is_deterministic_and_content_sensitive()
     {
         var store = new TilemapStore(3);
@@ -173,6 +190,30 @@ public class EngineServiceTilemapTests : IAsyncLifetime
         var dup = await Assert.ThrowsAsync<JsonRpcException>(() =>
             _middleware.RequestAsync("tilemap/define", Valid(), _cts.Token));
         Assert.Equal(RpcErrorCode.DuplicateId, dup.Code);
+    }
+
+    [Fact]
+    public async Task Remove_via_rpc_completes_the_lifecycle()
+    {
+        object Params() => new
+        {
+            tilemapId = "temp",
+            width = 1,
+            height = 1,
+            tileSize = 16,
+            intGrid = new[] { 1 },
+            tiles = new[] { 3 },
+        };
+        await _middleware.RequestAsync("tilemap/define", Params(), _cts.Token);
+        var removed = await _middleware.RequestAsync("tilemap/remove", new { tilemapId = "temp" }, _cts.Token);
+        Assert.Equal("temp", removed.GetProperty("removed").GetString());
+
+        // redefinir após remover é permitido (slot reciclado)
+        await _middleware.RequestAsync("tilemap/define", Params(), _cts.Token);
+
+        var unknown = await Assert.ThrowsAsync<JsonRpcException>(() =>
+            _middleware.RequestAsync("tilemap/remove", new { tilemapId = "ghost" }, _cts.Token));
+        Assert.Equal(RpcErrorCode.InvalidParams, unknown.Code);
     }
 
     [Fact]

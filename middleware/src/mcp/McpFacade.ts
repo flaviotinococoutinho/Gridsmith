@@ -12,7 +12,7 @@ import { z } from "zod";
 import type { ArtifactStore } from "../canonical/ArtifactStore.js";
 import type { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
 import type { HookBus } from "../canonical/HookBus.js";
-import { reshapeCommand } from "../canonical/commandShape.js";
+import { COMMAND_KINDS, reshapeCommand } from "../canonical/commandShape.js";
 import type { CapabilityRegistry } from "../domain/CapabilityRegistry.js";
 import type { EngineBridge } from "../domain/EngineBridge.js";
 import type { EnginePipeServer } from "../ipc/EnginePipeServer.js";
@@ -97,57 +97,13 @@ export function createMcpServer(
   );
 
   server.registerTool(
-    "skeleton_initialize",
+    "camera_shake",
     {
-      description:
-        "Define um esqueleto 2D no blueprint e o inicializa na engine (método JSON-RPC skeleton/initialize). inverseBindMatrix é uma matriz afim 2D coluna-maior com 6 floats.",
-      inputSchema: {
-        skeletonId: z.string().min(1),
-        bones: z.array(boneSchema).min(1).max(256),
-      },
+      description: "Aplica um impulso de trauma (0..1] ao screen shake procedural da câmera viva (efeito efêmero — não pertence ao blueprint).",
+      inputSchema: { trauma: z.number().gt(0).max(1) },
     },
-    async ({ skeletonId, bones }) => {
-      const result = await bridge.initializeSkeleton({ skeletonId, bones });
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
-    },
-  );
-
-  server.registerTool(
-    "mesh_bind_shared_memory",
-    {
-      description:
-        "Registra o bind de um memory-mapped file de vértices para uma malha esqueletizada (método JSON-RPC mesh/bind_shared_memory).",
-      inputSchema: {
-        meshId: z.string().min(1),
-        skeletonId: z.string().min(1),
-        sharedMemoryMapName: z.string().min(1),
-        vertexCount: z.number().int().positive(),
-        strideInBytes: z.number().int().min(4),
-      },
-    },
-    async (binding) => {
-      const result = await bridge.bindMeshSharedMemory(binding);
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
-    },
-  );
-
-  server.registerTool(
-    "camera_configure",
-    {
-      description:
-        "Configura a câmera cinemática (integrador massa-mola-amortecedor de segunda ordem): frequency (Hz), damping (ζ, 1 = crítico), response, anticipationSeconds (antecipação preditiva pelo vetor velocidade) e parâmetros do screen shake procedural.",
-      inputSchema: {
-        frequency: z.number().positive().optional(),
-        damping: z.number().nonnegative().optional(),
-        response: z.number().optional(),
-        anticipationSeconds: z.number().nonnegative().optional(),
-        shakeFrequencyHz: z.number().positive().optional(),
-        shakeMaxOffset: z.number().nonnegative().optional(),
-        shakeTraumaDecayPerSecond: z.number().positive().optional(),
-      },
-    },
-    async (settings) => {
-      const result = await bridge.configureCamera(stripUndefined(settings));
+    async ({ trauma }) => {
+      const result = await bridge.triggerShake(trauma);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     },
   );
@@ -169,54 +125,6 @@ export function createMcpServer(
     async (params) => {
       const result = await bridge.simulateCamera(stripUndefined(params));
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
-    },
-  );
-
-  server.registerTool(
-    "camera_shake",
-    {
-      description: "Aplica um impulso de trauma (0..1] ao screen shake procedural da câmera viva.",
-      inputSchema: { trauma: z.number().gt(0).max(1) },
-    },
-    async ({ trauma }) => {
-      const result = await bridge.triggerShake(trauma);
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
-    },
-  );
-
-  server.registerTool(
-    "light_add",
-    {
-      description:
-        "Adiciona uma luz ao pipeline deferred 2D (direcional, pontual ou spot) no blueprint e na engine. Cones de spot em graus (ângulo total).",
-      inputSchema: {
-        lightId: z.string().min(1),
-        type: z.enum(["directional", "point", "spot"]),
-        position: z.tuple([z.number(), z.number()]).optional(),
-        height: z.number().optional(),
-        direction: z.tuple([z.number(), z.number()]).optional(),
-        color: z.tuple([z.number(), z.number(), z.number()]),
-        intensity: z.number().positive(),
-        radius: z.number().positive().optional(),
-        innerConeDegrees: z.number().positive().optional(),
-        outerConeDegrees: z.number().positive().optional(),
-      },
-    },
-    async (light) => {
-      const result = await bridge.addLight(stripUndefined(light));
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
-    },
-  );
-
-  server.registerTool(
-    "light_remove",
-    {
-      description: "Remove uma luz do blueprint e da engine pelo lightId do blueprint.",
-      inputSchema: { lightId: z.string().min(1) },
-    },
-    async ({ lightId }) => {
-      await bridge.removeLight(lightId);
-      return { content: [{ type: "text", text: JSON.stringify({ removed: lightId }) }] };
     },
   );
 
@@ -300,30 +208,128 @@ export function createMcpServer(
 }
 
 function registerCanonicalTools(server: McpServer, canonical: CanonicalServices): void {
+  /** Registra uma ferramenta tipada que despacha pelo caminho canônico. */
+  const dispatchTool = (
+    name: string,
+    kind: Parameters<typeof reshapeCommand>[0],
+    description: string,
+    inputSchema: Record<string, z.ZodTypeAny>,
+  ): void => {
+    server.registerTool(name, { description, inputSchema }, async (payload) => {
+      const command = reshapeCommand(kind, stripUndefined(payload as Record<string, unknown>));
+      const result = await canonical.orchestrator.dispatch(command);
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    });
+  };
+
   server.registerTool(
     "blueprint_command",
     {
       description:
-        "Despacha um comando canônico do Blueprint pelo MESMO caminho validado da UI: filters → validação/AST → evento → actions → projeção no runtime. kinds: skeleton/define, mesh/bind, camera/configure, light/add, light/remove, entitydef/define, entity/place, entity/remove. O payload segue o shape do comando (sem o campo kind).",
+        `Despacha um comando canônico do Blueprint pelo MESMO caminho validado da UI: filters → validação/AST → evento → actions → projeção no runtime. kinds: ${COMMAND_KINDS.join(", ")}. O payload segue o shape do comando (sem o campo kind).`,
       inputSchema: {
-        kind: z.enum([
-          "skeleton/define",
-          "mesh/bind",
-          "camera/configure",
-          "light/add",
-          "light/remove",
-          "entitydef/define",
-          "entity/place",
-          "entity/remove",
-        ]),
+        kind: z.enum(COMMAND_KINDS as unknown as [string, ...string[]]),
         payload: z.record(z.unknown()),
       },
     },
     async ({ kind, payload }) => {
-      const command = reshapeCommand(kind, payload);
+      const command = reshapeCommand(kind as Parameters<typeof reshapeCommand>[0], payload);
       const result = await canonical.orchestrator.dispatch(command);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     },
+  );
+
+  dispatchTool(
+    "skeleton_initialize",
+    "skeleton/define",
+    "Define um esqueleto 2D no blueprint e o projeta na engine. inverseBindMatrix é uma matriz afim 2D coluna-maior com 6 floats.",
+    {
+      skeletonId: z.string().min(1),
+      bones: z.array(boneSchema).min(1).max(256),
+    },
+  );
+
+  dispatchTool(
+    "mesh_bind_shared_memory",
+    "mesh/bind",
+    "Registra o bind de um memory-mapped file de vértices para uma malha esqueletizada e o projeta na engine.",
+    {
+      meshId: z.string().min(1),
+      skeletonId: z.string().min(1),
+      sharedMemoryMapName: z.string().min(1),
+      vertexCount: z.number().int().positive(),
+      strideInBytes: z.number().int().min(4),
+    },
+  );
+
+  dispatchTool(
+    "camera_configure",
+    "camera/configure",
+    "Configura a câmera cinemática (massa-mola-amortecedor de segunda ordem) no blueprint e na engine: frequency (Hz), damping (ζ), response, anticipationSeconds e parâmetros do shake.",
+    {
+      frequency: z.number().positive().optional(),
+      damping: z.number().nonnegative().optional(),
+      response: z.number().optional(),
+      anticipationSeconds: z.number().nonnegative().optional(),
+      shakeFrequencyHz: z.number().positive().optional(),
+      shakeMaxOffset: z.number().nonnegative().optional(),
+      shakeTraumaDecayPerSecond: z.number().positive().optional(),
+    },
+  );
+
+  dispatchTool(
+    "light_add",
+    "light/add",
+    "Adiciona uma luz ao pipeline deferred 2D (direcional, pontual ou spot) no blueprint, projetada na engine. Cones de spot em graus (ângulo total).",
+    {
+      lightId: z.string().min(1),
+      type: z.enum(["directional", "point", "spot"]),
+      position: z.tuple([z.number(), z.number()]).optional(),
+      height: z.number().optional(),
+      direction: z.tuple([z.number(), z.number()]).optional(),
+      color: z.tuple([z.number(), z.number(), z.number()]),
+      intensity: z.number().positive(),
+      radius: z.number().positive().optional(),
+      innerConeDegrees: z.number().positive().optional(),
+      outerConeDegrees: z.number().positive().optional(),
+    },
+  );
+
+  dispatchTool(
+    "light_remove",
+    "light/remove",
+    "Remove uma luz do blueprint (e da engine, via projeção) pelo lightId do blueprint.",
+    { lightId: z.string().min(1) },
+  );
+
+  dispatchTool(
+    "level_define",
+    "level/define",
+    "Define um nível no blueprint (IntGrid de significado + regras de auto-tiling). Na projeção, o adapter resolve as regras deterministicamente (seed) e envia os tiles prontos ao runtime.",
+    {
+      levelId: z.string().min(1),
+      width: z.number().int().min(1),
+      height: z.number().int().min(1),
+      tileSize: z.number().int().min(1),
+      seed: z.number().int(),
+      intGrid: z.array(z.number().int().min(0)),
+      rules: z.array(
+        z.object({
+          name: z.string().optional(),
+          patternSize: z.union([z.literal(1), z.literal(3), z.literal(5)]),
+          pattern: z.array(z.union([z.number(), z.null()])),
+          tileIds: z.array(z.number().int()).min(1),
+          chance: z.number().gt(0).max(1).optional(),
+        }),
+      ),
+    },
+  );
+
+  dispatchTool(
+    "level_remove",
+    "level/remove",
+    "Remove um nível do blueprint (e o tilemap correspondente da engine, via projeção).",
+    { levelId: z.string().min(1) },
   );
 
   server.registerTool(

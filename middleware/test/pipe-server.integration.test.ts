@@ -4,6 +4,10 @@ import net from "node:net";
 import { EnginePipeServer, type EngineLogEntry, type EngineSession } from "../src/ipc/EnginePipeServer.js";
 import { EngineBridge } from "../src/domain/EngineBridge.js";
 import { BlueprintStore } from "../src/domain/BlueprintStore.js";
+import { CanonicalOrchestrator } from "../src/canonical/CanonicalOrchestrator.js";
+import { HookBus } from "../src/canonical/HookBus.js";
+import { CapabilityRegistry } from "../src/domain/CapabilityRegistry.js";
+import { MonoGameAdapter } from "../src/runtime/MonoGameAdapter.js";
 import { JsonRpcPeer } from "../src/ipc/JsonRpcPeer.js";
 import { JsonRpcError, PROTOCOL_VERSION, RpcErrorCode } from "../src/protocol/jsonrpc.js";
 
@@ -39,25 +43,34 @@ async function connectFakeEngine(server: EnginePipeServer): Promise<JsonRpcPeer>
   return peer;
 }
 
-async function withServer(
-  fn: (server: EnginePipeServer, bridge: EngineBridge) => Promise<void>,
-): Promise<void> {
+interface Stack {
+  server: EnginePipeServer;
+  bridge: EngineBridge;
+  store: BlueprintStore;
+  orchestrator: CanonicalOrchestrator;
+  adapter: MonoGameAdapter;
+}
+
+async function withServer(fn: (stack: Stack) => Promise<void>): Promise<void> {
   const server = new EnginePipeServer({
     pipeName: uniquePipeName(),
     supportedCapabilities: ["skeleton", "mesh", "shared-memory"],
     requestTimeoutMs: 2000,
   });
-  const bridge = new EngineBridge(server, new BlueprintStore());
+  const store = new BlueprintStore();
+  const bridge = new EngineBridge(server, store);
+  const adapter = new MonoGameAdapter(server, new CapabilityRegistry(server));
+  const orchestrator = new CanonicalOrchestrator(store, new HookBus(), adapter);
   await server.listen();
   try {
-    await fn(server, bridge);
+    await fn({ server, bridge, store, orchestrator, adapter });
   } finally {
     await server.close();
   }
 }
 
 test("handshake válido estabelece sessão e devolve identidade", async () => {
-  await withServer(async (server) => {
+  await withServer(async ({ server }) => {
     const engine = await connectFakeEngine(server);
     const result = await engine.request<{
       sessionId: string;
@@ -81,7 +94,7 @@ test("handshake válido estabelece sessão e devolve identidade", async () => {
 });
 
 test("versão MAJOR incompatível é recusada com PROTOCOL_MISMATCH", async () => {
-  await withServer(async (server) => {
+  await withServer(async ({ server }) => {
     const engine = await connectFakeEngine(server);
     await assert.rejects(
       engine.request("engine/handshake", {
@@ -97,7 +110,7 @@ test("versão MAJOR incompatível é recusada com PROTOCOL_MISMATCH", async () =
 });
 
 test("fluxo bidirecional: middleware pinga a engine e recebe logs dela", async () => {
-  await withServer(async (server, bridge) => {
+  await withServer(async ({ server, bridge }) => {
     const logReceived = new Promise<EngineLogEntry>((resolve) => {
       server.once("engineLog", (_s: EngineSession, entry: EngineLogEntry) => resolve(entry));
     });
@@ -120,8 +133,8 @@ test("fluxo bidirecional: middleware pinga a engine e recebe logs dela", async (
   });
 });
 
-test("skeleton/initialize e mesh/bind_shared_memory percorrem o AST e a engine", async () => {
-  await withServer(async (server, bridge) => {
+test("skeleton/define e mesh/bind percorrem o caminho canônico até a engine", async () => {
+  await withServer(async ({ server, store, orchestrator }) => {
     const engine = await connectFakeEngine(server);
     await engine.request("engine/handshake", {
       clientName: "P7m.Engine.Runtime",
@@ -130,42 +143,61 @@ test("skeleton/initialize e mesh/bind_shared_memory percorrem o AST e a engine",
     });
 
     const identity = [1, 0, 0, 1, 0, 0];
-    const skeleton = await bridge.initializeSkeleton({
-      skeletonId: "hero-rig",
-      bones: [
-        { id: 0, parentId: -1, inverseBindMatrix: identity },
-        { id: 1, parentId: 0, inverseBindMatrix: identity },
-      ],
+    const skeleton = await orchestrator.dispatch({
+      kind: "skeleton/define",
+      skeleton: {
+        skeletonId: "hero-rig",
+        bones: [
+          { id: 0, parentId: -1, inverseBindMatrix: identity },
+          { id: 1, parentId: 0, inverseBindMatrix: identity },
+        ],
+      },
     });
-    assert.deepEqual(skeleton, { skeletonId: "hero-rig", boneCount: 2, status: "initialized" });
+    assert.equal(skeleton.projection?.status, "projected");
+    assert.deepEqual(skeleton.projection?.detail, {
+      skeletonId: "hero-rig",
+      boneCount: 2,
+      status: "initialized",
+    });
 
-    const mesh = await bridge.bindMeshSharedMemory({
-      meshId: "hero-mesh",
-      skeletonId: "hero-rig",
-      sharedMemoryMapName: "p7m-mesh-hero",
-      vertexCount: 128,
-      strideInBytes: 32,
+    const mesh = await orchestrator.dispatch({
+      kind: "mesh/bind",
+      binding: {
+        meshId: "hero-mesh",
+        skeletonId: "hero-rig",
+        sharedMemoryMapName: "p7m-mesh-hero",
+        vertexCount: 128,
+        strideInBytes: 32,
+      },
     });
-    assert.deepEqual(mesh, { meshId: "hero-mesh", mappedBytes: 4096, status: "bound" });
+    assert.deepEqual(mesh.projection?.detail, { meshId: "hero-mesh", mappedBytes: 4096, status: "bound" });
 
     // Projeções do AST refletem os comandos aplicados
-    assert.equal(bridge.store.getSkeleton("hero-rig")?.bones.length, 2);
-    assert.equal(bridge.store.getMesh("hero-mesh")?.vertexCount, 128);
+    assert.equal(store.getSkeleton("hero-rig")?.bones.length, 2);
+    assert.equal(store.getMesh("hero-mesh")?.vertexCount, 128);
     engine.close();
   });
 });
 
 test("comandos sem engine conectada ficam no AST e são reidratados na conexão", async () => {
-  await withServer(async (server, bridge) => {
+  await withServer(async ({ server, bridge, store, orchestrator, adapter }) => {
+    // Reidratação canônica: o adapter projeta o Blueprint em cada sessão nova
+    // (mesma fiação do composition root em src/index.ts).
+    server.on("session", () => void adapter.rehydrateFrom(store));
+
     const identity = [1, 0, 0, 1, 0, 0];
     // Comando aplicado com a engine offline: fica registrado no blueprint.
-    const offline = await bridge.initializeSkeleton({
-      skeletonId: "npc-rig",
-      bones: [{ id: 0, parentId: -1, inverseBindMatrix: identity }],
+    const offline = await orchestrator.dispatch({
+      kind: "skeleton/define",
+      skeleton: {
+        skeletonId: "npc-rig",
+        bones: [{ id: 0, parentId: -1, inverseBindMatrix: identity }],
+      },
     });
-    assert.equal(offline.status, "initialized");
+    assert.equal(offline.projection?.status, "deferred");
+    assert.ok(store.getSkeleton("npc-rig"));
 
-    // A engine conecta depois; o bridge deve reenviar skeleton/initialize.
+    // A engine conecta depois; o adapter deve reenviar skeleton/initialize.
     const socket = net.connect(server.pipePath);
     await new Promise<void>((resolve, reject) => {
       socket.once("connect", resolve);
@@ -194,27 +226,29 @@ test("comandos sem engine conectada ficam no AST e são reidratados na conexão"
 });
 
 test("comandos inválidos são rejeitados pelo AST antes de chegar à engine", async () => {
-  await withServer(async (_server, bridge) => {
+  await withServer(async ({ orchestrator }) => {
     const identity = [1, 0, 0, 1, 0, 0];
     await assert.rejects(
-      bridge.bindMeshSharedMemory({
-        meshId: "orphan",
-        skeletonId: "inexistente",
-        sharedMemoryMapName: "map",
-        vertexCount: 1,
-        strideInBytes: 4,
+      orchestrator.dispatch({
+        kind: "mesh/bind",
+        binding: {
+          meshId: "orphan",
+          skeletonId: "inexistente",
+          sharedMemoryMapName: "map",
+          vertexCount: 1,
+          strideInBytes: 4,
+        },
       }),
       (err: unknown) => err instanceof JsonRpcError && err.code === RpcErrorCode.UnknownSkeleton,
     );
-    await bridge.initializeSkeleton({
-      skeletonId: "dup",
-      bones: [{ id: 0, parentId: -1, inverseBindMatrix: identity }],
-    });
+    const defineDup = () =>
+      orchestrator.dispatch({
+        kind: "skeleton/define",
+        skeleton: { skeletonId: "dup", bones: [{ id: 0, parentId: -1, inverseBindMatrix: identity }] },
+      });
+    await defineDup();
     await assert.rejects(
-      bridge.initializeSkeleton({
-        skeletonId: "dup",
-        bones: [{ id: 0, parentId: -1, inverseBindMatrix: identity }],
-      }),
+      defineDup(),
       (err: unknown) => err instanceof JsonRpcError && err.code === RpcErrorCode.DuplicateId,
     );
   });

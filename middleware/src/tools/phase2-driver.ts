@@ -21,6 +21,9 @@ import { EnginePipeServer } from "../ipc/EnginePipeServer.js";
 import { BlueprintStore } from "../domain/BlueprintStore.js";
 import { CapabilityRegistry } from "../domain/CapabilityRegistry.js";
 import { EngineBridge } from "../domain/EngineBridge.js";
+import { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
+import { HookBus } from "../canonical/HookBus.js";
+import { MonoGameAdapter } from "../runtime/MonoGameAdapter.js";
 import { MeshSharedMemoryWriter } from "../sharedmem/MeshSharedMemoryWriter.js";
 import { SKINNED_VERTEX_2D, type VertexData } from "../sharedmem/vertexLayout.js";
 
@@ -54,8 +57,11 @@ async function main(): Promise<void> {
     supportedCapabilities: ["skeleton", "mesh", "shared-memory"],
     requestTimeoutMs: 10_000,
   });
-  const bridge = new EngineBridge(server, new BlueprintStore());
+  const store = new BlueprintStore();
+  const bridge = new EngineBridge(server, store);
   const registry = new CapabilityRegistry(server);
+  const adapter = new MonoGameAdapter(server, registry);
+  const orchestrator = new CanonicalOrchestrator(store, new HookBus(), adapter);
   await server.listen();
   console.log(`driver listening at ${server.pipePath}; waiting for engine...`);
 
@@ -89,21 +95,29 @@ async function main(): Promise<void> {
     writer.publish(quad(100));
     step("publish", `4 vertices written to ${writer.path} (frame ${writer.frameIndex})`);
 
-    // 3. Blueprint → engine
-    await bridge.initializeSkeleton({
-      skeletonId: "phase2-rig",
-      bones: [
-        { id: 0, parentId: -1, inverseBindMatrix: IDENTITY },
-        { id: 1, parentId: 0, inverseBindMatrix: IDENTITY },
-      ],
+    // 3. Blueprint → engine (dispatch canônico: filters → AST → projeção)
+    await orchestrator.dispatch({
+      kind: "skeleton/define",
+      skeleton: {
+        skeletonId: "phase2-rig",
+        bones: [
+          { id: 0, parentId: -1, inverseBindMatrix: IDENTITY },
+          { id: 1, parentId: 0, inverseBindMatrix: IDENTITY },
+        ],
+      },
     });
-    const bind = await bridge.bindMeshSharedMemory({
-      meshId: "phase2-quad",
-      skeletonId: "phase2-rig",
-      sharedMemoryMapName: mapName,
-      vertexCount: 4,
-      strideInBytes: layout!.strideInBytes,
+    const bindDispatch = await orchestrator.dispatch({
+      kind: "mesh/bind",
+      binding: {
+        meshId: "phase2-quad",
+        skeletonId: "phase2-rig",
+        sharedMemoryMapName: mapName,
+        vertexCount: 4,
+        strideInBytes: layout!.strideInBytes,
+      },
     });
+    assert(bindDispatch.projection?.status === "projected", "mesh bind projected onto the engine");
+    const bind = bindDispatch.projection!.detail as { status: string; mappedBytes: number };
     assert(bind.status === "bound", `engine mapped the buffer (status "${bind.status}")`);
     assert(
       bind.mappedBytes === 64 + 4 * layout!.strideInBytes,

@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import net from "node:net";
 import { EnginePipeServer } from "../src/ipc/EnginePipeServer.js";
-import { EngineBridge } from "../src/domain/EngineBridge.js";
 import { BlueprintStore, type LightSpec } from "../src/domain/BlueprintStore.js";
+import { CapabilityRegistry } from "../src/domain/CapabilityRegistry.js";
+import { CanonicalOrchestrator } from "../src/canonical/CanonicalOrchestrator.js";
+import { HookBus } from "../src/canonical/HookBus.js";
+import { MonoGameAdapter } from "../src/runtime/MonoGameAdapter.js";
 import { JsonRpcPeer } from "../src/ipc/JsonRpcPeer.js";
 import { JsonRpcError, PROTOCOL_VERSION, RpcErrorCode } from "../src/protocol/jsonrpc.js";
 
@@ -34,7 +37,6 @@ async function connectFakeEngine(
     state.cameraConfigs.push(params);
     return params;
   });
-  peer.registerMethod("camera/shake", (params) => params);
   peer.registerMethod("lighting/add", (params) => {
     const engineId = state.nextLightId++;
     state.added.push({ engineId, params: params as Record<string, unknown> });
@@ -65,50 +67,57 @@ function makeLight(id: string): LightSpec {
   };
 }
 
-async function withBridge(
-  fn: (server: EnginePipeServer, bridge: EngineBridge, state: FakeEngineState) => Promise<void>,
-): Promise<void> {
+interface Stack {
+  server: EnginePipeServer;
+  store: BlueprintStore;
+  orchestrator: CanonicalOrchestrator;
+  adapter: MonoGameAdapter;
+  state: FakeEngineState;
+}
+
+async function withStack(fn: (stack: Stack) => Promise<void>): Promise<void> {
   const server = new EnginePipeServer({ pipeName: uniquePipeName(), requestTimeoutMs: 2000 });
-  const bridge = new EngineBridge(server, new BlueprintStore());
+  const store = new BlueprintStore();
+  const adapter = new MonoGameAdapter(server, new CapabilityRegistry(server));
+  const orchestrator = new CanonicalOrchestrator(store, new HookBus(), adapter);
   const state: FakeEngineState = { nextLightId: 100, added: [], removed: [], cameraConfigs: [] };
   await server.listen();
   try {
-    await fn(server, bridge, state);
+    await fn({ server, store, orchestrator, adapter, state });
   } finally {
     await server.close();
   }
 }
 
-test("configureCamera acumula merges no AST e envia a config completa à engine", async () => {
-  await withBridge(async (server, bridge, state) => {
+test("camera/configure acumula merges no AST e projeta a config na engine", async () => {
+  await withStack(async ({ server, store, orchestrator, state }) => {
     const engine = await connectFakeEngine(server, state);
-    await bridge.configureCamera({ frequency: 3 });
-    await bridge.configureCamera({ damping: 0.5 });
+    await orchestrator.dispatch({ kind: "camera/configure", settings: { frequency: 3 } });
+    await orchestrator.dispatch({ kind: "camera/configure", settings: { damping: 0.5 } });
 
-    // o AST acumula; a engine recebe a config consolidada
-    assert.deepEqual(bridge.store.cameraSettings, { frequency: 3, damping: 0.5 });
+    // o AST acumula; a engine recebe a config consolidada em cada projeção
+    assert.deepEqual(store.cameraSettings, { frequency: 3, damping: 0.5 });
     assert.deepEqual(state.cameraConfigs.at(-1), { frequency: 3, damping: 0.5 });
     engine.close();
   });
 });
 
 test("configuração inválida de câmera é rejeitada pelo AST", async () => {
-  await withBridge(async (_server, bridge) => {
+  await withStack(async ({ orchestrator }) => {
     await assert.rejects(
-      bridge.configureCamera({ frequency: -2 }),
+      orchestrator.dispatch({ kind: "camera/configure", settings: { frequency: -2 } }),
       (err: unknown) => err instanceof JsonRpcError && err.code === RpcErrorCode.InvalidParams,
     );
   });
 });
 
-test("addLight registra no AST, envia à engine e mapeia o id", async () => {
-  await withBridge(async (server, bridge, state) => {
+test("light/add registra no AST, projeta na engine e mapeia o id", async () => {
+  await withStack(async ({ server, store, orchestrator, state }) => {
     const engine = await connectFakeEngine(server, state);
-    const result = await bridge.addLight(makeLight("torch"));
+    const result = await orchestrator.dispatch({ kind: "light/add", light: makeLight("torch") });
 
-    assert.equal(result.lightId, "torch");
-    assert.equal(result.engineLightId, 100);
-    assert.equal(bridge.store.getLight("torch")?.intensity, 2);
+    assert.equal(result.projection?.status, "projected");
+    assert.equal(store.getLight("torch")?.intensity, 2);
     assert.equal(state.added[0]?.params["type"], "point");
     // o id do blueprint NÃO vaza para a engine
     assert.equal(state.added[0]?.params["lightId"], undefined);
@@ -117,15 +126,15 @@ test("addLight registra no AST, envia à engine e mapeia o id", async () => {
 });
 
 test("luz duplicada e specs inválidas são rejeitadas antes de chegar à engine", async () => {
-  await withBridge(async (server, bridge, state) => {
+  await withStack(async ({ server, orchestrator, state }) => {
     const engine = await connectFakeEngine(server, state);
-    await bridge.addLight(makeLight("dup"));
+    await orchestrator.dispatch({ kind: "light/add", light: makeLight("dup") });
     await assert.rejects(
-      bridge.addLight(makeLight("dup")),
+      orchestrator.dispatch({ kind: "light/add", light: makeLight("dup") }),
       (err: unknown) => err instanceof JsonRpcError && err.code === RpcErrorCode.DuplicateId,
     );
     await assert.rejects(
-      bridge.addLight({ ...makeLight("bad-spot"), type: "spot" }), // sem cones
+      orchestrator.dispatch({ kind: "light/add", light: { ...makeLight("bad-spot"), type: "spot" } }),
       (err: unknown) => err instanceof JsonRpcError && err.code === RpcErrorCode.InvalidParams,
     );
     assert.equal(state.added.length, 1); // só a primeira chegou à engine
@@ -133,23 +142,29 @@ test("luz duplicada e specs inválidas são rejeitadas antes de chegar à engine
   });
 });
 
-test("removeLight usa o id mapeado da engine", async () => {
-  await withBridge(async (server, bridge, state) => {
+test("light/remove usa o id mapeado da engine", async () => {
+  await withStack(async ({ server, store, orchestrator, state }) => {
     const engine = await connectFakeEngine(server, state);
-    await bridge.addLight(makeLight("lamp"));
-    await bridge.removeLight("lamp");
+    await orchestrator.dispatch({ kind: "light/add", light: makeLight("lamp") });
+    await orchestrator.dispatch({ kind: "light/remove", lightId: "lamp" });
 
     assert.deepEqual(state.removed, [100]);
-    assert.equal(bridge.store.getLight("lamp"), undefined);
+    assert.equal(store.getLight("lamp"), undefined);
     engine.close();
   });
 });
 
-test("reconexão reidrata câmera e luzes com ids remapeados", async () => {
-  await withBridge(async (server, bridge, state) => {
+test("reconexão reidrata câmera e luzes com ids remapeados (adapter)", async () => {
+  await withStack(async ({ server, store, orchestrator, adapter, state }) => {
+    // mesma fiação do composition root: adapter reidrata em cada sessão nova
+    server.on("session", () => void adapter.rehydrateFrom(store));
+
     const first = await connectFakeEngine(server, state);
-    await bridge.configureCamera({ frequency: 4, anticipationSeconds: 0.5 });
-    await bridge.addLight(makeLight("torch"));
+    await orchestrator.dispatch({
+      kind: "camera/configure",
+      settings: { frequency: 4, anticipationSeconds: 0.5 },
+    });
+    await orchestrator.dispatch({ kind: "light/add", light: makeLight("torch") });
     first.close();
     await new Promise((r) => setTimeout(r, 50));
 
@@ -164,7 +179,7 @@ test("reconexão reidrata câmera e luzes com ids remapeados", async () => {
     assert.equal(state.added.at(-1)?.engineId, 500);
 
     // remoção pós-reconexão usa o id REMAPEADO
-    await bridge.removeLight("torch");
+    await orchestrator.dispatch({ kind: "light/remove", lightId: "torch" });
     assert.deepEqual(state.removed, [500]);
     second.close();
   });

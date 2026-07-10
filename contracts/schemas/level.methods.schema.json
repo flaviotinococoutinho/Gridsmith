@@ -41,6 +41,19 @@
         "required": ["tilemapId", "nonEmptyTiles", "checksumFnv1a", "staticBatches", "status"]
       }
     },
+    "tilemap/remove": {
+      "params": {
+        "type": "object",
+        "properties": { "tilemapId": { "type": "string", "minLength": 1 } },
+        "required": ["tilemapId"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": { "removed": { "type": "string" } },
+        "required": ["removed"]
+      }
+    },
     "tilemap/inspect": {
       "params": {
         "type": "object",

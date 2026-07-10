@@ -15,6 +15,8 @@ export const COMMAND_KINDS = [
   "entitydef/define",
   "entity/place",
   "entity/remove",
+  "level/define",
+  "level/remove",
 ] as const satisfies readonly BlueprintCommand["kind"][];
 
 export function reshapeCommand(
@@ -38,5 +40,9 @@ export function reshapeCommand(
       return { kind, entity: payload as never };
     case "entity/remove":
       return { kind, entityId: payload["entityId"] as string };
+    case "level/define":
+      return { kind, level: payload as never };
+    case "level/remove":
+      return { kind, levelId: payload["levelId"] as string };
   }
 }

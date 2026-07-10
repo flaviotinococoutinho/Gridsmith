@@ -101,6 +101,19 @@ public sealed class TilemapStore
         return new TilemapHandle(slot);
     }
 
+    /// <summary>Libera o slot (o buffer pré-alocado é reutilizado pelo próximo Define).</summary>
+    public void Remove(TilemapHandle handle)
+    {
+        if (!handle.IsValid || handle.Slot >= _maxTilemaps || _ids[handle.Slot] is null)
+        {
+            throw new InvalidOperationException($"Tilemap handle (slot {handle.Slot}) is not active");
+        }
+
+        _ids[handle.Slot] = null;
+        _nonEmptyCounts[handle.Slot] = 0;
+        _liveCount--;
+    }
+
     public TilemapHandle Find(string tilemapId)
     {
         for (var slot = 0; slot < _maxTilemaps; slot++)

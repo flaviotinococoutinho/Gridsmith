@@ -110,7 +110,38 @@ async function main(): Promise<void> {
     };
     assert(lights.lights.some((l) => l.lightId === "editor-torch"), "query projection reflects the AST");
 
-    console.log("PHASE 4 DRIVER PASS: editor gateway, canonical dispatch and governed experience verified");
+    // nível canônico: o editor envia IntGrid + regras; o adapter resolve o
+    // auto-tiling na projeção e a engine consolida em batch estático
+    const level = (await peer.request("blueprint/dispatch", {
+      kind: "level/define",
+      payload: {
+        levelId: "editor-level",
+        width: 4,
+        height: 2,
+        tileSize: 16,
+        seed: 5,
+        intGrid: [0, 0, 0, 0, 1, 1, 1, 1],
+        rules: [
+          {
+            name: "grass-top",
+            patternSize: 3,
+            pattern: [null, 0, null, null, 1, null, null, null, null],
+            tileIds: [100, 101],
+          },
+        ],
+      },
+    })) as { projection: { status: string; detail?: { nonEmptyTiles: number; staticBatches: number } } };
+    assert(level.projection.status === "projected", "level projected with runtime-side auto-tiling");
+    assert(level.projection.detail?.nonEmptyTiles === 4, "grass-top rule resolved the platform row");
+    assert(level.projection.detail?.staticBatches === 1, "tiles consolidated into a single static batch");
+
+    const removal = (await peer.request("blueprint/dispatch", {
+      kind: "level/remove",
+      payload: { levelId: "editor-level" },
+    })) as { projection: { status: string } };
+    assert(removal.projection.status === "projected", "level removal projected (tilemap/remove)");
+
+    console.log("PHASE 4 DRIVER PASS: editor gateway, canonical dispatch, governed experience and level round-trip verified");
   } finally {
     peer.close();
   }

@@ -22,6 +22,9 @@ import { EnginePipeServer } from "../ipc/EnginePipeServer.js";
 import { BlueprintStore } from "../domain/BlueprintStore.js";
 import { CapabilityRegistry } from "../domain/CapabilityRegistry.js";
 import { EngineBridge } from "../domain/EngineBridge.js";
+import { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
+import { HookBus } from "../canonical/HookBus.js";
+import { MonoGameAdapter } from "../runtime/MonoGameAdapter.js";
 import { resolveAutoTiles, type AutoTileRule, type IntGrid } from "../leveldesign/AutoTiler.js";
 
 function step(label: string, message: string): void {
@@ -82,8 +85,11 @@ async function main(): Promise<void> {
     supportedCapabilities: ["skeleton", "mesh", "shared-memory"],
     requestTimeoutMs: 15_000,
   });
-  const bridge = new EngineBridge(server, new BlueprintStore());
+  const store = new BlueprintStore();
+  const bridge = new EngineBridge(server, store);
   const registry = new CapabilityRegistry(server);
+  const adapter = new MonoGameAdapter(server, registry);
+  const orchestrator = new CanonicalOrchestrator(store, new HookBus(), adapter);
   await server.listen();
   console.log(`driver listening at ${server.pipePath}; waiting for engine...`);
 
@@ -103,7 +109,7 @@ async function main(): Promise<void> {
     step("describe", `${manifest.engine.name}: editor concepts refreshed for phase 3`);
 
     // 2. Física: crítico não ultrapassa, subamortecido ultrapassa
-    await bridge.configureCamera({ frequency: 2, damping: 1, anticipationSeconds: 0 });
+    await orchestrator.dispatch({ kind: "camera/configure", settings: { frequency: 2, damping: 1, anticipationSeconds: 0 } });
     const critical = await bridge.simulateCamera({
       steps: 960,
       deltaSeconds: 1 / 120,
@@ -114,7 +120,7 @@ async function main(): Promise<void> {
     assert(Math.abs(critical.final[0] - 100) < 0.5, `critically damped converges (final x=${critical.final[0].toFixed(2)})`);
     assert(maxCriticalX <= 100.5, `no overshoot at critical damping (max x=${maxCriticalX.toFixed(2)})`);
 
-    await bridge.configureCamera({ damping: 0.3 });
+    await orchestrator.dispatch({ kind: "camera/configure", settings: { damping: 0.3 } });
     const bouncy = await bridge.simulateCamera({
       steps: 1440,
       deltaSeconds: 1 / 120,
@@ -148,14 +154,17 @@ async function main(): Promise<void> {
     assert(shaken.finalTrauma === 0, "trauma fully decayed after 10 s");
 
     // 4. Iluminação: equação do shader validada por reimplementação independente
-    await bridge.addLight({
-      lightId: "key-light",
-      type: "point",
-      position: [50, 50],
-      height: 40,
-      color: [1, 0.8, 0.6],
-      intensity: 2,
-      radius: 200,
+    await orchestrator.dispatch({
+      kind: "light/add",
+      light: {
+        lightId: "key-light",
+        type: "point",
+        position: [50, 50],
+        height: 40,
+        color: [1, 0.8, 0.6],
+        intensity: 2,
+        radius: 200,
+      },
     });
     const inspect = await bridge.inspectLighting();
     assert(inspect.count === 1, "light registered in the engine store");
@@ -171,7 +180,7 @@ async function main(): Promise<void> {
       );
     }
 
-    await bridge.removeLight("key-light");
+    await orchestrator.dispatch({ kind: "light/remove", lightId: "key-light" });
     const after = await bridge.inspectLighting();
     assert(after.count === 0, "light removed from the engine store");
 

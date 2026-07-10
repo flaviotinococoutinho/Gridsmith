@@ -7,6 +7,11 @@
  */
 
 import { EventEmitter } from "node:events";
+import {
+  validateGrid,
+  validateRules,
+  type AutoTileRule,
+} from "../leveldesign/AutoTiler.js";
 import { JsonRpcError, RpcErrorCode } from "../protocol/jsonrpc.js";
 
 export interface BoneDefinition {
@@ -88,6 +93,25 @@ export interface EntityInstance {
   readonly fields: Readonly<Record<string, unknown>>;
 }
 
+/**
+ * Nível no modelo canônico (LDtk-like): o designer edita o IntGrid de
+ * SIGNIFICADO + regras; a resolução em tiles é responsabilidade do adapter
+ * de runtime na projeção (função pura com seed — determinística).
+ */
+export interface LevelSpec {
+  readonly levelId: string;
+  readonly width: number;
+  readonly height: number;
+  readonly tileSize: number;
+  readonly seed: number;
+  /** width*height valores linha-maior; 0 = vazio. */
+  readonly intGrid: readonly number[];
+  readonly rules: readonly AutoTileRule[];
+}
+
+/** Limite alinhado ao TilemapStore da engine (256×256). */
+export const MAX_LEVEL_CELLS = 256 * 256;
+
 export type BlueprintCommand =
   | { readonly kind: "skeleton/define"; readonly skeleton: SkeletonBlueprint }
   | { readonly kind: "mesh/bind"; readonly binding: MeshBinding }
@@ -96,7 +120,9 @@ export type BlueprintCommand =
   | { readonly kind: "light/remove"; readonly lightId: string }
   | { readonly kind: "entitydef/define"; readonly definition: EntityDefinition }
   | { readonly kind: "entity/place"; readonly entity: EntityInstance }
-  | { readonly kind: "entity/remove"; readonly entityId: string };
+  | { readonly kind: "entity/remove"; readonly entityId: string }
+  | { readonly kind: "level/define"; readonly level: LevelSpec }
+  | { readonly kind: "level/remove"; readonly levelId: string };
 
 export type BlueprintEvent =
   | { readonly kind: "skeletonDefined"; readonly skeleton: SkeletonBlueprint }
@@ -106,7 +132,9 @@ export type BlueprintEvent =
   | { readonly kind: "lightRemoved"; readonly lightId: string }
   | { readonly kind: "entityDefDefined"; readonly definition: EntityDefinition }
   | { readonly kind: "entityPlaced"; readonly entity: EntityInstance }
-  | { readonly kind: "entityRemoved"; readonly entityId: string };
+  | { readonly kind: "entityRemoved"; readonly entityId: string }
+  | { readonly kind: "levelDefined"; readonly level: LevelSpec }
+  | { readonly kind: "levelRemoved"; readonly levelId: string };
 
 /**
  * Eventos: "event" (BlueprintEvent) após cada comando aplicado com sucesso.
@@ -117,6 +145,7 @@ export class BlueprintStore extends EventEmitter {
   private readonly lights = new Map<string, LightSpec>();
   private readonly entityDefs = new Map<string, EntityDefinition>();
   private readonly entities = new Map<string, EntityInstance>();
+  private readonly levels = new Map<string, LevelSpec>();
   private camera: CameraSettings = {};
 
   apply(command: BlueprintCommand): BlueprintEvent {
@@ -186,6 +215,25 @@ export class BlueprintStore extends EventEmitter {
           throw new JsonRpcError(RpcErrorCode.InvalidParams, `Entity "${command.entityId}" does not exist`);
         }
         const event: BlueprintEvent = { kind: "entityRemoved", entityId: command.entityId };
+        this.emit("event", event);
+        return event;
+      }
+      case "level/define": {
+        const level = command.level;
+        validateLevel(level);
+        if (this.levels.has(level.levelId)) {
+          throw new JsonRpcError(RpcErrorCode.DuplicateId, `Level "${level.levelId}" is already defined`);
+        }
+        this.levels.set(level.levelId, Object.freeze({ ...level }));
+        const event: BlueprintEvent = { kind: "levelDefined", level };
+        this.emit("event", event);
+        return event;
+      }
+      case "level/remove": {
+        if (!this.levels.delete(command.levelId)) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `Level "${command.levelId}" does not exist`);
+        }
+        const event: BlueprintEvent = { kind: "levelRemoved", levelId: command.levelId };
         this.emit("event", event);
         return event;
       }
@@ -262,6 +310,38 @@ export class BlueprintStore extends EventEmitter {
 
   listEntities(): readonly EntityInstance[] {
     return [...this.entities.values()];
+  }
+
+  getLevel(levelId: string): LevelSpec | undefined {
+    return this.levels.get(levelId);
+  }
+
+  listLevels(): readonly LevelSpec[] {
+    return [...this.levels.values()];
+  }
+}
+
+function validateLevel(level: LevelSpec): void {
+  if (typeof level.levelId !== "string" || level.levelId.length === 0) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"levelId" must be a non-empty string`);
+  }
+  if (!Number.isInteger(level.tileSize) || level.tileSize < 1) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"tileSize" must be a positive integer`);
+  }
+  if (!Number.isInteger(level.seed)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"seed" must be an integer`);
+  }
+  if (level.width * level.height > MAX_LEVEL_CELLS) {
+    throw new JsonRpcError(
+      RpcErrorCode.InvalidParams,
+      `Level exceeds ${MAX_LEVEL_CELLS} cells (engine tilemap slot limit)`,
+    );
+  }
+  try {
+    validateGrid({ width: level.width, height: level.height, values: level.intGrid });
+    validateRules(level.rules);
+  } catch (err) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, err instanceof Error ? err.message : String(err));
   }
 }
 

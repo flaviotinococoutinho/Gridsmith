@@ -70,9 +70,14 @@ da engine, nunca assume suporte. Desenho completo em
   shell Electron com contextIsolation conectada ao gateway, e os núcleos de domínio do
   editor testados: **FABRIK 2D**, **easing Bézier cúbico** (Newton + bisseção),
   **máquina de estados com semântica Gum** (interpolação interrupt-safe com easing) e
-  **ExperienceGate** (painéis governados com razão visível). Restam: editores de canvas
-  (curvas/rigs/grafos em workers), painel de níveis LDtk-like, world map, watcher
-  Aseprite + MGCB e live edit generalizado.
+  **ExperienceGate** (painéis governados com razão visível). Parte 2: **unificação
+  canônica** (toda mutação via orquestrador; `MonoGameAdapter.rehydrateFrom` é o único
+  dono da reidratação; `EngineBridge` restrito a diagnósticos), **nível como comando
+  canônico** (`level/define` com IntGrid + regras; o adapter resolve o auto-tiling na
+  projeção e a engine ganha `tilemap/remove`) e **IntGridDocument** no editor (pincéis
+  paint/rect/flood com undo/redo célula a célula → payload de `level/define`). Restam:
+  editores de canvas (curvas/rigs/grafos em workers), world map, watcher Aseprite +
+  MGCB e live edit generalizado.
 - [ ] **Fase 5 — Automação de Testes e Sandbox (Harness):** ambiente headless no MonoGame
   para simulações em *physics slices* com asserções lógicas.
 

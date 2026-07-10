@@ -100,6 +100,16 @@ async function main(): Promise<void> {
       .pingEngine("welcome")
       .then((pong) => console.error(`[p7m] welcome ping ok (echo "${pong.echo}")`))
       .catch((err: Error) => console.error(`[p7m] welcome ping failed: ${err.message}`));
+    // Reidratação canônica: o adapter projeta o Blueprint inteiro na sessão nova.
+    void adapter
+      .rehydrateFrom(store)
+      .then((results) => {
+        const projected = results.filter((r) => r.status === "projected").length;
+        if (results.length > 0) {
+          console.error(`[p7m] rehydration: ${projected}/${results.length} events projected`);
+        }
+      })
+      .catch((err: Error) => console.error(`[p7m] rehydration failed: ${err.message}`));
   });
   pipeServer.on("sessionClosed", (session: EngineSession, reason: Error) => {
     console.error(`[p7m] engine session ${session.sessionId} closed: ${reason.message}`);

@@ -427,6 +427,22 @@ public sealed class EngineService : IDisposable
             }
         });
 
+        connection.RegisterMethod("tilemap/remove", (params_, _) =>
+        {
+            var p = Deserialize<TilemapInspectParams>(params_);
+            lock (_gate)
+            {
+                var handle = Tilemaps.Find(p.TilemapId ?? "");
+                if (!handle.IsValid)
+                {
+                    throw new JsonRpcException(RpcErrorCode.InvalidParams, $"Tilemap \"{p.TilemapId}\" is not defined");
+                }
+
+                Tilemaps.Remove(handle);
+                return ValueTask.FromResult<object?>(new { removed = p.TilemapId });
+            }
+        });
+
         connection.RegisterMethod("tilemap/inspect", (params_, _) =>
         {
             var p = Deserialize<TilemapInspectParams>(params_);
