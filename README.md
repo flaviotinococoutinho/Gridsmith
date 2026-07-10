@@ -75,9 +75,15 @@ da engine, nunca assume suporte. Desenho completo em
   dono da reidratação; `EngineBridge` restrito a diagnósticos), **nível como comando
   canônico** (`level/define` com IntGrid + regras; o adapter resolve o auto-tiling na
   projeção e a engine ganha `tilemap/remove`) e **IntGridDocument** no editor (pincéis
-  paint/rect/flood com undo/redo célula a célula → payload de `level/define`). Restam:
-  editores de canvas (curvas/rigs/grafos em workers), world map, watcher Aseprite +
-  MGCB e live edit generalizado.
+  paint/rect/flood com undo/redo célula a célula → payload de `level/define`). Parte 3:
+  **pipeline de assets** (`AssetPipelineService`: watcher do catálogo taxonômico →
+  export CLI Aseprite → artefato canônico com tags por diretório → compile MGCB para
+  `.xnb`, com `ToolRunner` injetável e erros tipados; flag `--assets <dir>` no
+  middleware e ferramentas MCP `asset_ingest`/`asset_catalog`), **world map canônico**
+  (`world/place`/`world/unplace` com rejeição de sobreposição e vizinhança por borda,
+  consultável via `blueprint/query world`) e **TimelineCurve** no editor (keyframes com
+  easing Bézier por segmento, busca binária, sample para canvas). Restam: editores de
+  canvas em workers e live edit generalizado.
 - [ ] **Fase 5 — Automação de Testes e Sandbox (Harness):** ambiente headless no MonoGame
   para simulações em *physics slices* com asserções lógicas.
 

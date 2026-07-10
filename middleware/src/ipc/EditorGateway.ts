@@ -48,6 +48,8 @@ const QUERYABLE_PROJECTIONS = [
   "entityDefs",
   "entities",
   "camera",
+  "levels",
+  "world",
 ] as const;
 
 /**
@@ -173,6 +175,17 @@ export class EditorGateway extends EventEmitter {
           return { entities: store.listEntities() };
         case "camera":
           return { camera: store.cameraSettings };
+        case "levels":
+          return { levels: store.listLevels() };
+        case "world": {
+          const placements = store.listPlacements();
+          return {
+            placements,
+            neighbors: Object.fromEntries(
+              placements.map((p) => [p.levelId, store.neighborsOf(p.levelId)]),
+            ),
+          };
+        }
         default:
           throw new JsonRpcError(
             RpcErrorCode.InvalidParams,

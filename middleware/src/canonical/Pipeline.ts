@@ -27,6 +27,10 @@ export interface PipelineRunOptions {
   readonly artifactId: string;
   /** Proveniência adicional (default: "pipeline:<id>"). */
   readonly requestedBy?: string;
+  /** Taxonomia anexada ao artefato (painel de assets). */
+  readonly tags?: readonly string[];
+  /** Origem legível (ex.: caminho do arquivo fonte). */
+  readonly source?: string;
 }
 
 export class PipelineRunner {
@@ -73,7 +77,8 @@ export class PipelineRunner {
       payload: value,
       metadata: {
         createdBy: options.requestedBy ?? `pipeline:${pipelineId}`,
-        source: pipelineId,
+        source: options.source ?? pipelineId,
+        ...(options.tags !== undefined ? { tags: options.tags } : {}),
       },
     });
 

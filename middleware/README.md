@@ -33,8 +33,11 @@ Camada de orquestração do ecossistema P7M EaaS (Node.js ≥ 22, TypeScript).
 - **Level design** (`src/leveldesign/AutoTiler.ts`): auto-tiling determinístico por
   regras de padrão (LDtk/Tiled) — função pura `(IntGrid, regras, seed) → tiles`,
   consumida pela engine via `tilemap/define`.
-- **Assets** (`src/assets/AsepriteImporter.ts`): normaliza o export CLI do Aseprite
-  (frameTags → clipes com direção expandida, slices → pivô/9-slice).
+- **Assets** (`src/assets/`): `AsepriteImporter` normaliza o export CLI (frameTags →
+  clipes, slices → pivô/9-slice); `AssetPipelineService` orquestra o catálogo
+  taxonômico — watcher recursivo, export via CLI Aseprite, artefato canônico com tags
+  por diretório e compile MGCB para `.xnb` (`ToolRunner` injetável; erros tipados;
+  ativado com `--assets <dir>`).
 - **Fachada MCP** (`src/mcp/McpFacade.ts`): expõe `engine_status`, `engine_ping`,
   `skeleton_initialize`, `mesh_bind_shared_memory`, `mesh_inspect`,
   `engine_capabilities` e `editor_concepts` a agentes de IA via stdio.

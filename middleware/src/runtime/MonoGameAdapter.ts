@@ -111,6 +111,14 @@ export class MonoGameAdapter implements RuntimeAdapter {
           status: "skipped",
           reason: "entity domain is editor-side today; runtime spawn tables land in phase 4",
         };
+
+      case "worldLevelPlaced":
+      case "worldLevelUnplaced":
+        return {
+          event: event.kind,
+          status: "skipped",
+          reason: "world layout is editorial until level streaming lands (phase 5)",
+        };
     }
   }
 

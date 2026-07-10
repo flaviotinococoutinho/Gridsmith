@@ -9,6 +9,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import type { AssetPipelineService } from "../assets/AssetPipelineService.js";
 import type { ArtifactStore } from "../canonical/ArtifactStore.js";
 import type { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
 import type { HookBus } from "../canonical/HookBus.js";
@@ -28,6 +29,8 @@ export interface CanonicalServices {
   profiles: RuntimeProfileRegistry;
   governor: ExperienceGovernor;
   adapter: RuntimeAdapter;
+  /** Presente quando o middleware roda com --assets <dir>. */
+  assets?: AssetPipelineService;
 }
 
 /** Remove chaves undefined (zod .optional() ⇄ exactOptionalPropertyTypes). */
@@ -331,6 +334,59 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
     "Remove um nível do blueprint (e o tilemap correspondente da engine, via projeção).",
     { levelId: z.string().min(1) },
   );
+
+  dispatchTool(
+    "world_place",
+    "world/place",
+    "Posiciona um nível já definido no world map (coordenadas em pixels; sobreposições são rejeitadas; re-posicionar substitui). Vizinhanças por borda ficam consultáveis via blueprint/query world.",
+    {
+      levelId: z.string().min(1),
+      x: z.number(),
+      y: z.number(),
+    },
+  );
+
+  dispatchTool(
+    "world_unplace",
+    "world/unplace",
+    "Remove um nível do world map (o nível continua definido no blueprint).",
+    { levelId: z.string().min(1) },
+  );
+
+  if (canonical.assets) {
+    const assets = canonical.assets;
+    server.registerTool(
+      "asset_ingest",
+      {
+        description:
+          "Processa um arquivo .aseprite do catálogo: exporta via CLI (spritesheet + frameTags/slices), normaliza no pipeline canônico (artefato sprite-document versionável com tags derivadas dos diretórios) e compila o spritesheet para .xnb via MGCB.",
+        inputSchema: { path: z.string().min(1) },
+      },
+      async ({ path: filePath }) => {
+        const result = await assets.ingest(filePath);
+        return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      },
+    );
+
+    server.registerTool(
+      "asset_catalog",
+      {
+        description:
+          "Catálogo taxonômico de sprites: últimas revisões dos artefatos sprite-document, filtráveis por tag (tags derivam da estrutura de diretórios do catálogo).",
+        inputSchema: { tag: z.string().min(1).optional() },
+      },
+      async ({ tag }) => {
+        const entries = assets.catalog(canonical.artifacts.list("sprite-document"), tag).map((e) => ({
+          artifactId: e.artifactId,
+          revision: e.revision,
+          contentHash: e.contentHash,
+          tags: e.metadata.tags ?? [],
+          source: e.metadata.source,
+        }));
+        return { content: [{ type: "text", text: JSON.stringify(entries, null, 2) }] };
+      },
+    );
+  }
 
   server.registerTool(
     "runtime_experience",

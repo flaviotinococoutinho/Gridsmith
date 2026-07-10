@@ -6,9 +6,11 @@
  * salvo `--no-mcp`, o servidor MCP sobre stdio. Logs operacionais vão para
  * stderr — stdout pertence exclusivamente ao transporte MCP.
  *
- * Uso: p7m-middleware [--pipe <nome>] [--no-mcp]
+ * Uso: p7m-middleware [--pipe <nome>] [--no-mcp] [--assets <dir>]
  */
 
+import path from "node:path";
+import { AssetPipelineService, ExecToolRunner } from "./assets/AssetPipelineService.js";
 import { EditorGateway } from "./ipc/EditorGateway.js";
 import { EnginePipeServer, type EngineLogEntry, type EngineSession } from "./ipc/EnginePipeServer.js";
 import { ArtifactStore } from "./canonical/ArtifactStore.js";
@@ -25,18 +27,24 @@ import { MonoGameAdapter } from "./runtime/MonoGameAdapter.js";
 import { RuntimeProfileRegistry } from "./runtime/RuntimeProfile.js";
 import { MONOGAME_PROFILES } from "./runtime/profiles/monogame.js";
 
-function parseArgs(argv: string[]): { pipeName?: string; mcp: boolean } {
+function parseArgs(argv: string[]): { pipeName?: string; mcp: boolean; assetsRoot?: string } {
   let pipeName: string | undefined;
+  let assetsRoot: string | undefined;
   let mcp = true;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--pipe") pipeName = argv[++i];
+    else if (argv[i] === "--assets") assetsRoot = argv[++i];
     else if (argv[i] === "--no-mcp") mcp = false;
   }
-  return { ...(pipeName !== undefined ? { pipeName } : {}), mcp };
+  return {
+    ...(pipeName !== undefined ? { pipeName } : {}),
+    ...(assetsRoot !== undefined ? { assetsRoot } : {}),
+    mcp,
+  };
 }
 
 async function main(): Promise<void> {
-  const { pipeName, mcp } = parseArgs(process.argv.slice(2));
+  const { pipeName, mcp, assetsRoot } = parseArgs(process.argv.slice(2));
 
   const pipeServer = new EnginePipeServer({
     ...(pipeName !== undefined ? { pipeName } : {}),
@@ -62,6 +70,24 @@ async function main(): Promise<void> {
   const governor = new ExperienceGovernor(profiles, capabilities);
   const adapter = new MonoGameAdapter(pipeServer, capabilities);
   const orchestrator = new CanonicalOrchestrator(store, hooks, adapter);
+
+  // Pipeline de assets (watcher + Aseprite CLI + MGCB) quando --assets <dir>
+  let assetService: AssetPipelineService | undefined;
+  if (assetsRoot) {
+    assetService = new AssetPipelineService({
+      assetsRoot,
+      outputRoot: path.join(assetsRoot, ".p7m-build"),
+      runner: new ExecToolRunner(),
+      pipelines,
+      hooks,
+    });
+    assetService.watch((err) => console.error(`[p7m] asset ingest failed: ${err.message}`));
+    hooks.addAction("asset:ingested", (payload) => {
+      const r = payload as { artifactId: string; revision: number };
+      console.error(`[p7m] asset ingested: ${r.artifactId} (rev ${r.revision})`);
+    });
+    console.error(`[p7m] asset pipeline watching ${assetsRoot}`);
+  }
 
   // Endpoint do editor (Electron/clientes de edição) em <pipe>-editor
   const editorGateway = new EditorGateway({
@@ -131,12 +157,14 @@ async function main(): Promise<void> {
       profiles,
       governor,
       adapter,
+      ...(assetService !== undefined ? { assets: assetService } : {}),
     });
     console.error("[p7m] MCP server ready on stdio (canonical model + runtime governance)");
   }
 
   const shutdown = async (): Promise<void> => {
     console.error("[p7m] shutting down");
+    assetService?.close();
     await editorGateway.close();
     await pipeServer.close();
     process.exit(0);

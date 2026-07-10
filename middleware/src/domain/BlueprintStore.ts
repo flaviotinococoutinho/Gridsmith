@@ -122,7 +122,26 @@ export type BlueprintCommand =
   | { readonly kind: "entity/place"; readonly entity: EntityInstance }
   | { readonly kind: "entity/remove"; readonly entityId: string }
   | { readonly kind: "level/define"; readonly level: LevelSpec }
-  | { readonly kind: "level/remove"; readonly levelId: string };
+  | { readonly kind: "level/remove"; readonly levelId: string }
+  | { readonly kind: "world/place"; readonly placement: WorldPlacement }
+  | { readonly kind: "world/unplace"; readonly levelId: string };
+
+/**
+ * Posição de um nível no world map (LDtk "free layout"): coordenadas em
+ * pixels do mundo; o retângulo do nível deriva de width/height × tileSize.
+ */
+export interface WorldPlacement {
+  readonly levelId: string;
+  readonly x: number;
+  readonly y: number;
+}
+
+export type WorldNeighborDirection = "left" | "right" | "up" | "down";
+
+export interface WorldNeighbor {
+  readonly levelId: string;
+  readonly direction: WorldNeighborDirection;
+}
 
 export type BlueprintEvent =
   | { readonly kind: "skeletonDefined"; readonly skeleton: SkeletonBlueprint }
@@ -134,7 +153,9 @@ export type BlueprintEvent =
   | { readonly kind: "entityPlaced"; readonly entity: EntityInstance }
   | { readonly kind: "entityRemoved"; readonly entityId: string }
   | { readonly kind: "levelDefined"; readonly level: LevelSpec }
-  | { readonly kind: "levelRemoved"; readonly levelId: string };
+  | { readonly kind: "levelRemoved"; readonly levelId: string }
+  | { readonly kind: "worldLevelPlaced"; readonly placement: WorldPlacement }
+  | { readonly kind: "worldLevelUnplaced"; readonly levelId: string };
 
 /**
  * Eventos: "event" (BlueprintEvent) após cada comando aplicado com sucesso.
@@ -146,6 +167,7 @@ export class BlueprintStore extends EventEmitter {
   private readonly entityDefs = new Map<string, EntityDefinition>();
   private readonly entities = new Map<string, EntityInstance>();
   private readonly levels = new Map<string, LevelSpec>();
+  private readonly placements = new Map<string, WorldPlacement>();
   private camera: CameraSettings = {};
 
   apply(command: BlueprintCommand): BlueprintEvent {
@@ -233,7 +255,48 @@ export class BlueprintStore extends EventEmitter {
         if (!this.levels.delete(command.levelId)) {
           throw new JsonRpcError(RpcErrorCode.InvalidParams, `Level "${command.levelId}" does not exist`);
         }
+        this.placements.delete(command.levelId); // sai também do world map
         const event: BlueprintEvent = { kind: "levelRemoved", levelId: command.levelId };
+        this.emit("event", event);
+        return event;
+      }
+      case "world/place": {
+        const placement = command.placement;
+        if (!Number.isFinite(placement.x) || !Number.isFinite(placement.y)) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `"x" and "y" must be finite numbers`);
+        }
+        const level = this.levels.get(placement.levelId);
+        if (!level) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Level "${placement.levelId}" must be defined before placing it on the world map`,
+          );
+        }
+        const rect = levelRect(level, placement);
+        for (const [otherId, other] of this.placements) {
+          if (otherId === placement.levelId) continue;
+          const otherRect = levelRect(this.levels.get(otherId)!, other);
+          if (rectsOverlap(rect, otherRect)) {
+            throw new JsonRpcError(
+              RpcErrorCode.InvalidParams,
+              `Level "${placement.levelId}" would overlap "${otherId}" on the world map`,
+            );
+          }
+        }
+        // re-posicionar é permitido (drag-n-drop): substitui a colocação
+        this.placements.set(placement.levelId, Object.freeze({ ...placement }));
+        const event: BlueprintEvent = { kind: "worldLevelPlaced", placement };
+        this.emit("event", event);
+        return event;
+      }
+      case "world/unplace": {
+        if (!this.placements.delete(command.levelId)) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Level "${command.levelId}" is not placed on the world map`,
+          );
+        }
+        const event: BlueprintEvent = { kind: "worldLevelUnplaced", levelId: command.levelId };
         this.emit("event", event);
         return event;
       }
@@ -319,6 +382,54 @@ export class BlueprintStore extends EventEmitter {
   listLevels(): readonly LevelSpec[] {
     return [...this.levels.values()];
   }
+
+  listPlacements(): readonly WorldPlacement[] {
+    return [...this.placements.values()];
+  }
+
+  /**
+   * Vizinhos de um nível no world map: níveis cujo retângulo TOCA uma borda
+   * do nível dado (LDtk: navegação entre níveis adjacentes).
+   */
+  neighborsOf(levelId: string): readonly WorldNeighbor[] {
+    const placement = this.placements.get(levelId);
+    const level = this.levels.get(levelId);
+    if (!placement || !level) return [];
+    const rect = levelRect(level, placement);
+
+    const neighbors: WorldNeighbor[] = [];
+    for (const [otherId, otherPlacement] of this.placements) {
+      if (otherId === levelId) continue;
+      const other = levelRect(this.levels.get(otherId)!, otherPlacement);
+      const verticalTouch = other.y < rect.y + rect.h && other.y + other.h > rect.y;
+      const horizontalTouch = other.x < rect.x + rect.w && other.x + other.w > rect.x;
+      if (other.x + other.w === rect.x && verticalTouch) neighbors.push({ levelId: otherId, direction: "left" });
+      else if (other.x === rect.x + rect.w && verticalTouch) neighbors.push({ levelId: otherId, direction: "right" });
+      else if (other.y + other.h === rect.y && horizontalTouch) neighbors.push({ levelId: otherId, direction: "up" });
+      else if (other.y === rect.y + rect.h && horizontalTouch) neighbors.push({ levelId: otherId, direction: "down" });
+    }
+    return neighbors;
+  }
+}
+
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+function levelRect(level: LevelSpec, placement: WorldPlacement): Rect {
+  return {
+    x: placement.x,
+    y: placement.y,
+    w: level.width * level.tileSize,
+    h: level.height * level.tileSize,
+  };
+}
+
+function rectsOverlap(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
 function validateLevel(level: LevelSpec): void {
