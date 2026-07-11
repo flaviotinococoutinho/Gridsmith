@@ -68,12 +68,4 @@ export function validateLayout(layout: VertexLayout): void {
   }
 }
 
-/** FNV-1a 32-bit — contrato de verificação e2e (mesma referência do leitor C#). */
-export function fnv1a(bytes: Uint8Array): number {
-  let hash = 0x811c9dc5;
-  for (const b of bytes) {
-    hash ^= b;
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
+export { fnv1a } from "../util/fnv1a.js";

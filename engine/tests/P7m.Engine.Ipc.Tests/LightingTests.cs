@@ -165,7 +165,10 @@ public class LightStoreTests
             store.Add(PointLight(i * 10f, 0f));
         }
 
-        store.Accumulate(Vector2.Zero, new Vector3(0f, 0f, 1f)); // aquecimento
+        for (var w = 0; w < 1_000; w++) // aquecimento além do tiered JIT
+        {
+            store.Accumulate(Vector2.Zero, new Vector3(0f, 0f, 1f));
+        }
 
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var frame = 0; frame < 1000; frame++)

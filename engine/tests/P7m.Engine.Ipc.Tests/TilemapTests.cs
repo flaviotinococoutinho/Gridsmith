@@ -87,7 +87,12 @@ public class TilemapStoreTests
         var store = new TilemapStore(1);
         var (grid, tiles) = MakeCells(64 * 64, i => (short)(i % 3), i => i % 5 - 1);
         var handle = store.Define("hot", 64, 64, 16, grid, tiles);
-        store.ComputeChecksum(handle); // aquecimento
+        for (var w = 0; w < 200; w++) // aquecimento além do tiered JIT
+        {
+            store.ComputeChecksum(handle);
+            store.TileAt(handle, w % 64, (w * 7) % 64);
+            store.IntGridAt(handle, (w * 3) % 64, w % 64);
+        }
 
         var before = GC.GetAllocatedBytesForCurrentThread();
         long sum = 0;

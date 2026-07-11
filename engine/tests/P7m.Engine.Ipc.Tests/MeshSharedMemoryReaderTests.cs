@@ -135,8 +135,11 @@ public class MeshSharedMemoryReaderTests
         builder.Create(64).Publish(Enumerable.Range(0, 64).Select(i => MakeVertex(i, i)).ToArray());
 
         using var reader = MeshSharedMemoryReader.Open(builder.MapName, 64, 36);
-        Assert.True(reader.TryReadStable(out _)); // aquecimento (JIT)
-        reader.ComputeChecksum();
+        for (var w = 0; w < 200; w++) // aquecimento além do tiered JIT
+        {
+            Assert.True(reader.TryReadStable(out _));
+            reader.ComputeChecksum();
+        }
 
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var frame = 0; frame < 1000; frame++)

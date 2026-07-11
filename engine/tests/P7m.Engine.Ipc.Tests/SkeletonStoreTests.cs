@@ -88,7 +88,10 @@ public class SkeletonStoreTests
         }
 
         var handle = store.Register("zero-gc", parents, bind);
-        store.ComputeWorldPoses(handle); // aquecimento (JIT)
+        for (var w = 0; w < 1_000; w++) // aquecimento além do tiered JIT
+        {
+            store.ComputeWorldPoses(handle);
+        }
 
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var frame = 0; frame < 1000; frame++)

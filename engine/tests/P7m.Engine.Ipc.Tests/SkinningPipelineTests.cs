@@ -70,7 +70,12 @@ public class LinearBlendSkinningTests
             BoneIndices = SkinnedVertex2D.PackBoneIndices(0, 1, 0, 0),
             BoneWeights = new Vector4(0.5f, 0.5f, 0f, 0f),
         };
-        LinearBlendSkinning.Skin(vertex, store.SkinningMatrices(handle)); // aquecimento
+        // Aquecimento além do limiar de promoção do tiered JIT (~30 chamadas):
+        // a recompilação de tier aloca e contaminaria a janela de medição.
+        for (var i = 0; i < 1_000; i++)
+        {
+            LinearBlendSkinning.Skin(vertex, store.SkinningMatrices(handle));
+        }
 
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 10_000; i++)

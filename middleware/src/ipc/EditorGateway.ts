@@ -16,6 +16,12 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import net from "node:net";
 import { randomUUID } from "node:crypto";
+import {
+  BlueprintDocumentError,
+  exportBlueprint,
+  replayDocument,
+  type BlueprintDocument,
+} from "../canonical/BlueprintSerializer.js";
 import { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
 import { COMMAND_KINDS, reshapeCommand } from "../canonical/commandShape.js";
 import type { BlueprintCommand, BlueprintEvent, BlueprintStore } from "../domain/BlueprintStore.js";
@@ -50,6 +56,7 @@ const QUERYABLE_PROJECTIONS = [
   "camera",
   "levels",
   "world",
+  "document",
 ] as const;
 
 /**
@@ -186,11 +193,34 @@ export class EditorGateway extends EventEmitter {
             ),
           };
         }
+        case "document":
+          // snapshot completo do projeto (save-as-file no editor)
+          return { document: exportBlueprint(store) };
         default:
           throw new JsonRpcError(
             RpcErrorCode.InvalidParams,
             `"projection" must be one of [${QUERYABLE_PROJECTIONS.join(", ")}]`,
           );
+      }
+    });
+
+    peer.registerMethod("blueprint/load", async (params) => {
+      this.requireHandshake(session);
+      const p = params as { document?: unknown };
+      if (typeof p?.document !== "object" || p.document === null) {
+        throw new JsonRpcError(RpcErrorCode.InvalidParams, `"document" must be a blueprint document object`);
+      }
+      try {
+        return await replayDocument(
+          p.document as BlueprintDocument,
+          this.options.store,
+          this.options.orchestrator,
+        );
+      } catch (err) {
+        if (err instanceof BlueprintDocumentError) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, err.message);
+        }
+        throw err;
       }
     });
 

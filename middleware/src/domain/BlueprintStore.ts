@@ -387,6 +387,20 @@ export class BlueprintStore extends EventEmitter {
     return [...this.placements.values()];
   }
 
+  /** true quando nenhum comando foi aplicado (estado "novo projeto"). */
+  get isEmpty(): boolean {
+    return (
+      this.skeletons.size === 0 &&
+      this.meshes.size === 0 &&
+      this.lights.size === 0 &&
+      this.entityDefs.size === 0 &&
+      this.entities.size === 0 &&
+      this.levels.size === 0 &&
+      this.placements.size === 0 &&
+      Object.keys(this.camera).length === 0
+    );
+  }
+
   /**
    * Vizinhos de um nível no world map: níveis cujo retângulo TOCA uma borda
    * do nível dado (LDtk: navegação entre níveis adjacentes).

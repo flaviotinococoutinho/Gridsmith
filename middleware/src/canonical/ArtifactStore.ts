@@ -11,7 +11,7 @@
  */
 
 import { EventEmitter } from "node:events";
-import { fnv1a } from "../sharedmem/vertexLayout.js";
+import { fnv1a } from "../util/fnv1a.js";
 
 export interface ArtifactMetadata {
   /** Proveniência: "user:<nome>", "agent:<modelo>", "pipeline:<id>"... */

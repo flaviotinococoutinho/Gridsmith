@@ -124,9 +124,13 @@ amostras via `mesh/inspect` — compatibilidade byte a byte comprovada entre os 
 
 ## Documentação
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — visão geral das camadas, protocolo de
-  framing e ciclo de vida da conexão.
-- [`docs/RESEARCH-EDITOR-LANDSCAPE.md`](docs/RESEARCH-EDITOR-LANDSCAPE.md) — pesquisa das
-  ferramentas de referência (LDtk, Tiled, Ogmo, Aseprite, FlatRedBall, Gum) e as decisões
-  de integração adotadas.
-- [`contracts/`](contracts/) — esquemas JSON Schema dos métodos JSON-RPC.
+| Documento | Conteúdo |
+|---|---|
+| [`docs/PRODUCT.md`](docs/PRODUCT.md) | Visão de produto, personas, capacidades entregues e princípios invioláveis |
+| [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) | Requisitos funcionais, não funcionais e técnicos com status e verificação |
+| [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) | Governança arquitetural (18 regras executáveis), Definition of Done e quality gates |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Camadas, protocolo de framing e ciclo de vida da conexão |
+| [`docs/CANONICAL-MODEL.md`](docs/CANONICAL-MODEL.md) | Modelo canônico (comandos/eventos/hooks/pipelines/artefatos), adapters e perfis de runtime |
+| [`docs/RESEARCH-EDITOR-LANDSCAPE.md`](docs/RESEARCH-EDITOR-LANDSCAPE.md) | Pesquisa LDtk/Tiled/Ogmo/Aseprite/FlatRedBall/Gum e decisões absorvidas |
+| [`docs/OPPORTUNITIES.md`](docs/OPPORTUNITIES.md) | Backlog qualificado de oportunidades (impacto × esforço × alicerce) |
+| [`contracts/`](contracts/) | Esquemas JSON Schema dos métodos JSON-RPC e contratos binários |

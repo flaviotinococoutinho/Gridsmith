@@ -77,7 +77,10 @@ public class CameraDynamicsTests
     public void Update_is_allocation_free()
     {
         var dynamics = new SecondOrderDynamics(2f, 1f, 0f, Vector2.Zero);
-        dynamics.Update(Dt, Vector2.One, Vector2.Zero); // aquecimento
+        for (var w = 0; w < 1_000; w++) // aquecimento além do tiered JIT
+        {
+            dynamics.Update(Dt, Vector2.One, Vector2.Zero);
+        }
 
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 10_000; i++)
@@ -236,7 +239,11 @@ public class CinematicCameraTests
         var camera = new CinematicCamera(CameraConfig.Default);
         camera.AddTrauma(0.5f);
         camera.Update(1f / 60f, Vector2.One, Vector2.Zero);
-        camera.ComputeViewProjection(640f, 480f); // aquecimento
+        for (var w = 0; w < 1_000; w++) // aquecimento além do tiered JIT
+        {
+            camera.Update(1f / 60f, Vector2.One, Vector2.Zero);
+            camera.ComputeViewProjection(640f, 480f);
+        }
 
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 10_000; i++)

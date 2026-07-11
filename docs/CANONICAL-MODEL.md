@@ -163,6 +163,17 @@ matriz via MCP (`runtime_experience`).
 - **Proveniência**: artefatos carregam `metadata.createdBy` — humano, agente
   ou pipeline — para auditoria da geração assistida.
 
+## 4.5 Persistência do projeto
+
+O Blueprint é salvável como **documento declarativo versionado**
+(`BlueprintSerializer`): `exportBlueprint` produz um snapshot completo
+(`schemaVersion` + todos os domínios) e o load **reproduz o documento como
+comandos** pelo orquestrador, em ordem de dependência — mesma validação,
+mesmos hooks, mesma projeção de uma edição manual. Carregar exige Blueprint
+vazio ("novo projeto" é estado explícito), e o roundtrip é sem perdas
+(testado por igualdade profunda do reexport). No gateway:
+`blueprint/query {projection: "document"}` e `blueprint/load {document}`.
+
 ## 5. Migração e regras de evolução
 
 - `EngineBridge` permanece como transporte MonoGame (sessões, reidratação);
