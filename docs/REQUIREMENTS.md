@@ -1,28 +1,41 @@
 # Requisitos — Funcionais, Não Funcionais e Técnicos
 
-Status: ✅ entregue e verificado · 🔶 parcial (lacuna registrada) · ⬜ planejado.
-Cada requisito aponta o mecanismo de verificação — requisito sem teste é
-tratado como não entregue.
+> **Modelo de status (revisado pós-diagnóstico de produto):** "entregue
+> tecnicamente" não significa "entregue como produto". Cada funcionalidade é
+> avaliada em **cinco dimensões** — uma funcionalidade só recebe o status
+> **Produto** quando todas as dimensões necessárias estão completas e a
+> jornada foi validada por usuário. O plano para fechar as lacunas é a
+> milestone [`ALPHA-0.1.md`](ALPHA-0.1.md).
 
-## 1. Requisitos funcionais (RF)
+Legenda: ✅ completo · 🔶 parcial · ❌ ausente · — não se aplica.
 
-| ID | Requisito | Status | Verificação |
-|---|---|---|---|
-| RF-01 | Editar rigs esqueléticos com IK interativo (FABRIK) e publicá-los na engine | ✅ | testes FABRIK + `skeleton/define` e2e |
-| RF-02 | Injetar malhas (vértices/UV/pesos) via shared memory binária | ✅ | verify-phase2 (checksum cruzado) |
-| RF-03 | Câmera cinemática configurável com preview determinístico | ✅ | verify-phase3 + testes de física |
-| RF-04 | Iluminação deferred (3 tipos de luz) com correção por LUT | ✅ | testes Lighting2D/ColorLut + e2e |
-| RF-05 | Níveis por IntGrid + regras de auto-tiling determinísticas | ✅ | testes AutoTiler + verify-phase3/4 |
-| RF-06 | World map com colocação validada e vizinhança navegável | ✅ | world-map.test.ts |
-| RF-07 | Entidades com campos tipados definidos pelo usuário (schema → UI) | ✅ | entity-definitions.test.ts |
-| RF-08 | Ingestão Aseprite (clipes por frame tags, pivôs por slices) + compile MGCB | ✅ | asset-pipeline.test.ts (runner injetável) |
-| RF-09 | Estados visuais com interpolação e easing (semântica Gum) | ✅ | state-machine.test.ts |
-| RF-10 | Multi-cliente de edição com coerência por broadcast | ✅ | editor-gateway.test.ts |
-| RF-11 | Salvar/carregar projeto sem perdas (documento versionado) | ✅ | blueprint-serializer.test.ts |
-| RF-12 | Operação por agentes (MCP) por todo o domínio | ✅ | ferramentas MCP sobre o orquestrador (R8) |
-| RF-13 | Editores visuais de canvas (curvas/rigs/grafos) | 🔶 | modelos prontos e testados; camada de canvas/worker pendente |
-| RF-14 | Live edit generalizado de variáveis tunáveis | 🔶 | padrão existe (`camera/configure`); generalização pendente |
-| RF-15 | Harness headless com physics slices e asserções (Fase 5) | ⬜ | alicerces em `camera/simulate`/`lighting/evaluate`/`mesh/inspect` |
+## 1. Matriz funcional em 5 dimensões
+
+| Funcionalidade | Core/modelo | Gateway/API | Projeção runtime | UI visual | Jornada e2e usuário | **Produto** |
+|---|---|---|---|---|---|---|
+| Rigging/FABRIK | ✅ | ✅ | 🔶 (skinning GPU; sem editor) | ❌ | ❌ | **Não entregue** |
+| Timeline/curvas | ✅ | — | 🔶 | ❌ | ❌ | **Não entregue** |
+| Máquina de estados | ✅ | — | ❌ | ❌ | ❌ | **Não entregue** |
+| Níveis IntGrid + auto-tiling | ✅ | ✅ | ✅ | ❌ | ❌ | **Motor pronto, editor ausente** (P0.4) |
+| World map | ✅ | ✅ query | ❌ streaming | ❌ | ❌ | **Parcial** |
+| Entidades tipadas | ✅ | ✅ | ❌ spawn (P0.6) | ❌ | ❌ | **Parcial** |
+| Pipeline Aseprite/MGCB | ✅ | ✅ MCP | ✅ compilação | ❌ | ❌ | **Parcial** |
+| Câmera cinemática | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
+| Iluminação deferred | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
+| Save/load de projeto | ✅ | ✅ | — | 🔶 (client/preload expostos; sem diálogos) | ❌ | **Em fechamento** (P0.2) |
+| Supervisão de processos | 🔶 (máquina de estados testada) | — | — | ❌ | ❌ | **Em fechamento** (P0.1) |
+| Preview embutido | 🔶 fundação | ❌ | 🔶 fundação | ❌ | ❌ | **Requisito P0.5** |
+| Undo/redo | ✅ IntGrid apenas | ❌ | — | ❌ | ❌ | **Incompleto** (P0.7) |
+| Diagnósticos (problems) | ✅ razões existem | 🔶 | 🔶 | ❌ | ❌ | **P0.8** |
+| Empacotamento/instalador | ❌ | — | — | ❌ | ❌ | **P0.9** |
+| Operação por agentes (MCP) | ✅ | ✅ | ✅ | — | 🔶 | **Entregue para agentes** |
+
+### Leitura executiva
+
+A coluna Core está quase toda verde; as colunas UI e Jornada estão quase todas
+vermelhas. **A prioridade não é adicionar subsistemas: é converter a fundação
+em um fluxo vertical utilizável** (ver decisão de congelamento em
+[`ALPHA-0.1.md`](ALPHA-0.1.md)).
 
 ## 2. Requisitos não funcionais (RNF)
 

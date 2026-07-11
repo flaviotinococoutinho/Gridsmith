@@ -1,5 +1,23 @@
 # Oportunidades
 
+> **Revisão pós-diagnóstico de produto (2026-07):** este backlog estava
+> orientado por "o que a arquitetura permite" e sub-representava "o que o
+> usuário precisa para obter valor". Os itens de valor direto ao usuário
+> foram promovidos ao backlog P0/P1 da milestone
+> [`ALPHA-0.1.md`](ALPHA-0.1.md) — que tem precedência sobre tudo aqui.
+> Promovidos: OPP-01→P1, OPP-02→**P0.5**, OPP-03→P1, OPP-05→**P0.7**,
+> OPP-11→**P0.6**. Adiados deliberadamente: OPP-07, OPP-13, OPP-17, OPP-18,
+> OPP-19 (validam a arquitetura, não o produto).
+
+## Necessidades de usuário sem representação anterior (agora em ALPHA-0.1)
+
+Gerenciador de projetos · save/save as/autosave/crash recovery · inspector +
+modelo de seleção transversal · asset browser · supervisor de processos ·
+command palette · empacotamento/instalador · onboarding/tutorial · painel de
+problemas · acessibilidade · testes de usabilidade.
+
+---
+
 Backlog qualificado do que a arquitetura atual habilita. Cada item traz
 impacto, esforço e o alicerce já existente — oportunidade aqui significa
 "o terreno está preparado", não "ideia solta".

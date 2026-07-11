@@ -29,7 +29,16 @@ O que diferencia o P7M de um editor acoplado a uma engine:
 | **Programador de gameplay** | Motor previsível e performático | Núcleo DOD Zero-GC testado; física de câmera com parametrização f/ζ/r; contratos binários verificados entre runtimes |
 | **Agente de IA / pipeline** | Operar a ferramenta programaticamente | Ferramentas MCP para todo comando canônico; artefatos com hash e proveniência; hooks/filters inspecionáveis |
 
-## Capacidades atuais (entregues e verificadas)
+## Estado honesto do produto
+
+> **Diagnóstico (2026-07):** o P7M é hoje uma **plataforma técnica de edição
+> madura com uma aplicação visual embrionária**. As capacidades abaixo estão
+> entregues e verificadas **na plataforma** (modelo, gateway, runtime) — a
+> experiência visual do usuário ainda não as expõe. A conversão em produto é
+> a milestone [`ALPHA-0.1.md`](ALPHA-0.1.md); a matriz funcional honesta em
+> cinco dimensões está em [`REQUIREMENTS.md`](REQUIREMENTS.md).
+
+## Capacidades da plataforma (entregues e verificadas)
 
 - **Rigging**: esqueletos hierárquicos (até 64×256 ossos), skinning LBS na
   GPU alimentado por shared memory sem repack, FABRIK no editor.

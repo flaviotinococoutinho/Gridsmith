@@ -31,7 +31,16 @@ da engine, nunca assume suporte. Desenho completo em
   Named Pipes (Windows) ou Unix Domain Sockets (Linux/macOS); dados de malha em massa via
   Memory-Mapped Files com `LayoutKind.Sequential`.
 
-## Roteiro de fases
+## Rumo atual: Alpha 0.1 — First Playable Workflow
+
+> **Expansão horizontal congelada.** O foco único é a milestone
+> [`docs/ALPHA-0.1.md`](docs/ALPHA-0.1.md): converter a plataforma em um
+> fluxo vertical utilizável sem terminal —
+> `Projeto → Asset → Entidade → Nível → Preview → Live edit → Save/reopen`.
+> A matriz honesta plataforma × produto está em
+> [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md).
+
+## Roteiro de fases (histórico da plataforma)
 
 - [x] **Fase 1 — Infraestrutura Core e IPC:** servidor MCP local em Node.js, canais de
   Named Pipes estáveis e fluxo JSON-RPC 2.0 bidirecional validado com o serviço de engine.

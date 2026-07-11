@@ -78,6 +78,27 @@ export class EditorClient {
     });
   }
 
+  /** Snapshot completo do projeto (Save/Save As escrevem isto em disco). */
+  async saveDocument(): Promise<unknown> {
+    const { document } = await this.request<{ document: unknown }>("blueprint/query", {
+      projection: "document",
+    });
+    return document;
+  }
+
+  /**
+   * Reproduz um documento salvo pelo caminho canônico (Open). Exige
+   * blueprint vazio — "novo projeto" é estado explícito do ciclo de vida.
+   */
+  loadDocument(document: unknown): Promise<{
+    applied: number;
+    projected: number;
+    deferred: number;
+    skipped: number;
+  }> {
+    return this.request("blueprint/load", { document });
+  }
+
   close(): void {
     this.peer?.close();
     this.peer = undefined;

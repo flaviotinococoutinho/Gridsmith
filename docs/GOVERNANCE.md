@@ -54,6 +54,22 @@ que as impõe e define o que "pronto" significa.
 
 ## 2. Definition of Done
 
+### Status "Produto entregue" (5 dimensões)
+
+Uma FUNCIONALIDADE (diferente de uma mudança de código) só é "Produto
+entregue" quando as cinco dimensões aplicáveis estão completas:
+
+1. **Core/modelo** — lógica pura testada;
+2. **Gateway/API** — operável via gateway do editor e/ou MCP;
+3. **Projeção no runtime** — efeito real na engine (ou skip com razão);
+4. **Interface visual** — fluxo utilizável na aplicação, com vocabulário
+   humano (nunca IDs internos) e affordance real;
+5. **Jornada e2e validada por usuário** — parte de uma jornada de aceite
+   executável sem terminal.
+
+A matriz corrente vive em [`REQUIREMENTS.md`](REQUIREMENTS.md) §1; o plano
+para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
+
 ### DoD de uma mudança (qualquer camada)
 
 1. **Testes primeiro no nível certo**: unidade para lógica, integração para
