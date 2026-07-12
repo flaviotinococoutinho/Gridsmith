@@ -45,6 +45,12 @@ export const MONOGAME_3_8: RuntimeProfile = {
       reason: "Engine conectada expõe o subsistema de níveis",
     },
     {
+      feature: "entities.spawn",
+      effect: "enable",
+      requiresSubsystem: "actors",
+      reason: "Engine conectada expõe o subsistema de atores (spawn de entidades)",
+    },
+    {
       feature: "preview.embedded",
       effect: "disable",
       reason: "Preview embutido chega no perfil 3.8.2 (host gráfico acoplável)",

@@ -182,3 +182,17 @@ button:disabled { color: var(--muted); cursor: not-allowed; }
 }
 
 .muted { color: var(--muted); }
+
+/* ---- serviços supervisionados (P0.1) ---- */
+#status-services { display: flex; gap: 0.5rem; align-items: center; }
+.service-chip {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.service-chip.state-running { border-color: #3d6b3d; color: #8fd08f; }
+.service-chip.state-starting,
+.service-chip.state-retrying { border-color: #8a6d1f; color: #e0c264; }
+.service-chip.state-failed { border-color: var(--danger); color: var(--danger); }
+#status-services button { font-size: 0.9em; }

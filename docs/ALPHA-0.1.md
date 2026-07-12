@@ -58,10 +58,21 @@ Status: ⬜ aberto · 🔶 em andamento · ✅ fechado. Issues registradas:
 ### P0.1 — Supervisor de processos 🔶
 O Electron é o supervisor do ecossistema: um único executável.
 - [x] Máquina de estados de supervisão (spawn/descoberta, health, retry com backoff, encerramento coordenado, modo sem engine) — `frontend/src/main/ProcessSupervisor.ts`, testada com launcher injetável
-- [ ] Wire real no `main.ts` (spawn de middleware/engine empacotados)
-- [ ] Tela de estados compreensíveis ("Iniciando serviços…", "Conectando ao MonoGame…", "Pronto")
-- [ ] Captura de stdout/stderr por serviço + diagnóstico de dependências
-- [ ] Detecção de versão incompatível de protocolo com mensagem orientada à solução
+- [x] Wire real no `main.ts`: por padrão o main spawna o middleware
+  (ELECTRON_RUN_AS_NODE) e a engine (`dotnet <dll>`); `--external-services`
+  preserva o modo dev; prontidão por probe do gateway + manifesto vivo na
+  experiência; conexão idempotente; shutdown coordenado no fechamento;
+  smoke com serviços reais (subida → restart isolado da engine → shutdown)
+- [x] Estados compreensíveis na UI: chips por serviço na status bar
+  ("Iniciando…", "Em execução", "Falhou") com razão/backoff no tooltip e
+  botão "Reiniciar <serviço>" por serviço falho (engine nova = reidratação
+  automática; o projeto é preservado)
+- [x] Captura de stdout/stderr por serviço (ring buffer das últimas 50
+  linhas; as 5 últimas viajam no status para diagnóstico na UI — ex.:
+  "runtime não compilado; execute dotnet build")
+- [x] Detecção de versão incompatível de protocolo com mensagem orientada à
+  solução (ProtocolMismatch do gateway → "Atualize a instalação inteira…")
+- [ ] Caminhos empacotados (Electron Builder) — fecha junto com P0.9
 
 ### P0.2 — Ciclo de vida do projeto 🔶
 O editor começa pelo projeto, não pela conexão a um pipe.

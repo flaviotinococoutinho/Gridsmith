@@ -39,9 +39,14 @@ Camada de orquestração do ecossistema P7M EaaS (Node.js ≥ 22, TypeScript).
   taxonômico — watcher recursivo, export via CLI Aseprite, artefato canônico com tags
   por diretório e compile MGCB para `.xnb` (`ToolRunner` injetável; erros tipados;
   ativado com `--assets <dir>`).
-- **Fachada MCP** (`src/mcp/McpFacade.ts`): expõe `engine_status`, `engine_ping`,
-  `skeleton_initialize`, `mesh_bind_shared_memory`, `mesh_inspect`,
-  `engine_capabilities` e `editor_concepts` a agentes de IA via stdio.
+- **Fachada MCP** (`src/mcp/McpFacade.ts`): expõe a agentes de IA, via stdio,
+  o comando genérico `blueprint_command` (TODOS os kinds canônicos de
+  `COMMAND_KINDS` — inclusive `level/update` e `entity/move`) + ferramentas
+  curadas por domínio (`camera_*`, `light_*`, `level_define/update/remove`,
+  `entitydef_define`, `entity_place/move/remove`, `world_*`), diagnóstico
+  (`engine_status`, `engine_ping`, `mesh_inspect`, `engine_capabilities`,
+  `editor_concepts`, `runtime_*`, `hooks_list`, `artifact_get`) e assets
+  (`asset_*`, com `--assets <dir>`).
 
 ## Comandos
 

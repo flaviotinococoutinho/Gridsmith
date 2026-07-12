@@ -192,4 +192,28 @@ public class EngineServiceActorTests : IAsyncLifetime
             "archetype-spawn",
             actors.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
     }
+
+    [Fact]
+    public async Task Manifest_editor_property_types_respect_the_published_contract()
+    {
+        // engine.describe.schema.json restringe o hint "type" a este enum; o
+        // manifesto inteiro é validado para o drift não passar despercebido
+        var allowed = new[] { "float", "int", "bool", "enum", "curve", "color" };
+        var manifest = await _middleware.RequestAsync("engine/describe", null, _cts.Token);
+
+        foreach (var subsystem in manifest.GetProperty("subsystems").EnumerateObject())
+        {
+            if (!subsystem.Value.TryGetProperty("editor", out var editor) ||
+                !editor.TryGetProperty("properties", out var properties))
+            {
+                continue;
+            }
+
+            foreach (var property in properties.EnumerateArray())
+            {
+                var type = property.GetProperty("type").GetString();
+                Assert.Contains(type, allowed);
+            }
+        }
+    }
 }

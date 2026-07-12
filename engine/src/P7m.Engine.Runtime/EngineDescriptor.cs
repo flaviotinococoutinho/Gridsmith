@@ -181,9 +181,12 @@ public static class EngineDescriptor
                     panel = "level-editor",
                     gizmos = new[] { "entity-handle", "spawn-point" },
                     nodeTypes = new[] { "entity-instance" },
+                    // dois floats (não "vec2"): o contrato engine.describe só
+                    // admite float/int/bool/enum/curve/color como hint de editor
                     properties = new object[]
                     {
-                        new { name = "position", type = "vec2", @default = "0,0" },
+                        new { name = "x", type = "float", @default = 0.0 },
+                        new { name = "y", type = "float", @default = 0.0 },
                     },
                 },
             },

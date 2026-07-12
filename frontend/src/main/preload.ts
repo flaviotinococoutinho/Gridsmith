@@ -13,6 +13,16 @@ export interface ProjectStatusPayload {
   recents: Array<{ filePath: string; name: string; lastOpenedUnixMs: number }>;
 }
 
+/** Estado de um serviço supervisionado (P0.1) + últimas linhas de log. */
+export interface ServiceStatusPayload {
+  id: string;
+  displayName: string;
+  state: string;
+  attempts: number;
+  detail?: string;
+  recentLog: string[];
+}
+
 export interface P7mEditorApi {
   connect(): Promise<{ sessionId: string }>;
   dispatch(kind: string, payload: Record<string, unknown>): Promise<unknown>;
@@ -29,6 +39,11 @@ export interface P7mEditorApi {
   onProjectStatus(listener: (status: ProjectStatusPayload) => void): void;
   /** Ações do menu nativo roteadas ao renderer (undo/redo do editor ativo). */
   onMenuAction(listener: (action: "undo" | "redo") => void): void;
+  // ---- supervisão de processos (ALPHA-0.1 P0.1) ----
+  serviceStatus(): Promise<ServiceStatusPayload[]>;
+  /** Reinicia um serviço isolado (engine caída → projeto preservado). */
+  serviceRestart(serviceId: string): Promise<boolean>;
+  onServiceStatus(listener: (services: ServiceStatusPayload[]) => void): void;
 }
 
 const api: P7mEditorApi = {
@@ -46,6 +61,11 @@ const api: P7mEditorApi = {
   },
   onMenuAction: (listener) => {
     ipcRenderer.on("p7m:menu-action", (_event, action) => listener(action));
+  },
+  serviceStatus: () => ipcRenderer.invoke("p7m:service-status"),
+  serviceRestart: (serviceId) => ipcRenderer.invoke("p7m:service-restart", serviceId),
+  onServiceStatus: (listener) => {
+    ipcRenderer.on("p7m:service-status", (_event, services) => listener(services));
   },
 };
 

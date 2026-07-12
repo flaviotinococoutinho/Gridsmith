@@ -41,7 +41,7 @@ impacto, esforço e o alicerce já existente — oportunidade aqui significa
 | OPP-08 | **Harness de performance/física (Fase 5)**: physics slices, budget de frame, asserções de regressão | Alto | M | `camera/simulate`, `lighting/evaluate`, `mesh/inspect`, checksums — o vocabulário de asserção já existe |
 | OPP-09 | **Compilação de shaders no CI** (mgcb + Wine em job dedicado) | Médio | B/M | `Content.mgcb` pronto; fecha o risco RT-03 |
 | OPP-10 | **Tiles via shared memory** (mapas > 64k células, chunks/infinito estilo Tiled) | Médio | M/A | plano de dados com seqlock provado para malhas; contrato prevê a extensão |
-| OPP-11 | **Spawn tables no runtime** (entidades canônicas → atores vivos) | Alto | M | `entity/place` já validado; projeção hoje é `skipped` com razão apontando exatamente para cá |
+| OPP-11 | ✅ **ENTREGUE como P0.6** — spawn tables no runtime (entidades canônicas → atores vivos) | Alto | M | `archetypeId` na definição projeta `entity/spawn`/`move`/`despawn`; `ActorStore` Zero-GC; resta enriquecer o archetype (sprite/colisão) |
 | OPP-12 | **Binding nativo de mmap no Electron** (coerência Windows do plano de dados) | Médio | M | risco documentado no contrato; interface do escritor já isolada |
 
 ## Automação / IA

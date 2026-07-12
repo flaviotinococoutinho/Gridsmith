@@ -23,7 +23,7 @@ Legenda: ✅ completo · 🔶 parcial · ❌ ausente · — não se aplica.
 | Câmera cinemática | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
 | Iluminação deferred | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
 | Save/load de projeto | ✅ | ✅ | — | 🔶 (client/preload expostos; sem diálogos) | ❌ | **Em fechamento** (P0.2) |
-| Supervisão de processos | 🔶 (máquina de estados testada) | — | — | ❌ | ❌ | **Em fechamento** (P0.1) |
+| Supervisão de processos | ✅ (máquina de estados testada) | — | — | 🔶 (wire real + chips de estado + restart; falta caminho empacotado) | ❌ | **Em fechamento** (P0.1↔P0.9) |
 | Preview embutido | 🔶 fundação | ❌ | 🔶 fundação | ❌ | ❌ | **Requisito P0.5** |
 | Undo/redo | ✅ IntGrid apenas | ❌ | — | ❌ | ❌ | **Incompleto** (P0.7) |
 | Diagnósticos (problems) | ✅ razões existem | 🔶 | 🔶 | ❌ | ❌ | **P0.8** |

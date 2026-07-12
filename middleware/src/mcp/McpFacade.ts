@@ -329,10 +329,81 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
   );
 
   dispatchTool(
+    "level_update",
+    "level/update",
+    "Substitui um nível existente no blueprint (edição incremental do IntGrid/regras). Na projeção, o tilemap é removido e redefinido com os tiles re-resolvidos — mesma semântica determinística do define.",
+    {
+      levelId: z.string().min(1),
+      width: z.number().int().min(1),
+      height: z.number().int().min(1),
+      tileSize: z.number().int().min(1),
+      seed: z.number().int(),
+      intGrid: z.array(z.number().int().min(0)),
+      rules: z.array(
+        z.object({
+          name: z.string().optional(),
+          patternSize: z.union([z.literal(1), z.literal(3), z.literal(5)]),
+          pattern: z.array(z.union([z.number(), z.null()])),
+          tileIds: z.array(z.number().int()).min(1),
+          chance: z.number().gt(0).max(1).optional(),
+        }),
+      ),
+    },
+  );
+
+  dispatchTool(
     "level_remove",
     "level/remove",
     "Remove um nível do blueprint (e o tilemap correspondente da engine, via projeção).",
     { levelId: z.string().min(1) },
+  );
+
+  dispatchTool(
+    "entitydef_define",
+    "entitydef/define",
+    "Define um tipo de entidade (campos tipados com defaults). Com archetypeId, as instâncias viram atores vivos no runtime (spawn table); sem, são puramente editoriais.",
+    {
+      entityDefId: z.string().min(1),
+      archetypeId: z.string().min(1).optional(),
+      fields: z.array(
+        z.object({
+          name: z.string().min(1),
+          type: z.enum(["int", "float", "bool", "string", "enum", "point", "color"]),
+          default: z.unknown().optional(),
+          options: z.array(z.string()).optional(),
+        }),
+      ),
+      tags: z.array(z.string()).optional(),
+    },
+  );
+
+  dispatchTool(
+    "entity_place",
+    "entity/place",
+    "Instancia uma entidade em posição do mundo (pixels). Se a definição tem archetypeId, projeta entity/spawn no runtime — o entityId é a referência estável editor↔runtime.",
+    {
+      entityId: z.string().min(1),
+      entityDefId: z.string().min(1),
+      position: z.tuple([z.number(), z.number()]),
+      fields: z.record(z.string(), z.unknown()).optional(),
+    },
+  );
+
+  dispatchTool(
+    "entity_move",
+    "entity/move",
+    "Move uma entidade já colocada (live edit): reposiciona o ator vivo no runtime sem respawn.",
+    {
+      entityId: z.string().min(1),
+      position: z.tuple([z.number(), z.number()]),
+    },
+  );
+
+  dispatchTool(
+    "entity_remove",
+    "entity/remove",
+    "Remove uma instância de entidade (e despawna o ator no runtime, se spawnado).",
+    { entityId: z.string().min(1) },
   );
 
   dispatchTool(

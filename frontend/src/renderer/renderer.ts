@@ -12,9 +12,9 @@ import { EventLog } from "../core/eventLog.js";
 import { IntGridDocument, lineCells } from "../core/intGridDocument.js";
 import { LEVEL_PALETTE, TILE_COLORS, defaultLevelRules } from "../core/levelPresets.js";
 import { WorkbenchModel, type BottomTab } from "../core/workbenchModel.js";
-import { panelLabel, projectStateLabel } from "../core/vocabulary.js";
-import type { ResolvedExperienceLike } from "../core/experienceGate.js";
-import type { P7mEditorApi, ProjectStatusPayload } from "../main/preload.js";
+import { panelLabel, projectStateLabel, serviceStateLabel } from "../core/vocabulary.js";
+import { ExperienceGate, type ResolvedExperienceLike } from "../core/experienceGate.js";
+import type { P7mEditorApi, ProjectStatusPayload, ServiceStatusPayload } from "../main/preload.js";
 // type-only (apagado na compilação): o módulo real é vendorizado pelo build
 import type { resolveAutoTiles as ResolveAutoTilesFn } from "@p7m/middleware/dist/leveldesign/AutoTiler.js";
 
@@ -42,6 +42,9 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 
 const model = new WorkbenchModel();
 const log = new EventLog(500);
+
+/** Gate da experiência corrente (governança por runtime); definido no boot. */
+let experienceGate: ExperienceGate | undefined;
 
 // ---------------------------------------------------------------- toolbar
 
@@ -173,6 +176,15 @@ function mountLevelEditor(host: HTMLElement): void {
   toolButtons.set("picker", addButton("Conta-gotas", () => selectTool("picker"), "Clique para pegar o significado da célula"));
   toolButtons.set("entity", addButton("Jogador", () => selectTool("entity"), "Clique posiciona, arraste move, Delete remove"));
   selectTool("pencil");
+
+  // governança: a ferramenta de spawn segue a decisão do perfil/manifesto
+  // (fail-safe, com a razão no tooltip — nunca um "indisponível" genérico)
+  const spawnAnswer = experienceGate?.feature("entities.spawn");
+  if (spawnAnswer && !spawnAnswer.enabled) {
+    const entityButton = toolButtons.get("entity")!;
+    entityButton.disabled = true;
+    entityButton.title = spawnAnswer.reason;
+  }
 
   toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
 
@@ -640,6 +652,40 @@ function refreshProblemBadge(): void {
   badge.dataset["zero"] = String(log.problemCount === 0);
 }
 
+// --------------------------------------------- serviços supervisionados (P0.1)
+
+/**
+ * Estados compreensíveis dos serviços na status bar ("Iniciando serviços…",
+ * "Conectando ao MonoGame…", "Pronto") + ação corretiva por serviço falho,
+ * com as últimas linhas de stderr no tooltip (diagnóstico de dependências).
+ */
+function renderServices(services: ServiceStatusPayload[]): void {
+  const host = $("status-services");
+  host.replaceChildren();
+  if (services.length === 0) return; // --external-services: nada a supervisar
+
+  for (const service of services) {
+    const chip = document.createElement("span");
+    chip.className = `service-chip state-${service.state}`;
+    chip.textContent = `${service.displayName}: ${serviceStateLabel(service.state)}`;
+    const diagnostics = [service.detail, ...service.recentLog].filter(Boolean).join("\n");
+    if (diagnostics) chip.title = diagnostics;
+    host.append(chip);
+
+    if (service.state === "failed" || service.state === "retrying") {
+      const retry = document.createElement("button");
+      retry.textContent = `Reiniciar ${service.displayName}`;
+      retry.addEventListener("click", () => {
+        retry.disabled = true;
+        void window.p7m.serviceRestart(service.id).finally(() => {
+          retry.disabled = false;
+        });
+      });
+      host.append(retry);
+    }
+  }
+}
+
 // ------------------------------------------------------------------ boot
 
 async function boot(): Promise<void> {
@@ -659,11 +705,14 @@ async function boot(): Promise<void> {
     if (action === "undo") activeEditor.undo?.();
     else if (action === "redo") activeEditor.redo?.();
   });
+  window.p7m.onServiceStatus(renderServices);
   window.p7m.onBlueprintEvent((event) => {
     log.record(event as { kind: string } & Record<string, unknown>);
     refreshProblemBadge();
     renderBottom();
   });
+
+  renderServices(await window.p7m.serviceStatus());
 
   try {
     await window.p7m.connect();
@@ -672,6 +721,7 @@ async function boot(): Promise<void> {
     applyProjectStatus(await window.p7m.projectStatus());
 
     const experience = (await window.p7m.experience()) as ResolvedExperienceLike;
+    experienceGate = new ExperienceGate(experience);
     model.applyExperience(experience);
     $("runtime-label").textContent = model.runtimeLabel;
   } catch (err) {
