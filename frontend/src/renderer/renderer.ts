@@ -10,10 +10,27 @@
 import { CanvasViewport } from "../core/canvasViewport.js";
 import { EventLog } from "../core/eventLog.js";
 import { IntGridDocument } from "../core/intGridDocument.js";
+import { LEVEL_PALETTE, TILE_COLORS, defaultLevelRules } from "../core/levelPresets.js";
 import { WorkbenchModel, type BottomTab } from "../core/workbenchModel.js";
 import { panelLabel, projectStateLabel } from "../core/vocabulary.js";
 import type { ResolvedExperienceLike } from "../core/experienceGate.js";
 import type { P7mEditorApi, ProjectStatusPayload } from "../main/preload.js";
+// type-only (apagado na compilação): o módulo real é vendorizado pelo build
+import type { resolveAutoTiles as ResolveAutoTilesFn } from "@p7m/middleware/dist/leveldesign/AutoTiler.js";
+
+/** AutoTiler vendorizado (zero dependências — regra R5): mesmo resolvedor da projeção. */
+let resolveAutoTiles: typeof ResolveAutoTilesFn | undefined;
+async function loadAutoTiler(): Promise<typeof ResolveAutoTilesFn> {
+  if (!resolveAutoTiles) {
+    const url = new URL("./vendor/AutoTiler.js", import.meta.url).toString();
+    const module_ = (await import(url)) as { resolveAutoTiles: typeof ResolveAutoTilesFn };
+    resolveAutoTiles = module_.resolveAutoTiles;
+  }
+  return resolveAutoTiles;
+}
+
+/** Ações do editor ativo (menu Editar e atalhos globais roteiam para cá). */
+const activeEditor: { undo?: () => void; redo?: () => void } = {};
 
 declare global {
   interface Window {
@@ -67,8 +84,13 @@ function renderRail(): void {
 
 // ----------------------------------------------------------------- views
 
+/** Limpeza da vista corrente (listeners de teclado etc.) ao trocar de painel. */
+let cleanupActiveView: (() => void) | undefined;
+
 function renderView(): void {
   const host = $("view-host");
+  cleanupActiveView?.();
+  cleanupActiveView = undefined;
   host.replaceChildren();
   const panel = model.currentPanel;
   if (!panel) {
@@ -99,14 +121,6 @@ function placeholder(title: string, message: string): HTMLElement {
 }
 
 // ---------------------------------------------------- editor de níveis (P0.4)
-
-/** Paleta inicial de significados (P0.4 completo trará edição de tipos). */
-const PALETTE = [
-  { value: 0, name: "Vazio", color: "#00000000" },
-  { value: 1, name: "Chão", color: "#7a5230" },
-  { value: 2, name: "Parede", color: "#5a6a7a" },
-  { value: 3, name: "Perigo", color: "#b8433a" },
-];
 
 function mountLevelEditor(host: HTMLElement): void {
   const doc = new IntGridDocument(48, 27);
@@ -142,11 +156,11 @@ function mountLevelEditor(host: HTMLElement): void {
   toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
 
   const swatches = new Map<number, HTMLButtonElement>();
-  for (const entry of PALETTE.filter((p) => p.value !== 0)) {
+  for (const entry of LEVEL_PALETTE) {
     const swatch = document.createElement("button");
     swatch.className = "palette-swatch";
     swatch.style.background = entry.color;
-    swatch.title = `${entry.name} (${entry.value})`;
+    swatch.title = `${entry.name} (tecla ${entry.shortcut})`;
     swatch.setAttribute("aria-label", entry.name);
     swatch.addEventListener("click", () => selectValue(entry.value));
     swatches.set(entry.value, swatch);
@@ -159,9 +173,44 @@ function mountLevelEditor(host: HTMLElement): void {
   selectValue(1);
 
   toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
-  const undoBtn = addButton("Desfazer", () => { doc.undo(); repaint(); });
-  const redoBtn = addButton("Refazer", () => { doc.redo(); repaint(); });
+  const doUndo = (): void => { doc.undo(); onEdited(); };
+  const doRedo = (): void => { doc.redo(); onEdited(); };
+  const undoBtn = addButton("Desfazer", doUndo, "Ctrl+Z");
+  const redoBtn = addButton("Refazer", doRedo, "Ctrl+Shift+Z");
+  activeEditor.undo = doUndo;
+  activeEditor.redo = doRedo;
   addButton("Enquadrar", () => { viewport.fit(doc.width, doc.height, tileSize); repaint(); });
+
+  // "Pinte significado, derive arte": preview usa o MESMO resolvedor da projeção
+  let artPreview = false;
+  let previewTiles: Int32Array | undefined;
+  let previewTimer: ReturnType<typeof setTimeout> | undefined;
+  const previewBtn = addButton("Ver arte", () => {
+    artPreview = !artPreview;
+    previewBtn.setAttribute("aria-pressed", String(artPreview));
+    schedulePreview(0);
+  }, "Alterna entre significado (IntGrid) e arte derivada pelas regras");
+
+  function schedulePreview(delayMs = 80): void {
+    if (!artPreview) { repaint(); return; }
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => {
+      void loadAutoTiler().then((resolve) => {
+        previewTiles = resolve(
+          { width: doc.width, height: doc.height, values: doc.snapshot() },
+          defaultLevelRules() as never,
+          1,
+        ).tiles;
+        repaint();
+      });
+    }, delayMs);
+  }
+
+  function onEdited(): void {
+    repaint();
+    schedulePreview();
+  }
+
   addButton("Publicar nível", () => void publish(), "Envia level/define pelo caminho canônico");
 
   // canvas
@@ -186,19 +235,29 @@ function mountLevelEditor(host: HTMLElement): void {
   };
   new ResizeObserver(resize).observe(canvas);
 
+  const meaningColors = new Map(LEVEL_PALETTE.map((p) => [p.value, p.color]));
+
   function repaint(): void {
     context.fillStyle = "#101216";
     context.fillRect(0, 0, canvas.width, canvas.height);
     const range = viewport.visibleCells(tileSize, doc.width, doc.height);
     const zoom = viewport.current.zoom;
+    const gap = zoom > 4 ? 1 : 0;
 
     for (let y = range.minY; y <= range.maxY; y++) {
       for (let x = range.minX; x <= range.maxX; x++) {
-        const value = doc.valueAt(x, y);
         const screen = viewport.worldToScreen(x * tileSize, y * tileSize);
         const size = tileSize * zoom;
-        context.fillStyle = value === 0 ? "#1b1e24" : PALETTE[value]?.color ?? "#888";
-        context.fillRect(screen.x, screen.y, size - (zoom > 4 ? 1 : 0), size - (zoom > 4 ? 1 : 0));
+        let fill = "#1b1e24";
+        if (artPreview && previewTiles) {
+          const tileId = previewTiles[y * doc.width + x]!;
+          if (tileId >= 0) fill = TILE_COLORS[tileId] ?? "#888";
+        } else {
+          const value = doc.valueAt(x, y);
+          if (value !== 0) fill = meaningColors.get(value) ?? "#888";
+        }
+        context.fillStyle = fill;
+        context.fillRect(screen.x, screen.y, size - gap, size - gap);
       }
     }
     undoBtn.disabled = !doc.canUndo;
@@ -211,7 +270,27 @@ function mountLevelEditor(host: HTMLElement): void {
     if (tool === "pencil") doc.paint(cell.x, cell.y, activeValue);
     else if (tool === "eraser") doc.paint(cell.x, cell.y, 0);
     else doc.floodFill(cell.x, cell.y, activeValue);
-    repaint();
+    onEdited();
+  };
+
+  // Atalhos do editor: dígitos selecionam o significado, Ctrl+Z/Shift+Z desfazem
+  const onKeyDown = (e: KeyboardEvent): void => {
+    if (e.target instanceof HTMLInputElement) return;
+    const paletteEntry = LEVEL_PALETTE.find((p) => p.shortcut === e.key);
+    if (paletteEntry) { selectValue(paletteEntry.value); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      if (e.shiftKey) doRedo(); else doUndo();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+      e.preventDefault();
+      doRedo();
+    }
+  };
+  window.addEventListener("keydown", onKeyDown);
+  cleanupActiveView = (): void => {
+    window.removeEventListener("keydown", onKeyDown);
+    delete activeEditor.undo;
+    delete activeEditor.redo;
   };
 
   let painting = false;
@@ -343,6 +422,10 @@ async function boot(): Promise<void> {
   renderBottom();
 
   window.p7m.onProjectStatus(applyProjectStatus);
+  window.p7m.onMenuAction((action) => {
+    if (action === "undo") activeEditor.undo?.();
+    else if (action === "redo") activeEditor.redo?.();
+  });
   window.p7m.onBlueprintEvent((event) => {
     log.record(event as { kind: string } & Record<string, unknown>);
     refreshProblemBadge();

@@ -13,7 +13,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, app, dialog, ipcMain } from "electron";
+import { BrowserWindow, Menu, app, dialog, ipcMain } from "electron";
 import { ProjectLifecycle, type ProjectDescriptor } from "../core/projectLifecycle.js";
 import { EditorClient } from "./EditorClient.js";
 
@@ -199,6 +199,46 @@ void app.whenReady().then(async () => {
       nodeIntegration: false,
     },
   });
+
+  // Menu nativo com atalhos (ALPHA-0.1 P0.3): projeto no main, edição no renderer
+  const sendMenuAction = (action: "undo" | "redo") => (): void => {
+    if (!window.isDestroyed()) window.webContents.send("p7m:menu-action", action);
+  };
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "Arquivo",
+        submenu: [
+          { label: "Novo projeto", accelerator: "CmdOrCtrl+N", click: () => void projectCommand("new") },
+          { label: "Abrir projeto…", accelerator: "CmdOrCtrl+O", click: () => void projectCommand("open") },
+          { type: "separator" },
+          { label: "Salvar", accelerator: "CmdOrCtrl+S", click: () => void projectCommand("save") },
+          { label: "Salvar como…", accelerator: "CmdOrCtrl+Shift+S", click: () => void projectCommand("saveAs") },
+          { type: "separator" },
+          { label: "Fechar projeto", accelerator: "CmdOrCtrl+W", click: () => void projectCommand("close") },
+          { role: "quit", label: "Sair" },
+        ],
+      },
+      {
+        label: "Editar",
+        submenu: [
+          { label: "Desfazer", accelerator: "CmdOrCtrl+Z", click: sendMenuAction("undo") },
+          { label: "Refazer", accelerator: "CmdOrCtrl+Shift+Z", click: sendMenuAction("redo") },
+        ],
+      },
+      {
+        label: "Exibir",
+        submenu: [
+          { role: "reload", label: "Recarregar" },
+          { role: "toggleDevTools", label: "Ferramentas de desenvolvimento" },
+          { type: "separator" },
+          { role: "resetZoom", label: "Zoom padrão" },
+          { role: "zoomIn", label: "Aumentar zoom" },
+          { role: "zoomOut", label: "Diminuir zoom" },
+        ],
+      },
+    ]),
+  );
 
   client.onBlueprintEvent((event) => {
     // dirty tracking: todo evento do Blueprint suja o documento aberto

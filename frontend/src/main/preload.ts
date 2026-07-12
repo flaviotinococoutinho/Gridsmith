@@ -27,6 +27,8 @@ export interface P7mEditorApi {
   ): Promise<ProjectStatusPayload>;
   projectStatus(): Promise<ProjectStatusPayload>;
   onProjectStatus(listener: (status: ProjectStatusPayload) => void): void;
+  /** Ações do menu nativo roteadas ao renderer (undo/redo do editor ativo). */
+  onMenuAction(listener: (action: "undo" | "redo") => void): void;
 }
 
 const api: P7mEditorApi = {
@@ -41,6 +43,9 @@ const api: P7mEditorApi = {
   projectStatus: () => ipcRenderer.invoke("p7m:project-status"),
   onProjectStatus: (listener) => {
     ipcRenderer.on("p7m:project-status", (_event, status) => listener(status));
+  },
+  onMenuAction: (listener) => {
+    ipcRenderer.on("p7m:menu-action", (_event, action) => listener(action));
   },
 };
 

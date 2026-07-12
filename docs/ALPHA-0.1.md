@@ -85,7 +85,8 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
 - [x] View-model de navegação — `core/workbenchModel.ts`: foco automático no
   primeiro painel habilitado, realocação quando a governança muda, fail-safe
 - [x] Falha de conexão com ação corretiva (botão "Tentar reconectar")
-- [ ] Menu nativo + atalhos (Ctrl+N/O/S/Z)
+- [x] Menu nativo (Arquivo/Editar/Exibir) com atalhos: Ctrl+N/O/S/Shift+S/W
+  no main; Ctrl+Z/Shift+Z roteados ao editor ativo via `p7m:menu-action`
 - [ ] Painéis redimensionáveis e layouts salvos
 - [ ] Razões da governança traduzidas (hoje passam do perfil em inglês)
 
@@ -97,10 +98,16 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
   (arrasto), paleta de significados (nome+cor+valor ativo), pan (botão do
   meio), zoom (roda), enquadrar, desfazer/refazer, coordenadas do cursor e
   "Publicar nível" via caminho canônico (`level/define`)
-- [ ] Preview de auto-tiling em tempo real (resolveAutoTiles no worker)
+- [x] Preview de auto-tiling em tempo real ("Ver arte", debounce de 80 ms):
+  o AutoTiler é VENDORIZADO como módulo único (a regra R5 garante zero
+  dependências) — o preview usa o MESMO resolvedor da projeção, com regras
+  default validadas contra o contrato do middleware (`core/levelPresets.ts`
+  + teste "preview ≡ publicação")
+- [x] Atalhos do editor: dígitos selecionam o significado; Ctrl+Z/Shift+Z/Y
 - [ ] Retângulo, eyedropper, linha; edição da paleta de tipos
 - [ ] Placement de entidade/câmera/luz com handles
-- [ ] Render/edição fora da main thread (OffscreenCanvas/worker)
+- [ ] Render/edição fora da main thread (o loader vendorizado já isola a
+  mudança para o worker)
 - [ ] Integração com save do projeto (nível editado ⇄ blueprint)
 
 ### P0.5 — Preview embutido ⬜
