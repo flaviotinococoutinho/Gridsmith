@@ -541,6 +541,37 @@ public sealed class EngineService : IDisposable
             }
         });
 
+        connection.RegisterMethod("entity/move", (params_, _) =>
+        {
+            var p = Deserialize<EntitySpawnParams>(params_);
+            if (string.IsNullOrEmpty(p.EntityId))
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"entityId\" must be a non-empty string");
+            }
+
+            if (p.Position is not { Length: 2 })
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"position\" must contain 2 floats");
+            }
+
+            lock (_gate)
+            {
+                var handle = Actors.Find(p.EntityId);
+                if (!handle.IsValid)
+                {
+                    throw new JsonRpcException(RpcErrorCode.InvalidParams, $"Actor \"{p.EntityId}\" is not spawned");
+                }
+
+                Actors.MoveTo(handle, p.Position[0], p.Position[1]);
+                return ValueTask.FromResult<object?>(new
+                {
+                    entityId = p.EntityId,
+                    position = new[] { Actors.PositionX(handle), Actors.PositionY(handle) },
+                    status = "moved",
+                });
+            }
+        });
+
         connection.RegisterMethod("entity/despawn", (params_, _) =>
         {
             var p = Deserialize<EntityInspectParams>(params_);

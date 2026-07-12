@@ -18,7 +18,7 @@ Legenda: ✅ completo · 🔶 parcial · ❌ ausente · — não se aplica.
 | Máquina de estados | ✅ | — | ❌ | ❌ | ❌ | **Não entregue** |
 | Níveis IntGrid + auto-tiling | ✅ | ✅ (define/update) | ✅ | 🔶 (canvas + publicar/reabrir; faltam ferramentas e placement) | ❌ | **Em fechamento** (P0.4) |
 | World map | ✅ | ✅ query | ❌ streaming | ❌ | ❌ | **Parcial** |
-| Entidades tipadas | ✅ | ✅ | ✅ spawn table (archetypeId → ator vivo) | ❌ placement visual | ❌ | **Parcial** (P0.6: falta UI) |
+| Entidades tipadas | ✅ | ✅ | ✅ spawn table (archetypeId → ator vivo; move ao vivo) | 🔶 placement/drag/remoção no canvas (falta inspector) | ❌ | **Em fechamento** (P0.6) |
 | Pipeline Aseprite/MGCB | ✅ | ✅ MCP | ✅ compilação | ❌ | ❌ | **Parcial** |
 | Câmera cinemática | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
 | Iluminação deferred | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |

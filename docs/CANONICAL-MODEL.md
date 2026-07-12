@@ -94,7 +94,7 @@ Um **adapter** projeta eventos canônicos nas APIs de um runtime concreto
 | `cameraConfigured` | `camera/configure` |
 | `lightAdded`/`lightRemoved` | `lighting/add`/`lighting/remove` (com remapeamento de ids) |
 | `levelDefined`/`levelUpdated`/`levelRemoved` | **resolve o AutoTiler (IntGrid + regras → tiles, determinístico por seed)** e envia `tilemap/define`/`tilemap/remove`+`define`/`tilemap/remove` |
-| `entityPlaced`/`entityRemoved` | spawn table (P0.6): com `archetypeId` na definição, `entity/spawn`/`entity/despawn` — o `entityId` canônico é a referência estável editor↔runtime; sem archetype, `skipped` com razão acionável |
+| `entityPlaced`/`entityMoved`/`entityRemoved` | spawn table (P0.6): com `archetypeId` na definição, `entity/spawn`/`entity/move`/`entity/despawn` — o `entityId` canônico é a referência estável editor↔runtime; move sem spawn prévio vira upsert; sem archetype, `skipped` com razão acionável |
 | `entityDefDefined` | `skipped` (definições são editoriais; instâncias com archetype spawnam) |
 
 Adapters declaram `family` (grupo tecnológico) e obtêm a versão concreta do

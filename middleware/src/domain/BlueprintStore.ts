@@ -126,6 +126,7 @@ export type BlueprintCommand =
   | { readonly kind: "light/remove"; readonly lightId: string }
   | { readonly kind: "entitydef/define"; readonly definition: EntityDefinition }
   | { readonly kind: "entity/place"; readonly entity: EntityInstance }
+  | { readonly kind: "entity/move"; readonly entityId: string; readonly position: readonly [number, number] }
   | { readonly kind: "entity/remove"; readonly entityId: string }
   | { readonly kind: "level/define"; readonly level: LevelSpec }
   | { readonly kind: "level/update"; readonly level: LevelSpec }
@@ -159,6 +160,7 @@ export type BlueprintEvent =
   | { readonly kind: "entityDefDefined"; readonly definition: EntityDefinition }
   // evento enriquecido: a projeção precisa do archetype sem consultar o store
   | { readonly kind: "entityPlaced"; readonly entity: EntityInstance; readonly archetypeId?: string }
+  | { readonly kind: "entityMoved"; readonly entity: EntityInstance; readonly archetypeId?: string }
   | { readonly kind: "entityRemoved"; readonly entityId: string }
   | { readonly kind: "levelDefined"; readonly level: LevelSpec }
   | { readonly kind: "levelUpdated"; readonly level: LevelSpec }
@@ -241,6 +243,27 @@ export class BlueprintStore extends EventEmitter {
           kind: "entityPlaced",
           entity,
           ...(definition.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
+        };
+        this.emit("event", event);
+        return event;
+      }
+      case "entity/move": {
+        const current = this.entities.get(command.entityId);
+        if (!current) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `Entity "${command.entityId}" does not exist`);
+        }
+        const position = command.position;
+        if (!Array.isArray(position) || position.length !== 2 ||
+            !position.every((n) => typeof n === "number" && Number.isFinite(n))) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `"position" must contain 2 numbers`);
+        }
+        const entity: EntityInstance = { ...current, position: [position[0]!, position[1]!] };
+        this.entities.set(entity.entityId, entity);
+        const definition = this.entityDefs.get(entity.entityDefId);
+        const event: BlueprintEvent = {
+          kind: "entityMoved",
+          entity,
+          ...(definition?.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
         };
         this.emit("event", event);
         return event;

@@ -144,6 +144,31 @@ export class MonoGameAdapter implements RuntimeAdapter {
         return { event: event.kind, status: "projected", detail };
       }
 
+      case "entityMoved": {
+        if (event.archetypeId === undefined) {
+          return {
+            event: event.kind,
+            status: "skipped",
+            reason: `entity "${event.entity.entityId}" has no archetypeId in its definition — set one to spawn it in the runtime`,
+          };
+        }
+        // sessão que perdeu o spawn (ex.: reconexão): mover vira upsert
+        if (!this.spawnedEntityIds.has(event.entity.entityId)) {
+          const detail = await peer.request("entity/spawn", {
+            entityId: event.entity.entityId,
+            archetypeId: event.archetypeId,
+            position: event.entity.position,
+          });
+          this.spawnedEntityIds.add(event.entity.entityId);
+          return { event: event.kind, status: "projected", detail };
+        }
+        const detail = await peer.request("entity/move", {
+          entityId: event.entity.entityId,
+          position: event.entity.position,
+        });
+        return { event: event.kind, status: "projected", detail };
+      }
+
       case "entityRemoved": {
         if (!this.spawnedEntityIds.has(event.entityId)) {
           return {

@@ -94,3 +94,36 @@ test("validações: célula fora do grid, valor inválido, dimensões erradas", 
   assert.throws(() => new IntGridDocument(0, 2), RangeError);
   assert.throws(() => new IntGridDocument(2, 2, [1]), RangeError);
 });
+
+test("paintLine traça Bresenham inclusiva em qualquer octante e desfaz em bloco", () => {
+  const doc = new IntGridDocument(6, 6);
+  assert.equal(doc.paintLine(0, 0, 5, 2, 4), true);
+  // extremos sempre pintados; linha contínua (célula por coluna neste octante)
+  assert.equal(doc.valueAt(0, 0), 4);
+  assert.equal(doc.valueAt(5, 2), 4);
+  const painted = doc.snapshot().filter((v) => v === 4).length;
+  assert.equal(painted, 6); // uma célula por coluna (dx dominante)
+
+  doc.undo();
+  assert.equal(doc.snapshot().every((v) => v === 0), true); // UMA operação
+
+  // linha vertical e diagonal invertida também funcionam
+  assert.equal(doc.paintLine(3, 4, 3, 1, 2), true);
+  assert.equal(doc.valueAt(3, 1), 2);
+  assert.equal(doc.valueAt(3, 4), 2);
+});
+
+test("paintLine sobre células já corretas é no-op", () => {
+  const doc = new IntGridDocument(3, 1, [7, 7, 7]);
+  assert.equal(doc.paintLine(0, 0, 2, 0, 7), false);
+  assert.equal(doc.canUndo, false);
+});
+
+test("lineCells é inclusiva e simétrica nos extremos", async () => {
+  const { lineCells } = await import("../src/core/intGridDocument.js");
+  const forward = lineCells(0, 0, 3, 3);
+  assert.deepEqual(forward[0], [0, 0]);
+  assert.deepEqual(forward[forward.length - 1], [3, 3]);
+  assert.equal(forward.length, 4); // diagonal perfeita: uma célula por passo
+  assert.equal(lineCells(2, 2, 2, 2).length, 1); // ponto único
+});

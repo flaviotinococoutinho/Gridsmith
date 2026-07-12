@@ -46,6 +46,38 @@
         "InternalError: ActorStore cheio (capacidade fixa na construção — política Zero-GC)"
       ]
     },
+    "entity/move": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "entityId": { "type": "string", "minLength": 1 },
+          "position": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Nova posição no mundo em pixels [x, y]"
+          }
+        },
+        "required": ["entityId", "position"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "entityId": { "type": "string" },
+          "position": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "status": { "enum": ["moved"] }
+        },
+        "required": ["entityId", "status"]
+      },
+      "errors": ["InvalidParams (-32602): ator não está spawnado ou position inválida"]
+    },
     "entity/despawn": {
       "params": {
         "type": "object",

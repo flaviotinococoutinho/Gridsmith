@@ -131,6 +131,17 @@ public class EngineServiceActorTests : IAsyncLifetime
         Assert.Equal(48f, inspected.GetProperty("position")[0].GetSingle());
         Assert.Equal(336f, inspected.GetProperty("position")[1].GetSingle());
 
+        var moved = await _middleware.RequestAsync("entity/move", new
+        {
+            entityId = "player-1",
+            position = new[] { 96f, 320f },
+        }, _cts.Token);
+        Assert.Equal("moved", moved.GetProperty("status").GetString());
+        Assert.Equal(96f, moved.GetProperty("position")[0].GetSingle());
+
+        var reinspected = await _middleware.RequestAsync("entity/inspect", new { entityId = "player-1" }, _cts.Token);
+        Assert.Equal(320f, reinspected.GetProperty("position")[1].GetSingle());
+
         var despawned = await _middleware.RequestAsync("entity/despawn", new { entityId = "player-1" }, _cts.Token);
         Assert.Equal("player-1", despawned.GetProperty("despawned").GetString());
         Assert.Equal(0, despawned.GetProperty("liveActors").GetInt32());
@@ -164,6 +175,10 @@ public class EngineServiceActorTests : IAsyncLifetime
         var ghost = await Assert.ThrowsAsync<JsonRpcException>(() =>
             _middleware.RequestAsync("entity/despawn", new { entityId = "ghost" }, _cts.Token));
         Assert.Equal(RpcErrorCode.InvalidParams, ghost.Code);
+
+        var moveGhost = await Assert.ThrowsAsync<JsonRpcException>(() =>
+            _middleware.RequestAsync("entity/move", new { entityId = "ghost", position = new[] { 0f, 0f } }, _cts.Token));
+        Assert.Equal(RpcErrorCode.InvalidParams, moveGhost.Code);
     }
 
     [Fact]

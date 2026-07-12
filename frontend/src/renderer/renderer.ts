@@ -9,7 +9,7 @@
 
 import { CanvasViewport } from "../core/canvasViewport.js";
 import { EventLog } from "../core/eventLog.js";
-import { IntGridDocument } from "../core/intGridDocument.js";
+import { IntGridDocument, lineCells } from "../core/intGridDocument.js";
 import { LEVEL_PALETTE, TILE_COLORS, defaultLevelRules } from "../core/levelPresets.js";
 import { WorkbenchModel, type BottomTab } from "../core/workbenchModel.js";
 import { panelLabel, projectStateLabel } from "../core/vocabulary.js";
@@ -130,7 +130,20 @@ function mountLevelEditor(host: HTMLElement): void {
   let levelInBlueprint = false;
   const tileSize = 16;
   let activeValue = 1;
-  let tool: "pencil" | "eraser" | "flood" = "pencil";
+  type Tool = "pencil" | "eraser" | "flood" | "rect" | "line" | "picker" | "entity";
+  let tool: Tool = "pencil";
+
+  // camada de entidades (P0.4 placement ⇄ P0.6 spawn): marcadores em pixels
+  // do mundo, hidratados do Blueprint e mantidos pelos próprios dispatches
+  interface EntityMarker {
+    entityId: string;
+    position: [number, number];
+  }
+  const ENTITY_DEF = { entityDefId: "jogador", archetypeId: "player" };
+  const entities = new Map<string, EntityMarker>();
+  let entityDefEnsured = false;
+  let selectedEntityId: string | undefined;
+  let draggingEntity: EntityMarker | undefined;
 
   const view = document.createElement("div");
   view.id = "level-view";
@@ -155,6 +168,10 @@ function mountLevelEditor(host: HTMLElement): void {
   toolButtons.set("pencil", addButton("Pincel", () => selectTool("pencil"), "Pintar célula (arraste)"));
   toolButtons.set("eraser", addButton("Borracha", () => selectTool("eraser")));
   toolButtons.set("flood", addButton("Balde", () => selectTool("flood"), "Preencher região conectada"));
+  toolButtons.set("rect", addButton("Retângulo", () => selectTool("rect"), "Arraste para preencher a área"));
+  toolButtons.set("line", addButton("Linha", () => selectTool("line"), "Arraste para traçar uma linha"));
+  toolButtons.set("picker", addButton("Conta-gotas", () => selectTool("picker"), "Clique para pegar o significado da célula"));
+  toolButtons.set("entity", addButton("Jogador", () => selectTool("entity"), "Clique posiciona, arraste move, Delete remove"));
   selectTool("pencil");
 
   toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
@@ -241,6 +258,20 @@ function mountLevelEditor(host: HTMLElement): void {
 
   const meaningColors = new Map(LEVEL_PALETTE.map((p) => [p.value, p.color]));
 
+  // arrasto de retângulo/linha: âncora + célula corrente para o ghost
+  let dragAnchor: { x: number; y: number } | undefined;
+  let dragCurrent: { x: number; y: number } | undefined;
+
+  function ghostCells(): Array<[number, number]> {
+    if (!dragAnchor || !dragCurrent) return [];
+    if (tool === "line") return lineCells(dragAnchor.x, dragAnchor.y, dragCurrent.x, dragCurrent.y);
+    const cells: Array<[number, number]> = [];
+    const [minX, maxX] = dragAnchor.x <= dragCurrent.x ? [dragAnchor.x, dragCurrent.x] : [dragCurrent.x, dragAnchor.x];
+    const [minY, maxY] = dragAnchor.y <= dragCurrent.y ? [dragAnchor.y, dragCurrent.y] : [dragCurrent.y, dragAnchor.y];
+    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) cells.push([x, y]);
+    return cells;
+  }
+
   function repaint(): void {
     context.fillStyle = "#101216";
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -264,8 +295,102 @@ function mountLevelEditor(host: HTMLElement): void {
         context.fillRect(screen.x, screen.y, size - gap, size - gap);
       }
     }
+
+    // ghost do retângulo/linha em andamento (semitransparente na cor ativa)
+    if (dragAnchor && dragCurrent) {
+      context.globalAlpha = 0.55;
+      context.fillStyle = meaningColors.get(activeValue) ?? "#888";
+      const size = tileSize * zoom;
+      for (const [x, y] of ghostCells()) {
+        const screen = viewport.worldToScreen(x * tileSize, y * tileSize);
+        context.fillRect(screen.x, screen.y, size - gap, size - gap);
+      }
+      context.globalAlpha = 1;
+    }
+
+    // marcadores de entidade (círculo com inicial; anel na seleção)
+    for (const marker of entities.values()) {
+      const screen = viewport.worldToScreen(marker.position[0], marker.position[1]);
+      const radius = Math.max(5, tileSize * 0.45 * zoom);
+      context.beginPath();
+      context.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+      context.fillStyle = "#3aa0f0";
+      context.fill();
+      if (marker.entityId === selectedEntityId) {
+        context.lineWidth = 2;
+        context.strokeStyle = "#ffffff";
+        context.stroke();
+      }
+      context.fillStyle = "#fff";
+      context.font = `${Math.max(8, radius)}px system-ui, sans-serif`;
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText("J", screen.x, screen.y);
+    }
+
     undoBtn.disabled = !doc.canUndo;
     redoBtn.disabled = !doc.canRedo;
+  }
+
+  // ---- camada de entidades: hit-test, placement, drag e remoção ----
+
+  function entityAtScreen(offsetX: number, offsetY: number): EntityMarker | undefined {
+    const zoom = viewport.current.zoom;
+    const hitRadius = Math.max(6, tileSize * 0.5 * zoom);
+    for (const marker of entities.values()) {
+      const screen = viewport.worldToScreen(marker.position[0], marker.position[1]);
+      if (Math.hypot(screen.x - offsetX, screen.y - offsetY) <= hitRadius) return marker;
+    }
+    return undefined;
+  }
+
+  /** Posição do clique em pixels do mundo, ancorada no centro da célula. */
+  function snapToCellCenter(offsetX: number, offsetY: number): [number, number] | undefined {
+    const cell = viewport.screenToCell(offsetX, offsetY, tileSize, doc.width, doc.height);
+    if (!cell.inside) return undefined;
+    return [cell.x * tileSize + tileSize / 2, cell.y * tileSize + tileSize / 2];
+  }
+
+  async function ensureEntityDef(): Promise<void> {
+    if (entityDefEnsured) return;
+    try {
+      await window.p7m.dispatch("entitydef/define", { ...ENTITY_DEF, fields: [] });
+    } catch {
+      // já definida (projeto reaberto): a definição vive no Blueprint
+    }
+    entityDefEnsured = true;
+  }
+
+  async function placeEntityAt(position: [number, number]): Promise<void> {
+    await ensureEntityDef();
+    let n = entities.size + 1;
+    while (entities.has(`${ENTITY_DEF.entityDefId}-${n}`)) n++;
+    const entityId = `${ENTITY_DEF.entityDefId}-${n}`;
+    await window.p7m.dispatch("entity/place", {
+      entityId,
+      entityDefId: ENTITY_DEF.entityDefId,
+      position,
+      fields: {},
+    });
+    entities.set(entityId, { entityId, position });
+    selectedEntityId = entityId;
+    status.textContent = `Jogador posicionado em (${position[0]}, ${position[1]}).`;
+    repaint();
+  }
+
+  async function moveEntity(marker: EntityMarker, position: [number, number]): Promise<void> {
+    await window.p7m.dispatch("entity/move", { entityId: marker.entityId, position });
+    status.textContent = `Jogador movido para (${position[0]}, ${position[1]}).`;
+  }
+
+  async function removeSelectedEntity(): Promise<void> {
+    if (!selectedEntityId) return;
+    const entityId = selectedEntityId;
+    await window.p7m.dispatch("entity/remove", { entityId });
+    entities.delete(entityId);
+    selectedEntityId = undefined;
+    status.textContent = "Jogador removido.";
+    repaint();
   }
 
   const applyAt = (offsetX: number, offsetY: number): void => {
@@ -273,7 +398,7 @@ function mountLevelEditor(host: HTMLElement): void {
     if (!cell.inside) return;
     if (tool === "pencil") doc.paint(cell.x, cell.y, activeValue);
     else if (tool === "eraser") doc.paint(cell.x, cell.y, 0);
-    else doc.floodFill(cell.x, cell.y, activeValue);
+    else if (tool === "flood") doc.floodFill(cell.x, cell.y, activeValue);
     onEdited();
   };
 
@@ -282,6 +407,11 @@ function mountLevelEditor(host: HTMLElement): void {
     if (e.target instanceof HTMLInputElement) return;
     const paletteEntry = LEVEL_PALETTE.find((p) => p.shortcut === e.key);
     if (paletteEntry) { selectValue(paletteEntry.value); return; }
+    if (e.key === "Delete" && selectedEntityId) {
+      e.preventDefault();
+      void removeSelectedEntity();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
       e.preventDefault();
       if (e.shiftKey) doRedo(); else doUndo();
@@ -302,7 +432,50 @@ function mountLevelEditor(host: HTMLElement): void {
   let last = { x: 0, y: 0 };
   canvas.addEventListener("mousedown", (e) => {
     if (e.button === 1) { panning = true; last = { x: e.offsetX, y: e.offsetY }; e.preventDefault(); return; }
-    if (e.button === 0) { painting = true; applyAt(e.offsetX, e.offsetY); }
+    if (e.button !== 0) return;
+
+    if (tool === "picker") {
+      const cell = viewport.screenToCell(e.offsetX, e.offsetY, tileSize, doc.width, doc.height);
+      if (cell.inside) {
+        const value = doc.valueAt(cell.x, cell.y);
+        if (value > 0) selectValue(value);
+        selectTool(value > 0 ? "pencil" : "eraser");
+        status.textContent = value > 0
+          ? `Significado "${LEVEL_PALETTE.find((p) => p.value === value)?.name ?? value}" selecionado.`
+          : "Célula vazia: borracha selecionada.";
+      }
+      return;
+    }
+
+    if (tool === "entity") {
+      const hit = entityAtScreen(e.offsetX, e.offsetY);
+      if (hit) {
+        selectedEntityId = hit.entityId;
+        draggingEntity = hit;
+        repaint();
+        return;
+      }
+      const position = snapToCellCenter(e.offsetX, e.offsetY);
+      if (position) {
+        void placeEntityAt(position).catch((err) => {
+          status.textContent = `Falha ao posicionar: ${err instanceof Error ? err.message : err}`;
+        });
+      }
+      return;
+    }
+
+    if (tool === "rect" || tool === "line") {
+      const cell = viewport.screenToCell(e.offsetX, e.offsetY, tileSize, doc.width, doc.height);
+      if (cell.inside) {
+        dragAnchor = { x: cell.x, y: cell.y };
+        dragCurrent = { x: cell.x, y: cell.y };
+        repaint();
+      }
+      return;
+    }
+
+    painting = true;
+    applyAt(e.offsetX, e.offsetY);
   });
   canvas.addEventListener("mousemove", (e) => {
     const cell = viewport.screenToCell(e.offsetX, e.offsetY, tileSize, doc.width, doc.height);
@@ -311,11 +484,37 @@ function mountLevelEditor(host: HTMLElement): void {
       viewport.panByScreen(e.offsetX - last.x, e.offsetY - last.y);
       last = { x: e.offsetX, y: e.offsetY };
       repaint();
-    } else if (painting && tool !== "flood") {
+    } else if (draggingEntity) {
+      const position = snapToCellCenter(e.offsetX, e.offsetY);
+      if (position) {
+        draggingEntity.position = position; // feedback local; o dispatch sela no mouseup
+        repaint();
+      }
+    } else if (dragAnchor && cell.inside) {
+      dragCurrent = { x: cell.x, y: cell.y };
+      repaint();
+    } else if (painting && (tool === "pencil" || tool === "eraser")) {
       applyAt(e.offsetX, e.offsetY);
     }
   });
-  window.addEventListener("mouseup", () => { painting = false; panning = false; });
+  window.addEventListener("mouseup", () => {
+    if (draggingEntity) {
+      const marker = draggingEntity;
+      draggingEntity = undefined;
+      void moveEntity(marker, marker.position).catch((err) => {
+        status.textContent = `Falha ao mover: ${err instanceof Error ? err.message : err}`;
+      });
+    }
+    if (dragAnchor && dragCurrent) {
+      if (tool === "rect") doc.fillRect(dragAnchor.x, dragAnchor.y, dragCurrent.x, dragCurrent.y, activeValue);
+      else if (tool === "line") doc.paintLine(dragAnchor.x, dragAnchor.y, dragCurrent.x, dragCurrent.y, activeValue);
+      dragAnchor = undefined;
+      dragCurrent = undefined;
+      onEdited();
+    }
+    painting = false;
+    panning = false;
+  });
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
     viewport.zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
@@ -343,19 +542,33 @@ function mountLevelEditor(host: HTMLElement): void {
   viewport.fit(doc.width, doc.height, tileSize);
   repaint();
 
-  // Hidratação: um nível já publicado (projeto reaberto) volta para o canvas
+  // Hidratação: nível e entidades já publicados (projeto reaberto) voltam
+  // para o canvas
   void (async () => {
     try {
       const result = (await window.p7m.query("levels")) as {
         levels?: Array<{ levelId: string; width: number; height: number; intGrid: number[] }>;
       };
       const existing = result.levels?.find((level) => level.levelId === LEVEL_ID);
-      if (!existing) return;
-      doc = new IntGridDocument(existing.width, existing.height, existing.intGrid);
-      levelInBlueprint = true;
-      viewport.fit(doc.width, doc.height, tileSize);
-      onEdited();
-      status.textContent = "Nível carregado do projeto.";
+      if (existing) {
+        doc = new IntGridDocument(existing.width, existing.height, existing.intGrid);
+        levelInBlueprint = true;
+        viewport.fit(doc.width, doc.height, tileSize);
+        onEdited();
+        status.textContent = "Nível carregado do projeto.";
+      }
+
+      const placed = (await window.p7m.query("entities")) as {
+        entities?: Array<{ entityId: string; entityDefId: string; position: [number, number] }>;
+      };
+      for (const entity of placed.entities ?? []) {
+        entities.set(entity.entityId, { entityId: entity.entityId, position: [...entity.position] });
+      }
+      const defs = (await window.p7m.query("entityDefs")) as {
+        entityDefs?: Array<{ entityDefId: string }>;
+      };
+      entityDefEnsured = (defs.entityDefs ?? []).some((d) => d.entityDefId === ENTITY_DEF.entityDefId);
+      if (entities.size > 0) repaint();
     } catch {
       // gateway indisponível: o editor continua editável com um grid vazio
     }

@@ -149,6 +149,10 @@ async function connectFakeEngine(server: EnginePipeServer, calls: Array<{ method
     calls.push({ method: "entity/despawn", params });
     return { despawned: (params as { entityId: string }).entityId };
   });
+  peer.registerMethod("entity/move", (params) => {
+    calls.push({ method: "entity/move", params });
+    return { entityId: (params as { entityId: string }).entityId, status: "moved" };
+  });
   await peer.request("engine/handshake", {
     clientName: "P7m.Engine.Runtime",
     clientVersion: "0.1.0",
@@ -274,10 +278,17 @@ test("spawn table (P0.6): definição com archetypeId spawna ator; remoção des
       params: { entityId: "player-1", archetypeId: "hero", position: [48, 336] },
     });
 
+    // arrastar no editor: entity/move reposiciona o ator vivo (sem respawn)
+    const moved = await orchestrator.dispatch({ kind: "entity/move", entityId: "player-1", position: [96, 320] });
+    assert.equal(moved.event.kind, "entityMoved");
+    assert.equal(moved.projection?.status, "projected");
+    assert.deepEqual(calls[1], { method: "entity/move", params: { entityId: "player-1", position: [96, 320] } });
+    assert.deepEqual(store.getEntity("player-1")?.position, [96, 320]);
+
     // remoção de ator spawnado projeta entity/despawn
     const removed = await orchestrator.dispatch({ kind: "entity/remove", entityId: "player-1" });
     assert.equal(removed.projection?.status, "projected");
-    assert.deepEqual(calls[1], { method: "entity/despawn", params: { entityId: "player-1" } });
+    assert.deepEqual(calls[2], { method: "entity/despawn", params: { entityId: "player-1" } });
 
     // remoção de entidade nunca spawnada é skipped com razão (sem chamada à engine)
     await orchestrator.dispatch({
@@ -288,10 +299,16 @@ test("spawn table (P0.6): definição com archetypeId spawna ator; remoção des
       kind: "entity/place",
       entity: { entityId: "marker-1", entityDefId: "marker", position: [0, 0], fields: {} },
     });
+    // mover entidade sem archetype também é skipped (sem chamada à engine)
+    const movedEditorial = await orchestrator.dispatch({ kind: "entity/move", entityId: "marker-1", position: [3, 3] });
+    assert.equal(movedEditorial.projection?.status, "skipped");
+    assert.match(movedEditorial.projection?.reason ?? "", /archetypeId/);
+    assert.deepEqual(store.getEntity("marker-1")?.position, [3, 3]); // o AST aceitou
+
     const skipped = await orchestrator.dispatch({ kind: "entity/remove", entityId: "marker-1" });
     assert.equal(skipped.projection?.status, "skipped");
     assert.match(skipped.projection?.reason ?? "", /never spawned/);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
 
     engine.close();
   } finally {

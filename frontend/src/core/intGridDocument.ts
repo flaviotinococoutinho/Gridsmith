@@ -98,6 +98,26 @@ export class IntGridDocument {
     return true;
   }
 
+  /** Linha de Bresenham entre duas células (inclusiva) — uma única operação de undo. */
+  paintLine(x0: number, y0: number, x1: number, y1: number, value: number): boolean {
+    this.assertInside(x0, y0);
+    this.assertInside(x1, y1);
+    this.assertValue(value);
+
+    const changes: CellChange[] = [];
+    const touched = new Set<number>();
+    for (const [x, y] of lineCells(x0, y0, x1, y1)) {
+      const index = y * this.width + x;
+      if (!touched.has(index) && this.values[index] !== value) {
+        touched.add(index);
+        changes.push({ index, before: this.values[index]!, after: value });
+      }
+    }
+    if (changes.length === 0) return false;
+    this.commit("paintLine", changes);
+    return true;
+  }
+
   /** Balde: preenche a região 4-conectada com o mesmo valor de origem. */
   floodFill(x: number, y: number, value: number): boolean {
     this.assertInside(x, y);
@@ -184,6 +204,31 @@ export class IntGridDocument {
   private assertValue(value: number): void {
     if (!Number.isInteger(value) || value < 0 || value > 32767) {
       throw new RangeError(`IntGrid value must be an integer in [0, 32767] (got ${value})`);
+    }
+  }
+}
+
+/** Células da linha de Bresenham (inclusiva) — também usada pelo ghost do arrasto. */
+export function lineCells(x0: number, y0: number, x1: number, y1: number): Array<[number, number]> {
+  const cells: Array<[number, number]> = [];
+  const dx = Math.abs(x1 - x0);
+  const dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let error = dx + dy;
+  let x = x0;
+  let y = y0;
+  for (;;) {
+    cells.push([x, y]);
+    if (x === x1 && y === y1) return cells;
+    const doubled = 2 * error;
+    if (doubled >= dy) {
+      error += dy;
+      x += sx;
+    }
+    if (doubled <= dx) {
+      error += dx;
+      y += sy;
     }
   }
 }

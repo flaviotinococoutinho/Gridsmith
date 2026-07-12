@@ -178,6 +178,15 @@ async function main(): Promise<void> {
     assert(spawn.projection.detail?.status === "spawned", "engine confirmed the spawn");
     assert(spawn.projection.detail?.liveActors === 1, "engine actor store tracks one live actor");
 
+    // arrastar no editor: entity/move reposiciona o ator vivo sem respawn
+    const move = (await peer.request("blueprint/dispatch", {
+      kind: "entity/move",
+      payload: { entityId: "player-1", position: [96, 320] },
+    })) as { event: { kind: string }; projection: { status: string; detail?: { status: string } } };
+    assert(move.event.kind === "entityMoved", "entity move produced the entityMoved event");
+    assert(move.projection.status === "projected", "live actor repositioned in the engine");
+    assert(move.projection.detail?.status === "moved", "engine confirmed the move (no respawn)");
+
     const despawn = (await peer.request("blueprint/dispatch", {
       kind: "entity/remove",
       payload: { entityId: "player-1" },

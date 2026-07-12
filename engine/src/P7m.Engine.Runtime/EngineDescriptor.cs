@@ -175,7 +175,7 @@ public static class EngineDescriptor
                 },
                 // spawn table (ALPHA-0.1 P0.6): o entityId canônico é a
                 // referência estável editor↔runtime (seleção cruzada, live edit)
-                features = new[] { "archetype-spawn", "stable-entity-ids", "incremental-despawn" },
+                features = new[] { "archetype-spawn", "stable-entity-ids", "incremental-despawn", "live-move" },
                 editor = new
                 {
                     panel = "level-editor",

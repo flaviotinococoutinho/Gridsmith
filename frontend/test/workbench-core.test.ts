@@ -26,7 +26,8 @@ test("todo kind de evento do Blueprint tem rótulo humano", () => {
   // kinds vêm do union BlueprintEvent do middleware
   const kinds = [
     "skeletonDefined", "meshBound", "cameraConfigured", "lightAdded", "lightRemoved",
-    "entityDefDefined", "entityPlaced", "entityRemoved", "levelDefined", "levelUpdated", "levelRemoved",
+    "entityDefDefined", "entityPlaced", "entityMoved", "entityRemoved",
+    "levelDefined", "levelUpdated", "levelRemoved",
     "worldLevelPlaced", "worldLevelUnplaced",
   ];
   for (const kind of kinds) {

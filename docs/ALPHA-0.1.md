@@ -104,8 +104,14 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
   default validadas contra o contrato do middleware (`core/levelPresets.ts`
   + teste "preview ≡ publicação")
 - [x] Atalhos do editor: dígitos selecionam o significado; Ctrl+Z/Shift+Z/Y
-- [ ] Retângulo, eyedropper, linha; edição da paleta de tipos
-- [ ] Placement de entidade/câmera/luz com handles
+- [x] Retângulo (arrasto com ghost), linha (Bresenham, ghost) e conta-gotas
+  (pega o significado e volta ao pincel; célula vazia vira borracha)
+- [ ] Edição da paleta de tipos
+- [x] Placement de entidade com handle: ferramenta "Jogador" — clique
+  posiciona (snap ao centro da célula), arraste move (`entity/move` canônico
+  → `entity/move` na engine, sem respawn), Delete remove; marcadores
+  hidratados do Blueprint ao reabrir
+- [ ] Placement de câmera/luz com handles
 - [ ] Render/edição fora da main thread (o loader vendorizado já isola a
   mudança para o worker)
 - [x] Integração com save do projeto (nível editado ⇄ blueprint): "Publicar
@@ -132,8 +138,12 @@ luzes/câmera), seleção cruzada editor↔runtime, erros de projeção visívei
   `contracts/schemas/actors.methods.schema.json`)
 - [x] Diagnóstico de entidade não projetada: sem `archetypeId` a projeção é
   `skipped` com razão acionável ("defina archetypeId…")
+- [x] Live edit de posição: `entity/move` canônico (evento `entityMoved`
+  enriquecido com archetype) → `entity/move` na engine (`ActorStore.MoveTo`,
+  zero alocações); sessão que perdeu o spawn trata move como upsert
+- [x] Placement visual no canvas (ferramenta "Jogador": posicionar, arrastar,
+  remover, seleção com anel)
 - [ ] Transform/sprite/animação/colisão no archetype (hoje: posição)
-- [ ] Placement visual no canvas com handles (bullet de P0.4)
 
 ### P0.7 — Undo/redo global ⬜
 Histórico no nível do comando canônico com inversos explícitos, agrupamento
