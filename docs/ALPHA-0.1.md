@@ -71,15 +71,37 @@ O editor começa pelo projeto, não pela conexão a um pipe.
 - [ ] Autosave + recovery pós-crash (journal de comandos)
 - [ ] Migração de `schemaVersion` e template "Plataforma 2D"
 
-### P0.3 — Workbench do editor ⬜
-Layout com navegação real (menu/toolbar, rail de navegação, canvas, inspector,
-painel inferior Problems|Output|Pipeline|History), painéis como elementos
-interativos com nomes humanos e i18n pt-BR — fim dos IDs internos na UI.
+### P0.3 — Workbench do editor 🔶
+Layout com navegação real, vocabulário humano, painel inferior e status bar.
+- [x] Workbench: toolbar de projeto (Novo/Abrir/Salvar/Fechar), rail de
+  navegação com botões reais (aria-pressed, disabled, tooltip com a razão da
+  governança), área de trabalho por painel, inspector, painel inferior com
+  abas Problemas|Saída|Histórico + filtro, status bar (aria-live)
+- [x] Vocabulário humano pt-BR — `core/vocabulary.ts` com teste de cobertura
+  total (IDs internos nunca aparecem); rótulos para painéis, eventos, status
+  de projeção, estados de projeto e de serviços
+- [x] Log estruturado — `core/eventLog.ts`: rótulo, objeto afetado, status da
+  projeção com razão, filtro por texto/status, contador de problemas
+- [x] View-model de navegação — `core/workbenchModel.ts`: foco automático no
+  primeiro painel habilitado, realocação quando a governança muda, fail-safe
+- [x] Falha de conexão com ação corretiva (botão "Tentar reconectar")
+- [ ] Menu nativo + atalhos (Ctrl+N/O/S/Z)
+- [ ] Painéis redimensionáveis e layouts salvos
+- [ ] Razões da governança traduzidas (hoje passam do perfil em inglês)
 
-### P0.4 — Vertical slice do editor de níveis ⬜
-Canvas de IntGrid (pan/zoom/grid/cursor), paleta de significados com nome+cor+
-atalho, pencil/eraser/rect/flood, preview de auto-tiling em tempo real,
-posicionamento de entidade/câmera/luz, undo/redo, salvar, executar preview.
+### P0.4 — Vertical slice do editor de níveis 🔶
+- [x] Viewport do canvas — `core/canvasViewport.ts`: pan em pixels de tela,
+  zoom centrado no cursor com clamps, fit centralizado, tela↔mundo↔célula
+  inversíveis e culling de células visíveis (7 testes)
+- [x] Vista do editor no workbench: canvas com pincel/borracha/balde
+  (arrasto), paleta de significados (nome+cor+valor ativo), pan (botão do
+  meio), zoom (roda), enquadrar, desfazer/refazer, coordenadas do cursor e
+  "Publicar nível" via caminho canônico (`level/define`)
+- [ ] Preview de auto-tiling em tempo real (resolveAutoTiles no worker)
+- [ ] Retângulo, eyedropper, linha; edição da paleta de tipos
+- [ ] Placement de entidade/câmera/luz com handles
+- [ ] Render/edição fora da main thread (OffscreenCanvas/worker)
+- [ ] Integração com save do projeto (nível editado ⇄ blueprint)
 
 ### P0.5 — Preview embutido ⬜
 Run/pause/stop/restart, live edit de câmera e iluminação, overlays (colisão/

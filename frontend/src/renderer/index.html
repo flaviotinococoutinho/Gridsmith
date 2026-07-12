@@ -3,21 +3,50 @@
   <head>
     <meta charset="utf-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'" />
-    <title>P7M Editor</title>
+    <title>P7M</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <header>
-      <h1>P7M Editor</h1>
-      <span id="runtime-label">conectando…</span>
+    <header id="toolbar">
+      <div class="toolbar-group" role="toolbar" aria-label="Projeto">
+        <button id="btn-new">Novo</button>
+        <button id="btn-open">Abrir…</button>
+        <button id="btn-save">Salvar</button>
+        <button id="btn-close">Fechar</button>
+      </div>
+      <span id="project-title" aria-live="polite">Nenhum projeto aberto</span>
+      <span class="toolbar-spacer"></span>
+      <span id="runtime-label">Runtime desconectado</span>
+      <span id="connection-dot" class="dot offline" title="Estado da conexão"></span>
     </header>
-    <main>
-      <aside id="panel-rail" aria-label="Painéis do editor"></aside>
+
+    <main id="workbench">
+      <nav id="panel-rail" aria-label="Painéis do editor"></nav>
+
       <section id="workspace">
-        <p id="status">Aguardando conexão com o middleware…</p>
-        <ul id="event-log" aria-label="Eventos do blueprint"></ul>
+        <div id="view-host" role="region" aria-label="Área de trabalho"></div>
+        <section id="bottom-panel">
+          <div id="bottom-tabs" role="tablist" aria-label="Painéis inferiores">
+            <button role="tab" data-tab="problems">Problemas <span id="problem-count" class="badge">0</span></button>
+            <button role="tab" data-tab="output">Saída</button>
+            <button role="tab" data-tab="history">Histórico</button>
+            <input id="log-filter" type="search" placeholder="Filtrar…" aria-label="Filtrar log" />
+          </div>
+          <div id="bottom-content" role="tabpanel" tabindex="0"></div>
+        </section>
       </section>
+
+      <aside id="inspector" aria-label="Inspector">
+        <h2>Inspector</h2>
+        <div id="inspector-content"><p class="muted">Nada selecionado.</p></div>
+      </aside>
     </main>
+
+    <footer id="status-bar" aria-live="polite">
+      <span id="status-project">Nenhum projeto aberto</span>
+      <span id="status-connection">Conectando ao middleware…</span>
+    </footer>
+
     <script type="module" src="renderer.js"></script>
   </body>
 </html>
