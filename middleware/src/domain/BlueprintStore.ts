@@ -80,6 +80,12 @@ export interface EntityFieldDef {
 export interface EntityDefinition {
   readonly entityDefId: string;
   readonly fields: readonly EntityFieldDef[];
+  /**
+   * Spawn table (ALPHA-0.1 P0.6): archetype do runtime que materializa
+   * instâncias desta definição como atores vivos. Sem archetype, a entidade
+   * é puramente editorial (a projeção explica isso com razão acionável).
+   */
+  readonly archetypeId?: string;
   /** Taxonomia (painel de assets / paleta do editor). */
   readonly tags?: readonly string[];
   readonly editor?: { readonly color?: string; readonly icon?: string };
@@ -122,6 +128,7 @@ export type BlueprintCommand =
   | { readonly kind: "entity/place"; readonly entity: EntityInstance }
   | { readonly kind: "entity/remove"; readonly entityId: string }
   | { readonly kind: "level/define"; readonly level: LevelSpec }
+  | { readonly kind: "level/update"; readonly level: LevelSpec }
   | { readonly kind: "level/remove"; readonly levelId: string }
   | { readonly kind: "world/place"; readonly placement: WorldPlacement }
   | { readonly kind: "world/unplace"; readonly levelId: string };
@@ -150,9 +157,11 @@ export type BlueprintEvent =
   | { readonly kind: "lightAdded"; readonly light: LightSpec }
   | { readonly kind: "lightRemoved"; readonly lightId: string }
   | { readonly kind: "entityDefDefined"; readonly definition: EntityDefinition }
-  | { readonly kind: "entityPlaced"; readonly entity: EntityInstance }
+  // evento enriquecido: a projeção precisa do archetype sem consultar o store
+  | { readonly kind: "entityPlaced"; readonly entity: EntityInstance; readonly archetypeId?: string }
   | { readonly kind: "entityRemoved"; readonly entityId: string }
   | { readonly kind: "levelDefined"; readonly level: LevelSpec }
+  | { readonly kind: "levelUpdated"; readonly level: LevelSpec }
   | { readonly kind: "levelRemoved"; readonly levelId: string }
   | { readonly kind: "worldLevelPlaced"; readonly placement: WorldPlacement }
   | { readonly kind: "worldLevelUnplaced"; readonly levelId: string };
@@ -228,7 +237,11 @@ export class BlueprintStore extends EventEmitter {
         }
         const entity = resolveEntityFields(command.entity, definition);
         this.entities.set(entity.entityId, entity);
-        const event: BlueprintEvent = { kind: "entityPlaced", entity };
+        const event: BlueprintEvent = {
+          kind: "entityPlaced",
+          entity,
+          ...(definition.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
+        };
         this.emit("event", event);
         return event;
       }
@@ -248,6 +261,20 @@ export class BlueprintStore extends EventEmitter {
         }
         this.levels.set(level.levelId, Object.freeze({ ...level }));
         const event: BlueprintEvent = { kind: "levelDefined", level };
+        this.emit("event", event);
+        return event;
+      }
+      case "level/update": {
+        const level = command.level;
+        validateLevel(level);
+        if (!this.levels.has(level.levelId)) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Level "${level.levelId}" does not exist — use level/define to create it`,
+          );
+        }
+        this.levels.set(level.levelId, Object.freeze({ ...level }));
+        const event: BlueprintEvent = { kind: "levelUpdated", level };
         this.emit("event", event);
         return event;
       }
@@ -478,6 +505,9 @@ function validateEntityDefinition(def: EntityDefinition): void {
   }
   if (!Array.isArray(def.fields)) {
     throw new JsonRpcError(RpcErrorCode.InvalidParams, `"fields" must be an array`);
+  }
+  if (def.archetypeId !== undefined && (typeof def.archetypeId !== "string" || def.archetypeId.length === 0)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"archetypeId" must be a non-empty string when present`);
   }
   const seen = new Set<string>();
   for (const field of def.fields) {

@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/actors.methods",
+  "title": "entity/* (spawn table de atores)",
+  "description": "Métodos do subsistema de atores (middleware → engine), ALPHA-0.1 P0.6. O modelo canônico mantém definições e instâncias de entidade; instâncias cuja definição aponta um archetypeId são projetadas como atores vivos. O entityId canônico é a referência estável editor↔runtime (seleção cruzada, live edit, despawn incremental). Métodos em $defs.",
+  "$defs": {
+    "entity/spawn": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "entityId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Id canônico da instância (referência estável editor↔runtime)"
+          },
+          "archetypeId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Archetype do runtime que materializa a instância (da definição de entidade)"
+          },
+          "position": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Posição no mundo em pixels [x, y]"
+          }
+        },
+        "required": ["entityId", "archetypeId", "position"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "entityId": { "type": "string" },
+          "archetypeId": { "type": "string" },
+          "slot": { "type": "integer", "minimum": 0 },
+          "liveActors": { "type": "integer", "minimum": 0 },
+          "status": { "enum": ["spawned"] }
+        },
+        "required": ["entityId", "status"]
+      },
+      "errors": [
+        "InvalidParams (-32602): entityId/archetypeId vazios ou position inválida",
+        "DuplicateId: ator com o mesmo entityId já está spawnado",
+        "InternalError: ActorStore cheio (capacidade fixa na construção — política Zero-GC)"
+      ]
+    },
+    "entity/despawn": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "entityId": { "type": "string", "minLength": 1 }
+        },
+        "required": ["entityId"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "despawned": { "type": "string" },
+          "liveActors": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["despawned"]
+      },
+      "errors": ["InvalidParams (-32602): ator não está spawnado"]
+    },
+    "entity/inspect": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "entityId": { "type": "string", "minLength": 1 }
+        },
+        "required": ["entityId"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "entityId": { "type": "string" },
+          "archetypeId": { "type": "string" },
+          "position": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "liveActors": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["entityId", "archetypeId", "position"]
+      },
+      "errors": ["InvalidParams (-32602): ator não está spawnado"]
+    }
+  }
+}

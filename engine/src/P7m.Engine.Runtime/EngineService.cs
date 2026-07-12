@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Text.Json;
+using P7m.Engine.Core.Actors;
 using P7m.Engine.Core.Camera;
 using P7m.Engine.Core.Level;
 using P7m.Engine.Core.Lighting;
@@ -33,6 +34,9 @@ public sealed class EngineService : IDisposable
     /// <summary>Tilemaps resolvidos pelo middleware (subsistema de níveis).</summary>
     public TilemapStore Tilemaps { get; }
 
+    /// <summary>Atores spawnados via spawn table (ALPHA-0.1 P0.6).</summary>
+    public ActorStore Actors { get; }
+
     /// <summary>Binds de shared memory aceitos.</summary>
     public IReadOnlyDictionary<string, MeshBindParams> MeshBindings => _meshBindings;
 
@@ -46,12 +50,13 @@ public sealed class EngineService : IDisposable
     /// <summary>Disparado quando um <c>engine/ping</c> originado no middleware é atendido.</summary>
     public event Action<string>? PingReceived;
 
-    public EngineService(int maxSkeletons = 64, int maxLights = 256, int maxTilemaps = 8)
+    public EngineService(int maxSkeletons = 64, int maxLights = 256, int maxTilemaps = 8, int maxActors = 256)
     {
         Skeletons = new SkeletonStore(maxSkeletons);
         Camera = new CinematicCamera(CameraConfig.Default);
         Lights = new LightStore(maxLights);
         Tilemaps = new TilemapStore(maxTilemaps);
+        Actors = new ActorStore(maxActors);
     }
 
     public void RegisterHandlers(JsonRpcConnection connection)
@@ -133,11 +138,12 @@ public sealed class EngineService : IDisposable
         });
 
         connection.RegisterMethod("engine/describe", (_, _) =>
-            ValueTask.FromResult<object?>(EngineDescriptor.BuildManifest(Skeletons, Lights, Tilemaps)));
+            ValueTask.FromResult<object?>(EngineDescriptor.BuildManifest(Skeletons, Lights, Tilemaps, Actors)));
 
         RegisterCameraHandlers(connection);
         RegisterLightingHandlers(connection);
         RegisterTilemapHandlers(connection);
+        RegisterActorHandlers(connection);
 
         connection.RegisterMethod("mesh/inspect", (params_, _) =>
         {
@@ -487,6 +493,92 @@ public sealed class EngineService : IDisposable
         });
     }
 
+    private void RegisterActorHandlers(JsonRpcConnection connection)
+    {
+        connection.RegisterMethod("entity/spawn", (params_, _) =>
+        {
+            var p = Deserialize<EntitySpawnParams>(params_);
+            if (string.IsNullOrEmpty(p.EntityId))
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"entityId\" must be a non-empty string");
+            }
+
+            if (string.IsNullOrEmpty(p.ArchetypeId))
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"archetypeId\" must be a non-empty string");
+            }
+
+            if (p.Position is not { Length: 2 })
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"position\" must contain 2 floats");
+            }
+
+            lock (_gate)
+            {
+                if (Actors.Find(p.EntityId).IsValid)
+                {
+                    throw new JsonRpcException(RpcErrorCode.DuplicateId, $"Actor \"{p.EntityId}\" is already spawned");
+                }
+
+                ActorHandle handle;
+                try
+                {
+                    handle = Actors.Spawn(p.EntityId, p.ArchetypeId, p.Position[0], p.Position[1]);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    throw new JsonRpcException(RpcErrorCode.InternalError, ex.Message);
+                }
+
+                return ValueTask.FromResult<object?>(new
+                {
+                    entityId = p.EntityId,
+                    archetypeId = p.ArchetypeId,
+                    slot = handle.Slot,
+                    liveActors = Actors.LiveCount,
+                    status = "spawned",
+                });
+            }
+        });
+
+        connection.RegisterMethod("entity/despawn", (params_, _) =>
+        {
+            var p = Deserialize<EntityInspectParams>(params_);
+            lock (_gate)
+            {
+                var handle = Actors.Find(p.EntityId ?? "");
+                if (!handle.IsValid)
+                {
+                    throw new JsonRpcException(RpcErrorCode.InvalidParams, $"Actor \"{p.EntityId}\" is not spawned");
+                }
+
+                Actors.Despawn(handle);
+                return ValueTask.FromResult<object?>(new { despawned = p.EntityId, liveActors = Actors.LiveCount });
+            }
+        });
+
+        connection.RegisterMethod("entity/inspect", (params_, _) =>
+        {
+            var p = Deserialize<EntityInspectParams>(params_);
+            lock (_gate)
+            {
+                var handle = Actors.Find(p.EntityId ?? "");
+                if (!handle.IsValid)
+                {
+                    throw new JsonRpcException(RpcErrorCode.InvalidParams, $"Actor \"{p.EntityId}\" is not spawned");
+                }
+
+                return ValueTask.FromResult<object?>(new
+                {
+                    entityId = Actors.EntityId(handle),
+                    archetypeId = Actors.ArchetypeId(handle),
+                    position = new[] { Actors.PositionX(handle), Actors.PositionY(handle) },
+                    liveActors = Actors.LiveCount,
+                });
+            }
+        });
+    }
+
     private static CameraConfig MergeConfig(in CameraConfig current, CameraConfigureParams p)
     {
         var config = current with
@@ -805,4 +897,8 @@ public sealed class EngineService : IDisposable
         int[]? Tiles);
 
     public sealed record TilemapInspectParams(string? TilemapId, int[]? Cell);
+
+    public sealed record EntitySpawnParams(string? EntityId, string? ArchetypeId, float[]? Position);
+
+    public sealed record EntityInspectParams(string? EntityId);
 }

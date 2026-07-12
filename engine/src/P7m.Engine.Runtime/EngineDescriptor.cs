@@ -1,3 +1,4 @@
+using P7m.Engine.Core.Actors;
 using P7m.Engine.Core.Level;
 using P7m.Engine.Core.Lighting;
 using P7m.Engine.Core.Rigging;
@@ -24,7 +25,8 @@ public static class EngineDescriptor
     /// <summary>Versão do runtime hospedeiro (MonoGame.Framework.DesktopGL referenciado em Graphics).</summary>
     public const string RuntimeVersion = "3.8.2";
 
-    public static object BuildManifest(SkeletonStore skeletons, LightStore lights, TilemapStore tilemaps) => new
+    public static object BuildManifest(
+        SkeletonStore skeletons, LightStore lights, TilemapStore tilemaps, ActorStore actors) => new
     {
         engine = new
         {
@@ -161,6 +163,27 @@ public static class EngineDescriptor
                     {
                         new { name = "tileSize", type = "int", min = 1.0, max = 256.0, @default = 16.0 },
                         new { name = "seed", type = "int", min = 0.0, @default = 0.0 },
+                    },
+                },
+            },
+            actors = new
+            {
+                status = "available",
+                limits = new Dictionary<string, double>
+                {
+                    ["maxActors"] = actors.Capacity,
+                },
+                // spawn table (ALPHA-0.1 P0.6): o entityId canônico é a
+                // referência estável editor↔runtime (seleção cruzada, live edit)
+                features = new[] { "archetype-spawn", "stable-entity-ids", "incremental-despawn" },
+                editor = new
+                {
+                    panel = "level-editor",
+                    gizmos = new[] { "entity-handle", "spawn-point" },
+                    nodeTypes = new[] { "entity-instance" },
+                    properties = new object[]
+                    {
+                        new { name = "position", type = "vec2", @default = "0,0" },
                     },
                 },
             },

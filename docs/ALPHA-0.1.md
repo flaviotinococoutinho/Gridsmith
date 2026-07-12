@@ -108,18 +108,32 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
 - [ ] Placement de entidade/câmera/luz com handles
 - [ ] Render/edição fora da main thread (o loader vendorizado já isola a
   mudança para o worker)
-- [ ] Integração com save do projeto (nível editado ⇄ blueprint)
+- [x] Integração com save do projeto (nível editado ⇄ blueprint): "Publicar
+  nível" grava no Blueprint (`level/define` na primeira vez, `level/update`
+  nas seguintes, reprojetado na engine), o documento salvo carrega o nível e
+  o canvas hidrata do Blueprint ao reabrir; regras de publicação = regras do
+  preview
 
 ### P0.5 — Preview embutido ⬜
 Run/pause/stop/restart, live edit de câmera e iluminação, overlays (colisão/
 luzes/câmera), seleção cruzada editor↔runtime, erros de projeção visíveis.
 (Promovido de OPP-02: é requisito, não oportunidade.)
 
-### P0.6 — Spawn mínimo de entidades ⬜
-Spawn table canônica (definição → archetype com transform/sprite/animação/
-colisão opcional), placement incremental projetado, referência estável
-editor↔runtime, diagnóstico de entidade não projetada.
+### P0.6 — Spawn mínimo de entidades 🔶
 (Promovido de OPP-11.)
+- [x] Spawn table canônica: `EntityDefinition.archetypeId` liga a definição
+  ao archetype do runtime; o evento `entityPlaced` sai enriquecido com o
+  archetype (a projeção não consulta o store)
+- [x] Placement incremental projetado: `entity/place` → `entity/spawn` na
+  engine (`ActorStore` SoA pré-alocado, Zero-GC), `entity/remove` →
+  `entity/despawn`; reidratação projeta entidades após níveis
+- [x] Referência estável editor↔runtime: o `entityId` canônico identifica o
+  ator nos dois lados (`entity/inspect` na engine; contrato em
+  `contracts/schemas/actors.methods.schema.json`)
+- [x] Diagnóstico de entidade não projetada: sem `archetypeId` a projeção é
+  `skipped` com razão acionável ("defina archetypeId…")
+- [ ] Transform/sprite/animação/colisão no archetype (hoje: posição)
+- [ ] Placement visual no canvas com handles (bullet de P0.4)
 
 ### P0.7 — Undo/redo global ⬜
 Histórico no nível do comando canônico com inversos explícitos, agrupamento

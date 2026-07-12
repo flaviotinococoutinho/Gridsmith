@@ -135,13 +135,56 @@ async function main(): Promise<void> {
     assert(level.projection.detail?.nonEmptyTiles === 4, "grass-top rule resolved the platform row");
     assert(level.projection.detail?.staticBatches === 1, "tiles consolidated into a single static batch");
 
+    // edição incremental do nível (P0.4 ⇄ P0.2): level/update re-resolve e reprojeta
+    const update = (await peer.request("blueprint/dispatch", {
+      kind: "level/update",
+      payload: {
+        levelId: "editor-level",
+        width: 4,
+        height: 2,
+        tileSize: 16,
+        seed: 5,
+        intGrid: [0, 0, 0, 0, 1, 1, 0, 1],
+        rules: [
+          {
+            name: "grass-top",
+            patternSize: 3,
+            pattern: [null, 0, null, null, 1, null, null, null, null],
+            tileIds: [100, 101],
+          },
+        ],
+      },
+    })) as { event: { kind: string }; projection: { status: string; detail?: { nonEmptyTiles: number } } };
+    assert(update.event.kind === "levelUpdated", "level update produced the levelUpdated event");
+    assert(update.projection.status === "projected", "level update re-projected onto the engine");
+    assert(update.projection.detail?.nonEmptyTiles === 3, "edited platform re-resolved (one tile erased)");
+
     const removal = (await peer.request("blueprint/dispatch", {
       kind: "level/remove",
       payload: { levelId: "editor-level" },
     })) as { projection: { status: string } };
     assert(removal.projection.status === "projected", "level removal projected (tilemap/remove)");
 
-    console.log("PHASE 4 DRIVER PASS: editor gateway, canonical dispatch, governed experience and level round-trip verified");
+    // spawn table (P0.6): definição com archetypeId materializa ator vivo na engine
+    await peer.request("blueprint/dispatch", {
+      kind: "entitydef/define",
+      payload: { entityDefId: "player", archetypeId: "hero", fields: [] },
+    });
+    const spawn = (await peer.request("blueprint/dispatch", {
+      kind: "entity/place",
+      payload: { entityId: "player-1", entityDefId: "player", position: [48, 336], fields: {} },
+    })) as { projection: { status: string; detail?: { status: string; liveActors: number } } };
+    assert(spawn.projection.status === "projected", "entity with archetype spawned as a live actor");
+    assert(spawn.projection.detail?.status === "spawned", "engine confirmed the spawn");
+    assert(spawn.projection.detail?.liveActors === 1, "engine actor store tracks one live actor");
+
+    const despawn = (await peer.request("blueprint/dispatch", {
+      kind: "entity/remove",
+      payload: { entityId: "player-1" },
+    })) as { projection: { status: string } };
+    assert(despawn.projection.status === "projected", "entity removal despawned the actor");
+
+    console.log("PHASE 4 DRIVER PASS: editor gateway, canonical dispatch, governed experience, level round-trip and actor spawn verified");
   } finally {
     peer.close();
   }

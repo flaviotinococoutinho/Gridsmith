@@ -123,7 +123,11 @@ function placeholder(title: string, message: string): HTMLElement {
 // ---------------------------------------------------- editor de níveis (P0.4)
 
 function mountLevelEditor(host: HTMLElement): void {
-  const doc = new IntGridDocument(48, 27);
+  const LEVEL_ID = "nivel-1";
+  let doc = new IntGridDocument(48, 27);
+  // integração com o save (P0.2 ⇄ P0.4): publicações viram level/define ou
+  // level/update no Blueprint — e daí para o documento salvo do projeto
+  let levelInBlueprint = false;
   const tileSize = 16;
   let activeValue = 1;
   let tool: "pencil" | "eraser" | "flood" = "pencil";
@@ -211,7 +215,7 @@ function mountLevelEditor(host: HTMLElement): void {
     schedulePreview();
   }
 
-  addButton("Publicar nível", () => void publish(), "Envia level/define pelo caminho canônico");
+  addButton("Publicar nível", () => void publish(), "Grava o nível no projeto pelo caminho canônico");
 
   // canvas
   const canvas = document.createElement("canvas");
@@ -319,19 +323,17 @@ function mountLevelEditor(host: HTMLElement): void {
   }, { passive: false });
 
   async function publish(): Promise<void> {
+    // as MESMAS regras do preview ("Ver arte"): preview ≡ publicação
     const payload = doc.toLevelPayload({
-      levelId: "nivel-1",
+      levelId: LEVEL_ID,
       tileSize,
       seed: 1,
-      rules: [
-        { name: "chao", patternSize: 1, pattern: [1], tileIds: [1] },
-        { name: "parede", patternSize: 1, pattern: [2], tileIds: [2] },
-        { name: "perigo", patternSize: 1, pattern: [3], tileIds: [3] },
-      ],
+      rules: defaultLevelRules(),
     });
     try {
-      await window.p7m.dispatch("level/define", payload);
-      status.textContent = "Nível publicado no runtime.";
+      await window.p7m.dispatch(levelInBlueprint ? "level/update" : "level/define", payload);
+      levelInBlueprint = true;
+      status.textContent = "Nível publicado — salve o projeto para persistir (Ctrl+S).";
     } catch (err) {
       status.textContent = `Falha ao publicar: ${err instanceof Error ? err.message : err}`;
     }
@@ -340,6 +342,24 @@ function mountLevelEditor(host: HTMLElement): void {
   resize();
   viewport.fit(doc.width, doc.height, tileSize);
   repaint();
+
+  // Hidratação: um nível já publicado (projeto reaberto) volta para o canvas
+  void (async () => {
+    try {
+      const result = (await window.p7m.query("levels")) as {
+        levels?: Array<{ levelId: string; width: number; height: number; intGrid: number[] }>;
+      };
+      const existing = result.levels?.find((level) => level.levelId === LEVEL_ID);
+      if (!existing) return;
+      doc = new IntGridDocument(existing.width, existing.height, existing.intGrid);
+      levelInBlueprint = true;
+      viewport.fit(doc.width, doc.height, tileSize);
+      onEdited();
+      status.textContent = "Nível carregado do projeto.";
+    } catch {
+      // gateway indisponível: o editor continua editável com um grid vazio
+    }
+  })();
 }
 
 // ---------------------------------------------------------- painel inferior

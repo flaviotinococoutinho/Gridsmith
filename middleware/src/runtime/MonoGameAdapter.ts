@@ -2,9 +2,9 @@
  * Adapter MonoGame (docs/CANONICAL-MODEL.md §2): projeta eventos canônicos
  * nos métodos JSON-RPC da engine P7M/MonoGame.
  *
- * O adapter conhece o runtime; o modelo canônico não. Eventos puramente
- * editoriais hoje (definições/instâncias de entidade) são pulados com razão
- * registrada — viram spawn tables na Fase 4.
+ * O adapter conhece o runtime; o modelo canônico não. Instâncias de entidade
+ * cuja definição tem archetypeId viram atores vivos (spawn table, ALPHA-0.1
+ * P0.6); eventos puramente editoriais são pulados com razão registrada.
  */
 
 import type { EnginePipeServer } from "../ipc/EnginePipeServer.js";
@@ -19,12 +19,18 @@ export class MonoGameAdapter implements RuntimeAdapter {
   /** lightId canônico (string) → lightId da engine (slot) na sessão corrente. */
   private readonly engineLightIds = new Map<string, number>();
 
+  /** entityIds spawnados como atores na sessão corrente (referência estável editor↔runtime). */
+  private readonly spawnedEntityIds = new Set<string>();
+
   constructor(
     private readonly server: EnginePipeServer,
     private readonly capabilities: CapabilityRegistry,
   ) {
-    // sessão nova = engine nova: os slots de luz anteriores não existem mais
-    server.on("session", () => this.engineLightIds.clear());
+    // sessão nova = engine nova: slots de luz e atores anteriores não existem mais
+    server.on("session", () => {
+      this.engineLightIds.clear();
+      this.spawnedEntityIds.clear();
+    });
   }
 
   get isConnected(): boolean {
@@ -99,18 +105,57 @@ export class MonoGameAdapter implements RuntimeAdapter {
         return { event: event.kind, status: "projected", detail };
       }
 
+      case "levelUpdated": {
+        // Edição incremental: a engine não faz diff de tilemaps — remove e
+        // redefine com os tiles re-resolvidos (mesma semântica do define).
+        await peer.request("tilemap/remove", { tilemapId: event.level.levelId });
+        const detail = await peer.request("tilemap/define", toEngineTilemap(event.level));
+        return { event: event.kind, status: "projected", detail };
+      }
+
       case "levelRemoved":
         await peer.request("tilemap/remove", { tilemapId: event.levelId });
         return { event: event.kind, status: "projected" };
 
       case "entityDefDefined":
-      case "entityPlaced":
-      case "entityRemoved":
         return {
           event: event.kind,
           status: "skipped",
-          reason: "entity domain is editor-side today; runtime spawn tables land in phase 4",
+          reason: "entity definitions are editorial; instances with archetypeId spawn actors",
         };
+
+      case "entityPlaced": {
+        // Spawn table (ALPHA-0.1 P0.6): só definições com archetypeId viram
+        // atores vivos; sem archetype a entidade é editorial — com razão
+        // acionável para o painel de diagnósticos.
+        if (event.archetypeId === undefined) {
+          return {
+            event: event.kind,
+            status: "skipped",
+            reason: `entity "${event.entity.entityId}" has no archetypeId in its definition — set one to spawn it in the runtime`,
+          };
+        }
+        const detail = await peer.request("entity/spawn", {
+          entityId: event.entity.entityId,
+          archetypeId: event.archetypeId,
+          position: event.entity.position,
+        });
+        this.spawnedEntityIds.add(event.entity.entityId);
+        return { event: event.kind, status: "projected", detail };
+      }
+
+      case "entityRemoved": {
+        if (!this.spawnedEntityIds.has(event.entityId)) {
+          return {
+            event: event.kind,
+            status: "skipped",
+            reason: `entity "${event.entityId}" was never spawned onto this session`,
+          };
+        }
+        this.spawnedEntityIds.delete(event.entityId);
+        await peer.request("entity/despawn", { entityId: event.entityId });
+        return { event: event.kind, status: "projected" };
+      }
 
       case "worldLevelPlaced":
       case "worldLevelUnplaced":
@@ -124,7 +169,8 @@ export class MonoGameAdapter implements RuntimeAdapter {
 
   /**
    * Reidrata uma engine recém-conectada projetando o Blueprint inteiro, na
-   * ordem de dependência (esqueletos → malhas → câmera → luzes → níveis).
+   * ordem de dependência (esqueletos → malhas → câmera → luzes → níveis →
+   * entidades).
    * O adapter é o ÚNICO dono da projeção — inclusive na reconexão.
    */
   async rehydrateFrom(store: BlueprintStore): Promise<ProjectionResult[]> {
@@ -142,6 +188,16 @@ export class MonoGameAdapter implements RuntimeAdapter {
     }
     await projectAll(store.listLights().map((light) => ({ kind: "lightAdded", light })));
     await projectAll(store.listLevels().map((level) => ({ kind: "levelDefined", level })));
+    await projectAll(
+      store.listEntities().map((entity) => {
+        const archetypeId = store.getEntityDef(entity.entityDefId)?.archetypeId;
+        return {
+          kind: "entityPlaced",
+          entity,
+          ...(archetypeId !== undefined ? { archetypeId } : {}),
+        };
+      }),
+    );
     return results;
   }
 }

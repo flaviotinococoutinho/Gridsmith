@@ -16,9 +16,9 @@ Legenda: ✅ completo · 🔶 parcial · ❌ ausente · — não se aplica.
 | Rigging/FABRIK | ✅ | ✅ | 🔶 (skinning GPU; sem editor) | ❌ | ❌ | **Não entregue** |
 | Timeline/curvas | ✅ | — | 🔶 | ❌ | ❌ | **Não entregue** |
 | Máquina de estados | ✅ | — | ❌ | ❌ | ❌ | **Não entregue** |
-| Níveis IntGrid + auto-tiling | ✅ | ✅ | ✅ | ❌ | ❌ | **Motor pronto, editor ausente** (P0.4) |
+| Níveis IntGrid + auto-tiling | ✅ | ✅ (define/update) | ✅ | 🔶 (canvas + publicar/reabrir; faltam ferramentas e placement) | ❌ | **Em fechamento** (P0.4) |
 | World map | ✅ | ✅ query | ❌ streaming | ❌ | ❌ | **Parcial** |
-| Entidades tipadas | ✅ | ✅ | ❌ spawn (P0.6) | ❌ | ❌ | **Parcial** |
+| Entidades tipadas | ✅ | ✅ | ✅ spawn table (archetypeId → ator vivo) | ❌ placement visual | ❌ | **Parcial** (P0.6: falta UI) |
 | Pipeline Aseprite/MGCB | ✅ | ✅ MCP | ✅ compilação | ❌ | ❌ | **Parcial** |
 | Câmera cinemática | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
 | Iluminação deferred | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |

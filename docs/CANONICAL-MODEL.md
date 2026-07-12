@@ -93,14 +93,15 @@ Um **adapter** projeta eventos canônicos nas APIs de um runtime concreto
 | `meshBound` | `mesh/bind_shared_memory` |
 | `cameraConfigured` | `camera/configure` |
 | `lightAdded`/`lightRemoved` | `lighting/add`/`lighting/remove` (com remapeamento de ids) |
-| `levelDefined`/`levelRemoved` | **resolve o AutoTiler (IntGrid + regras → tiles, determinístico por seed)** e envia `tilemap/define`/`tilemap/remove` |
-| `entityDefDefined`/`entityPlaced` | `skipped` (domínio puramente editorial hoje — vira spawn table na Fase 4) |
+| `levelDefined`/`levelUpdated`/`levelRemoved` | **resolve o AutoTiler (IntGrid + regras → tiles, determinístico por seed)** e envia `tilemap/define`/`tilemap/remove`+`define`/`tilemap/remove` |
+| `entityPlaced`/`entityRemoved` | spawn table (P0.6): com `archetypeId` na definição, `entity/spawn`/`entity/despawn` — o `entityId` canônico é a referência estável editor↔runtime; sem archetype, `skipped` com razão acionável |
+| `entityDefDefined` | `skipped` (definições são editoriais; instâncias com archetype spawnam) |
 
 Adapters declaram `family` (grupo tecnológico) e obtêm a versão concreta do
 handshake/describe do runtime vivo. O adapter também é o **único dono da
 reidratação**: em cada sessão nova, `rehydrateFrom(store)` projeta o Blueprint
 inteiro na ordem de dependência (esqueletos → malhas → câmera → luzes →
-níveis). O `EngineBridge` ficou restrito a diagnósticos (ping, inspeções,
+níveis → entidades). O `EngineBridge` ficou restrito a diagnósticos (ping, inspeções,
 simulação de câmera) — toda mutação passa pelo orquestrador.
 
 ## 3. Perfis versionados e governança da experiência

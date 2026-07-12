@@ -141,6 +141,14 @@ async function connectFakeEngine(server: EnginePipeServer, calls: Array<{ method
     calls.push({ method: "lighting/remove", params });
     return { removed: true };
   });
+  peer.registerMethod("entity/spawn", (params) => {
+    calls.push({ method: "entity/spawn", params });
+    return { entityId: (params as { entityId: string }).entityId, status: "spawned" };
+  });
+  peer.registerMethod("entity/despawn", (params) => {
+    calls.push({ method: "entity/despawn", params });
+    return { despawned: (params as { entityId: string }).entityId };
+  });
   await peer.request("engine/handshake", {
     clientName: "P7m.Engine.Runtime",
     clientVersion: "0.1.0",
@@ -221,14 +229,113 @@ test("eventos sem suporte no runtime são pulados com razão; sem sessão, defer
     const engine = await connectFakeEngine(server, calls);
     await new Promise((r) => setTimeout(r, 50));
 
-    // domínio editorial: runtime não tem spawn tables ainda → skipped com razão
+    // definição SEM archetypeId: entidade é editorial → skipped com razão
+    // acionável (o painel de diagnósticos mostra como corrigir)
     const placed = await orchestrator.dispatch({
       kind: "entity/place",
       entity: { entityId: "chest-1", entityDefId: "chest", position: [5, 5], fields: {} },
     });
     assert.equal(placed.projection?.status, "skipped");
-    assert.match(placed.projection?.reason ?? "", /phase 4/);
+    assert.match(placed.projection?.reason ?? "", /archetypeId/);
     assert.equal(calls.length, 0); // nada foi enviado à engine
+
+    engine.close();
+  } finally {
+    await server.close();
+  }
+});
+
+test("spawn table (P0.6): definição com archetypeId spawna ator; remoção despawna", async () => {
+  const server = new EnginePipeServer({ pipeName: `p7m-canon-${process.pid}-${pipeCounter++}`, requestTimeoutMs: 2000 });
+  const capabilities = new CapabilityRegistry(server);
+  const adapter = new MonoGameAdapter(server, capabilities);
+  const store = new BlueprintStore();
+  const orchestrator = new CanonicalOrchestrator(store, new HookBus(), adapter);
+  await server.listen();
+
+  try {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const engine = await connectFakeEngine(server, calls);
+    await new Promise((r) => setTimeout(r, 50));
+
+    await orchestrator.dispatch({
+      kind: "entitydef/define",
+      definition: { entityDefId: "player", archetypeId: "hero", fields: [] },
+    });
+
+    // placement projeta entity/spawn com o entityId canônico (referência estável)
+    const placed = await orchestrator.dispatch({
+      kind: "entity/place",
+      entity: { entityId: "player-1", entityDefId: "player", position: [48, 336], fields: {} },
+    });
+    assert.equal(placed.projection?.status, "projected");
+    assert.deepEqual(calls[0], {
+      method: "entity/spawn",
+      params: { entityId: "player-1", archetypeId: "hero", position: [48, 336] },
+    });
+
+    // remoção de ator spawnado projeta entity/despawn
+    const removed = await orchestrator.dispatch({ kind: "entity/remove", entityId: "player-1" });
+    assert.equal(removed.projection?.status, "projected");
+    assert.deepEqual(calls[1], { method: "entity/despawn", params: { entityId: "player-1" } });
+
+    // remoção de entidade nunca spawnada é skipped com razão (sem chamada à engine)
+    await orchestrator.dispatch({
+      kind: "entitydef/define",
+      definition: { entityDefId: "marker", fields: [] },
+    });
+    await orchestrator.dispatch({
+      kind: "entity/place",
+      entity: { entityId: "marker-1", entityDefId: "marker", position: [0, 0], fields: {} },
+    });
+    const skipped = await orchestrator.dispatch({ kind: "entity/remove", entityId: "marker-1" });
+    assert.equal(skipped.projection?.status, "skipped");
+    assert.match(skipped.projection?.reason ?? "", /never spawned/);
+    assert.equal(calls.length, 2);
+
+    engine.close();
+  } finally {
+    await server.close();
+  }
+});
+
+test("reidratação projeta entidades spawnáveis depois dos níveis", async () => {
+  const server = new EnginePipeServer({ pipeName: `p7m-canon-${process.pid}-${pipeCounter++}`, requestTimeoutMs: 2000 });
+  const adapter = new MonoGameAdapter(server, new CapabilityRegistry(server));
+  const store = new BlueprintStore();
+  await server.listen();
+
+  try {
+    // Blueprint preenchido OFFLINE (engine caída): só o AST aceita
+    store.apply({
+      kind: "entitydef/define",
+      definition: { entityDefId: "player", archetypeId: "hero", fields: [] },
+    });
+    store.apply({
+      kind: "entity/place",
+      entity: { entityId: "player-1", entityDefId: "player", position: [10, 20], fields: {} },
+    });
+    store.apply({
+      kind: "entitydef/define",
+      definition: { entityDefId: "marker", fields: [] },
+    });
+    store.apply({
+      kind: "entity/place",
+      entity: { entityId: "marker-1", entityDefId: "marker", position: [0, 0], fields: {} },
+    });
+
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const engine = await connectFakeEngine(server, calls);
+    await new Promise((r) => setTimeout(r, 50));
+
+    const results = await adapter.rehydrateFrom(store);
+    const spawns = calls.filter((c) => c.method === "entity/spawn");
+    assert.equal(spawns.length, 1); // só a definição com archetypeId spawna
+    assert.deepEqual(spawns[0]!.params, { entityId: "player-1", archetypeId: "hero", position: [10, 20] });
+    // a instância sem archetype aparece como skipped com razão acionável
+    const skipped = results.filter((r) => r.status === "skipped");
+    assert.equal(skipped.length, 1);
+    assert.match(skipped[0]!.reason ?? "", /archetypeId/);
 
     engine.close();
   } finally {

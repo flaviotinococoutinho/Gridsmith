@@ -58,6 +58,26 @@ test("level/define valida grid e regras na borda do AST", () => {
   );
 });
 
+test("level/update substitui um nível existente; inexistente aponta para level/define", () => {
+  const store = new BlueprintStore();
+  assert.throws(
+    () => store.apply({ kind: "level/update", level: LEVEL }),
+    /does not exist — use level\/define/,
+  );
+
+  store.apply({ kind: "level/define", level: LEVEL });
+  const edited: LevelSpec = { ...LEVEL, intGrid: [1, 1, 0, 0, 1, 1, 1, 1] };
+  const event = store.apply({ kind: "level/update", level: edited });
+  assert.equal(event.kind, "levelUpdated");
+  assert.deepEqual(store.getLevel("dungeon-1")?.intGrid, edited.intGrid);
+
+  // a validação da borda vale também na atualização
+  assert.throws(
+    () => store.apply({ kind: "level/update", level: { ...LEVEL, intGrid: [1] } }),
+    /expects 8 values/,
+  );
+});
+
 test("projeção resolve o auto-tiling na fronteira do runtime, determinística por seed", async () => {
   const server = new EnginePipeServer({
     pipeName: `p7m-lvl-${process.pid}-${pipeCounter++}`,
@@ -108,9 +128,21 @@ test("projeção resolve o auto-tiling na fronteira do runtime, determinística 
     const tiles = sent["tiles"] as number[];
     assert.ok(tiles.slice(4).every((t) => t === 100 || t === 101));
 
+    // edição incremental: level/update projeta remove + define re-resolvido
+    const edited: LevelSpec = { ...LEVEL, intGrid: [1, 0, 0, 0, 1, 1, 1, 1] };
+    const updated = await orchestrator.dispatch({ kind: "level/update", level: edited });
+    assert.equal(updated.projection?.status, "projected");
+    assert.deepEqual(removals, ["dungeon-1"]);
+    const expectedEdit = resolveAutoTiles(
+      { width: edited.width, height: edited.height, values: edited.intGrid },
+      edited.rules,
+      edited.seed,
+    );
+    assert.deepEqual(tilemapCalls[1]!["tiles"], [...expectedEdit.tiles]);
+
     // remoção projeta tilemap/remove
     await orchestrator.dispatch({ kind: "level/remove", levelId: "dungeon-1" });
-    assert.deepEqual(removals, ["dungeon-1"]);
+    assert.deepEqual(removals, ["dungeon-1", "dungeon-1"]);
     assert.equal(store.getLevel("dungeon-1"), undefined);
 
     engine.close();

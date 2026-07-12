@@ -38,6 +38,7 @@ export const EVENT_LABELS: Readonly<Record<string, string>> = {
   entityPlaced: "Entidade posicionada",
   entityRemoved: "Entidade removida",
   levelDefined: "Nível definido",
+  levelUpdated: "Nível atualizado",
   levelRemoved: "Nível removido",
   worldLevelPlaced: "Nível posicionado no mapa-múndi",
   worldLevelUnplaced: "Nível removido do mapa-múndi",
