@@ -68,3 +68,42 @@ test("EditorClient conecta ao gateway real: dispatch, query, experiência e broa
     await engineServer.close();
   }
 });
+
+test("EditorClient cria um projeto novo a partir do template Plataforma 2D", async () => {
+  const pipeName = `p7m-fe-tpl-${process.pid}-${Date.now() % 100000}`;
+  const engineServer = new EnginePipeServer({ pipeName, requestTimeoutMs: 2000 });
+  const capabilities = new CapabilityRegistry(engineServer);
+  const adapter = new MonoGameAdapter(engineServer, capabilities);
+  const store = new BlueprintStore();
+  const profiles = new RuntimeProfileRegistry();
+  for (const profile of MONOGAME_PROFILES) profiles.register(profile);
+  const gateway = new EditorGateway({
+    pipeName,
+    orchestrator: new CanonicalOrchestrator(store, new HookBus(), adapter),
+    store,
+    governor: new ExperienceGovernor(profiles, capabilities),
+    adapter,
+    requestTimeoutMs: 2000,
+  });
+  await engineServer.listen();
+  await gateway.listen();
+
+  const client = new EditorClient(pipeName, "test-editor");
+  try {
+    await client.connect();
+
+    const { templates } = await client.listProjectTemplates();
+    assert.ok(templates.some((t) => t.id === "platformer-2d"));
+
+    const summary = await client.newProjectFromTemplate("platformer-2d");
+    assert.equal(summary.templateId, "platformer-2d");
+    assert.equal(summary.applied, 6);
+
+    const levels = await client.query<{ levels: Array<{ levelId: string }> }>("levels");
+    assert.equal(levels.levels[0]?.levelId, "level-1");
+  } finally {
+    client.close();
+    await gateway.close();
+    await engineServer.close();
+  }
+});
