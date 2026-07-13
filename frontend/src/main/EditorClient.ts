@@ -99,6 +99,29 @@ export class EditorClient {
     return this.request("blueprint/load", { document });
   }
 
+  /** Templates disponíveis para o fluxo "Novo projeto". */
+  listProjectTemplates(): Promise<{
+    templates: Array<{ id: string; label: string; description: string }>;
+  }> {
+    return this.request("project/templates", {});
+  }
+
+  /**
+   * Cria um projeto novo a partir de um template (ex.: "platformer-2d"),
+   * reproduzido pelo caminho canônico. Exige blueprint vazio — "novo projeto"
+   * é estado explícito do ciclo de vida.
+   */
+  newProjectFromTemplate(templateId: string): Promise<{
+    templateId: string;
+    name: string;
+    applied: number;
+    projected: number;
+    deferred: number;
+    skipped: number;
+  }> {
+    return this.request("project/new", { templateId });
+  }
+
   close(): void {
     this.peer?.close();
     this.peer = undefined;
