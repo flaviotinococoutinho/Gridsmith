@@ -58,14 +58,74 @@ export function exportBlueprint(store: BlueprintStore): BlueprintDocument {
   };
 }
 
-/** Documento → comandos canônicos em ordem de dependência. */
-export function documentToCommands(document: BlueprintDocument): BlueprintCommand[] {
-  if (document?.schemaVersion !== BLUEPRINT_DOCUMENT_VERSION) {
+/**
+ * Uma migração leva um documento da versão N para N+1. Registre uma entrada
+ * sempre que `BLUEPRINT_DOCUMENT_VERSION` subir, para que projetos salvos por
+ * builds anteriores continuem abrindo.
+ */
+export type BlueprintMigration = (document: Record<string, unknown>) => Record<string, unknown>;
+
+const MIGRATIONS = new Map<number, BlueprintMigration>([
+  // 0 → 1: documentos anteriores ao campo `schemaVersion`. Normaliza a forma
+  // (garante que todo domínio exista como array) e carimba a versão.
+  [
+    0,
+    (document) => ({
+      skeletons: [],
+      meshes: [],
+      camera: {},
+      lights: [],
+      entityDefs: [],
+      entities: [],
+      levels: [],
+      placements: [],
+      ...document,
+      schemaVersion: 1,
+    }),
+  ],
+]);
+
+/**
+ * Normaliza um documento (possivelmente de uma versão anterior) para a versão
+ * corrente. Documentos mais NOVOS que este build são recusados com erro claro;
+ * os mais antigos são migrados passo a passo pelo registro acima.
+ */
+export function migrateBlueprintDocument(raw: unknown): BlueprintDocument {
+  if (raw === null || typeof raw !== "object") {
+    throw new BlueprintDocumentError("Blueprint document must be an object");
+  }
+
+  let document = raw as Record<string, unknown>;
+  const declared = document["schemaVersion"];
+  let version = typeof declared === "number" && Number.isInteger(declared) ? declared : 0;
+
+  if (version > BLUEPRINT_DOCUMENT_VERSION) {
     throw new BlueprintDocumentError(
-      `Unsupported blueprint document schemaVersion ${document?.schemaVersion} ` +
-        `(this build reads version ${BLUEPRINT_DOCUMENT_VERSION})`,
+      `Unsupported blueprint document schemaVersion ${version} ` +
+        `(this build reads version ${BLUEPRINT_DOCUMENT_VERSION}; update the app to open it)`,
     );
   }
+
+  while (version < BLUEPRINT_DOCUMENT_VERSION) {
+    const migrate = MIGRATIONS.get(version);
+    if (!migrate) {
+      throw new BlueprintDocumentError(
+        `No migration path from blueprint schemaVersion ${version} to ${BLUEPRINT_DOCUMENT_VERSION}`,
+      );
+    }
+    document = migrate(document);
+    version += 1;
+  }
+
+  return document as unknown as BlueprintDocument;
+}
+
+/**
+ * Documento → comandos canônicos em ordem de dependência. Aceita documentos de
+ * versões anteriores (migrados de forma transparente) e recusa versões futuras.
+ */
+export function documentToCommands(rawDocument: unknown): BlueprintCommand[] {
+  const document = migrateBlueprintDocument(rawDocument);
 
   const commands: BlueprintCommand[] = [];
   for (const skeleton of document.skeletons ?? []) commands.push({ kind: "skeleton/define", skeleton });
