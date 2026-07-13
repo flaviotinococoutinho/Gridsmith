@@ -22,6 +22,7 @@ import {
   replayDocument,
   type BlueprintDocument,
 } from "../canonical/BlueprintSerializer.js";
+import { getProjectTemplate, PROJECT_TEMPLATES } from "../canonical/ProjectTemplates.js";
 import { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
 import { COMMAND_KINDS, reshapeCommand } from "../canonical/commandShape.js";
 import type { BlueprintCommand, BlueprintEvent, BlueprintStore } from "../domain/BlueprintStore.js";
@@ -216,6 +217,42 @@ export class EditorGateway extends EventEmitter {
           this.options.store,
           this.options.orchestrator,
         );
+      } catch (err) {
+        if (err instanceof BlueprintDocumentError) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, err.message);
+        }
+        throw err;
+      }
+    });
+
+    peer.registerMethod("project/templates", () => {
+      this.requireHandshake(session);
+      return {
+        templates: PROJECT_TEMPLATES.map((template) => ({
+          id: template.id,
+          label: template.label,
+          description: template.description,
+        })),
+      };
+    });
+
+    peer.registerMethod("project/new", async (params) => {
+      this.requireHandshake(session);
+      const p = (params ?? {}) as { templateId?: unknown };
+      if (typeof p?.templateId !== "string" || p.templateId.length === 0) {
+        throw new JsonRpcError(RpcErrorCode.InvalidParams, `"templateId" must be a non-empty string`);
+      }
+      const template = getProjectTemplate(p.templateId);
+      if (!template) {
+        throw new JsonRpcError(RpcErrorCode.InvalidParams, `Unknown project template "${p.templateId}"`);
+      }
+      try {
+        const summary = await replayDocument(
+          template.create(),
+          this.options.store,
+          this.options.orchestrator,
+        );
+        return { templateId: template.id, name: template.label, ...summary };
       } catch (err) {
         if (err instanceof BlueprintDocumentError) {
           throw new JsonRpcError(RpcErrorCode.InvalidParams, err.message);

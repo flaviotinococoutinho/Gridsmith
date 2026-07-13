@@ -241,3 +241,58 @@ test("dispatch offline: AST aceita, projeção deferred, broadcast acontece", as
     await h.close();
   }
 });
+
+test("project/templates lista o Plataforma 2D e project/new o reproduz no AST", async () => {
+  const h = await makeHarness();
+  try {
+    const editor = await h.connectEditor();
+
+    const { templates } = (await editor.request("project/templates", {})) as {
+      templates: Array<{ id: string; label: string }>;
+    };
+    assert.ok(templates.some((t) => t.id === "platformer-2d"));
+
+    const summary = (await editor.request("project/new", { templateId: "platformer-2d" })) as {
+      templateId: string;
+      applied: number;
+    };
+    assert.equal(summary.templateId, "platformer-2d");
+    assert.equal(summary.applied, 6);
+
+    const levels = (await editor.request("blueprint/query", { projection: "levels" })) as {
+      levels: Array<{ levelId: string }>;
+    };
+    assert.equal(levels.levels[0]?.levelId, "level-1");
+    const entities = (await editor.request("blueprint/query", { projection: "entities" })) as {
+      entities: Array<{ entityId: string }>;
+    };
+    assert.equal(entities.entities[0]?.entityId, "player-1");
+
+    editor.close();
+  } finally {
+    await h.close();
+  }
+});
+
+test("project/new recusa template desconhecido e exige blueprint vazio", async () => {
+  const h = await makeHarness();
+  try {
+    const editor = await h.connectEditor();
+
+    await assert.rejects(
+      editor.request("project/new", { templateId: "inexistente" }),
+      (err: unknown) => err instanceof JsonRpcError && err.code === RpcErrorCode.InvalidParams,
+    );
+
+    await editor.request("project/new", { templateId: "platformer-2d" });
+    // segundo new falha: o blueprint já não está vazio
+    await assert.rejects(
+      editor.request("project/new", { templateId: "platformer-2d" }),
+      (err: unknown) => err instanceof JsonRpcError && err.code === RpcErrorCode.InvalidParams,
+    );
+
+    editor.close();
+  } finally {
+    await h.close();
+  }
+});
