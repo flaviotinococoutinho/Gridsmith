@@ -28,6 +28,24 @@ Um usuário novo, sem conhecer a arquitetura interna, consegue:
 12. fechar;
 13. reabrir sem perdas.
 
+```mermaid
+graph LR
+  s1["1 instalar e abrir"] --> s2["2 novo projeto plataforma 2D"]
+  s2 --> s3["3 importar player.aseprite"]
+  s3 --> s4["4 criar entidade Player"]
+  s4 --> s5["5 pintar chao e paredes"]
+  s5 --> s6["6 posicionar Player"]
+  s6 --> s7["7 configurar camera"]
+  s7 --> s8["8 adicionar luz"]
+  s8 --> s9["9 executar preview"]
+  s9 --> s10["10 modificar com jogo pausado"]
+  s10 --> s11["11 salvar"]
+  s11 --> s12["12 fechar"]
+  s12 --> s13(["13 reabrir sem perdas"])
+```
+
+*Mostra os 13 passos sequenciais da jornada de aceite Alpha-0.1, do instalar ao reabrir sem perdas — o resultado final e um estadio observavel (reabrir sem perdas).*
+
 ### Metas objetivas
 
 | Meta | Alvo |
@@ -55,6 +73,58 @@ Status: ⬜ aberto · 🔶 em andamento · ✅ fechado. Issues registradas:
 [#8](https://github.com/flaviotinococoutinho/p7m-design/issues/8) P0.8 ·
 [#9](https://github.com/flaviotinococoutinho/p7m-design/issues/9) P0.9
 
+```mermaid
+stateDiagram-v2
+  [*] --> aberto
+  aberto --> em_andamento : primeiro item iniciado
+  em_andamento --> fechado : todos os itens concluidos
+  fechado --> [*]
+  note right of aberto
+    ⬜ nenhum item da issue iniciado
+  end note
+  note right of em_andamento
+    🔶 parte dos checkboxes marcados
+  end note
+  note right of fechado
+    ✅ todos os checkboxes marcados
+  end note
+```
+
+*Mostra os estados de cada issue da milestone (⬜ aberto, 🔶 em andamento, ✅ fechado) conforme o avanco dos checkboxes.*
+
+O backlog nao e uma lista plana: as issues tem uma ordem de dependencia
+implicita — fundacoes (supervisor e ciclo de projeto) habilitam o workbench,
+que habilita a vertical slice, e o empacotamento fecha por ultimo.
+
+```mermaid
+graph TD
+  P01["P0.1 Supervisor de processos 🔶"]
+  P02["P0.2 Ciclo de vida do projeto 🔶"]
+  P03["P0.3 Workbench do editor 🔶"]
+  P04["P0.4 Vertical slice de niveis 🔶"]
+  P05["P0.5 Preview embutido ⬜"]
+  P06["P0.6 Spawn minimo de entidades 🔶"]
+  P07["P0.7 Undo/redo global ⬜"]
+  P08["P0.8 Diagnosticos como funcionalidade ⬜"]
+  P09(["P0.9 Empacotamento ⬜"])
+  P01 --> P03
+  P02 --> P03
+  P03 --> P04
+  P01 --> P05
+  P04 --> P05
+  P04 --> P06
+  P05 --> P06
+  P04 --> P07
+  P03 --> P08
+  P05 --> P08
+  P01 --> P09
+  P06 --> P09
+  P07 --> P09
+  P08 --> P09
+```
+
+*Mostra o grafo de dependencia do backlog P0.1-P0.9: fundacoes (P0.1/P0.2) habilitam o workbench (P0.3) e a vertical slice (P0.4), e o empacotamento (P0.9) fecha a milestone.*
+
 ### P0.1 — Supervisor de processos 🔶
 O Electron é o supervisor do ecossistema: um único executável.
 - [x] Máquina de estados de supervisão (spawn/descoberta, health, retry com backoff, encerramento coordenado, modo sem engine) — `frontend/src/main/ProcessSupervisor.ts`, testada com launcher injetável
@@ -74,6 +144,19 @@ O Electron é o supervisor do ecossistema: um único executável.
   solução (ProtocolMismatch do gateway → "Atualize a instalação inteira…")
 - [ ] Caminhos empacotados (Electron Builder) — fecha junto com P0.9
 
+```mermaid
+stateDiagram-v2
+  [*] --> stopped
+  stopped --> starting : start
+  starting --> running : up
+  running --> retrying : queda
+  retrying --> starting : retry backoff 2s 4s 8s
+  starting --> failed : esgota tentativas
+  running --> stopped : shutdown
+```
+
+*Mostra a maquina de estados de supervisao (ServiceState) do ProcessSupervisor: o laco de retry com backoff e o ramo failed ao esgotar as tentativas.*
+
 ### P0.2 — Ciclo de vida do projeto 🔶
 O editor começa pelo projeto, não pela conexão a um pipe.
 - [x] Máquina de estados do documento (sem projeto → aberto → modificado → salvando → fechado), dirty tracking por eventos, política de autosave, lista de recentes — `frontend/src/core/projectLifecycle.ts`, testada
@@ -81,6 +164,24 @@ O editor começa pelo projeto, não pela conexão a um pipe.
 - [ ] Diálogos nativos (New/Open/Save As/Recent) e escrita em disco no processo main
 - [ ] Autosave + recovery pós-crash (journal de comandos)
 - [ ] Migração de `schemaVersion` e template "Plataforma 2D"
+
+```mermaid
+stateDiagram-v2
+  [*] --> no_project
+  no_project --> opening : open
+  opening --> open_clean : ok
+  opening --> no_project : openFailed
+  open_clean --> open_dirty : editar
+  open_dirty --> open_clean : salvar
+  open_clean --> saving : save
+  open_dirty --> saving : save
+  saving --> open_clean : ok
+  open_clean --> closing : close
+  open_dirty --> closing : close
+  closing --> no_project : fechado
+```
+
+*Mostra a maquina de estados do documento (ProjectLifecycle): open-clean <-> open-dirty por dirty tracking, retorno por openFailed e o caminho de save/close.*
 
 ### P0.3 — Workbench do editor 🔶
 Layout com navegação real, vocabulário humano, painel inferior e status bar.

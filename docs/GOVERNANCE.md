@@ -11,6 +11,17 @@ que as impõe e define o que "pronto" significa.
 > [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md). Este `GOVERNANCE.md` é o
 > subconjunto executável (as 18 regras e o DoD).
 
+```mermaid
+graph LR
+  R["Regra de governanca<br/>(R/F/E ou semantica)"] --> T["Fitness function<br/>(assercao executavel)"]
+  T --> G{"teste verde?"}
+  G -->|"nao"| FAIL(["CI quebra<br/>arquivo infrator no erro"])
+  G -->|"sim"| GATE["Quality gate<br/>(G1-G4)"]
+  GATE --> PR(["PR integravel"])
+```
+
+*Mostra o mecanismo central da governanca: cada regra vira um teste que, ao falhar, quebra o CI apontando o arquivo infrator; passando, o quality gate libera o PR.*
+
 ## 1. Regras arquiteturais e sua imposição
 
 ### Middleware (`middleware/test/architecture.test.ts`)
@@ -46,6 +57,42 @@ que as impõe e define o que "pronto" significa.
 | **F3** | Electron só existe no processo `main/` | teste F3 |
 | **F4** | O frontend nunca reimplementa framing de protocolo — peers vêm de `@p7m/middleware` | teste F4 |
 
+As três camadas concentram 18 regras estruturais, cada uma verificada por
+grafo de import (middleware/frontend) ou reflexão de assembly (engine):
+
+```mermaid
+graph TD
+  ROOT(["18 regras estruturais executaveis"]) --> MWg
+  ROOT --> ENg
+  ROOT --> FEg
+  subgraph MWg["Middleware (R1-R9) — import-graph"]
+    R1["R1 mcp/ + zod isolados"]
+    R2["R2 canonical sem transporte"]
+    R3["R3 BlueprintStore so validadores+erros"]
+    R4["R4 profiles declarativos"]
+    R5["R5 nucleos sem imports (portaveis)"]
+    R6["R6 sockets so na borda"]
+    R7["R7 adapters so na composicao"]
+    R8["R8 COMMAND_KINDS completo"]
+    R9["R9 framing casa contratos"]
+  end
+  subgraph ENg["Engine (E1-E5) — reflexao de assembly"]
+    E1["E1 Core sem deps P7m"]
+    E2["E2 Ipc independente do dominio"]
+    E3["E3 Graphics so conhece Core"]
+    E4["E4 Runtime Core+Ipc, nunca Graphics"]
+    E5["E5 Core sem MonoGame"]
+  end
+  subgraph FEg["Frontend (F1-F4)"]
+    F1["F1 core/ puro (sem Electron/Node/mw)"]
+    F2["F2 renderer sem Electron/Node"]
+    F3["F3 Electron so no main/"]
+    F4["F4 framing vem de @p7m/middleware"]
+  end
+```
+
+*Mostra as 18 regras estruturais mapeadas às três camadas (R1-R9 middleware, E1-E5 engine, F1-F4 frontend) e o método de verificação de cada grupo.*
+
 ### Regras semânticas (impostas por testes de comportamento)
 
 | Regra | Imposição |
@@ -57,6 +104,36 @@ que as impõe e define o que "pronto" significa.
 | **Toda mutação passa pelo orquestrador** (filters → AST → actions → projeção) | R7 + testes do gateway/adapter; `EngineBridge` é diagnóstico |
 | **Perfis publicados são imutáveis** | `RuntimeProfileRegistry.register` rejeita re-registro (testado) |
 | **Fail-safe de experiência** (sem prova de suporte → recurso desabilitado com razão) | testes do `ExperienceGovernor`/`ExperienceGate` |
+
+Vista de conjunto: as fitness functions se dividem em estruturais e
+semânticas, todas convergindo nos quality gates e na suíte de 317 testes:
+
+```mermaid
+mindmap
+  root(("Fitness Functions P7M"))
+    Estruturais
+      Middleware R1-R9 import-graph
+      Frontend F1-F4
+      Engine E1-E5 reflexao de assembly
+    Semanticas
+      Zero-GC allocation-free
+      Determinismo por seed
+      Contrato binario reflexao mais checksum
+      Shaders identicos a CPU
+      Perfis imutaveis
+      Fail-safe de experiencia
+    QualityGates
+      G1 middleware
+      G2 engine
+      G3 frontend
+      G4 e2e verify-phase1-4
+    Testes 317
+      113 engine
+      120 middleware
+      84 frontend
+```
+
+*Mostra a taxonomia das fitness functions (estruturais e semânticas), os quality gates G1-G4 e a suíte de 317 testes que as impõem.*
 
 ## 2. Definition of Done
 
@@ -72,6 +149,20 @@ entregue" quando as cinco dimensões aplicáveis estão completas:
    humano (nunca IDs internos) e affordance real;
 5. **Jornada e2e validada por usuário** — parte de uma jornada de aceite
    executável sem terminal.
+
+As cinco dimensões são sequenciais: uma funcionalidade só é PRODUTO quando
+percorre da lógica pura até a jornada validada por usuário sem terminal:
+
+```mermaid
+graph LR
+  d1["1 Core/modelo<br/>logica pura testada"] --> d2["2 Gateway/API<br/>gateway do editor / MCP"]
+  d2 --> d3["3 Projecao no runtime<br/>efeito real na engine (ou skip com razao)"]
+  d3 --> d4["4 Interface visual<br/>vocabulario humano, affordance real"]
+  d4 --> d5["5 Jornada e2e por usuario<br/>executavel sem terminal"]
+  d5 --> P(["Produto entregue"])
+```
+
+*Mostra as cinco dimensões sequenciais da Definition of Done, do Core/modelo à jornada e2e, culminando no estado "Produto entregue".*
 
 A matriz corrente vive em [`REQUIREMENTS.md`](REQUIREMENTS.md) §1; o plano
 para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
@@ -120,6 +211,21 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 | G2 | `engine` | build + 113 testes (inclui E1–E5, Zero-GC) |
 | G3 | `frontend` | build + 84 testes (inclui F1–F4) |
 | G4 | `e2e` | verify-phase1..4 com processos reais |
+
+Os três gates de camada e o gate e2e devem convergir verdes para liberar a
+integração:
+
+```mermaid
+graph LR
+  G1["G1 middleware<br/>build + 120 testes (R1-R9)"] --> J{"4 gates verdes?"}
+  G2["G2 engine<br/>build + 113 testes (E1-E5, Zero-GC)"] --> J
+  G3["G3 frontend<br/>build + 84 testes (F1-F4)"] --> J
+  G4["G4 e2e<br/>verify-phase1..4 (processos reais)"] --> J
+  J -->|"sim"| OK(["PR integravel"])
+  J -->|"nao"| NO(["bloqueado"])
+```
+
+*Mostra o pipeline dos quality gates G1-G4: os três gates de camada e o gate e2e convergem, e só a aprovação dos quatro libera o PR.*
 
 Um PR só é integrável com os quatro gates verdes. Não há gate manual: o que a
 governança exige, um teste impõe.

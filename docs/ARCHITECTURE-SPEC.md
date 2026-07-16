@@ -206,23 +206,44 @@ o será (ver §33). Alterá-los exige um ADR de revogação (§32).
 
 ## 6. Mapa de camadas
 
+```mermaid
+graph TD
+  subgraph FE["Frontend (Electron/TS)"]
+    direction TB
+    FEmain["main (supervisor, ciclo de projeto)"]
+    FEpre["preload (window.p7m, contextIsolation)"]
+    FErnd["renderer (UI pura)"]
+    FEcore["core/ (12 nucleos puros)"]
+    FEmain --> FEpre --> FErnd --> FEcore
+  end
+  subgraph MW["Middleware (Node/TS)"]
+    direction TB
+    MWmcp["mcp/ (McpFacade) + gateway (ipc/)"]
+    MWcanon["CanonicalOrchestrator + HookBus"]
+    MWstore["BlueprintStore + ArtifactStore + PipelineRunner"]
+    MWrt["runtime/ (adapter, profiles, governor) + domain/ CapabilityRegistry"]
+    MWidx["index.ts (composicao)"]
+    MWmcp --> MWcanon --> MWstore --> MWrt
+    MWidx -.-> MWcanon
+  end
+  subgraph EN["Engine (.NET8)"]
+    direction TB
+    ENrt["Runtime (EngineService headless)"]
+    ENipc["Ipc (peer JSON-RPC)"]
+    ENcore["Core (DOD/Zero-GC)"]
+    ENgfx["Graphics (MonoGame, acopla p/ fora)"]
+    ENrt --> ENcore
+    ENrt --> ENipc
+    ENgfx --> ENcore
+  end
+  MMF[("MMF: plano de dados<br/>header 64B, seqlock, FNV-1a")]
+  FEpre == "controle: gateway editor" ==> MWmcp
+  MWidx == "controle: JSON-RPC sobre pipes / UDS" ==> ENipc
+  MWrt -. "dados: escreve frame" .-> MMF
+  MMF -. "le snapshot" .-> ENrt
 ```
-FRONTEND (Electron)                MIDDLEWARE (Node)                 ENGINE (.NET 8)
-┌────────────────────┐             ┌───────────────────────┐        ┌──────────────────┐
-│ renderer/ (UI pura)│             │ mcp/  gateway(ipc/)   │        │ Runtime (headless│
-│   ▲ window.p7m     │  editor     │        │              │  JSON  │  service)        │
-│ preload/  ─────────┼── gateway ──┤  CanonicalOrchestrator│  -RPC  │   ├─ Ipc (peer)  │
-│ core/ (12 puros)   │  (<pipe>    │   ├─ HookBus           │◄──────►│   └─ Core (DOD)  │
-│ main/ (supervisor, │   -editor)  │   ├─ BlueprintStore    │        │        ▲         │
-│  ciclo de projeto) │             │   ├─ ArtifactStore     │  MMF   │  Graphics(MonoGame│
-└────────────────────┘             │   ├─ PipelineRunner    │◄──────►│   acopla p/ fora)│
-                                    │  runtime/ (adapter,   │(dados) └──────────────────┘
-                                    │   profiles, governor) │
-                                    │  domain/ CapabilityReg│
-                                    │  assets/ sharedmem/   │
-                                    │  index.ts (composição)│
-                                    └───────────────────────┘
-```
+
+*Mostra as tres camadas locais (frontend, middleware, engine) e os dois planos ortogonais: controle (JSON-RPC sobre pipes/UDS, aresta grossa) e dados (MMF com seqlock, aresta pontilhada). A engine respeita E3/E4: Graphics referencia so Core, Runtime referencia Core+Ipc, nunca Graphics.*
 
 **Planos (ortogonais às camadas):** *controle* (JSON-RPC) e *dados* (MMF) entre
 middleware e engine; *modelo canônico* (verdade), *projeções de runtime* (adapters),
@@ -235,6 +256,21 @@ middleware e engine; *modelo canônico* (verdade), *projeções de runtime* (ada
 A regra geral é a **Clean/Hexagonal**: dependências apontam **para dentro**; o
 interno (algoritmos puros → domínio canônico → orquestração → portas) nunca conhece o
 externo (adapters/IPC/MCP/filesystem/tools/composição). **CONFIRMADO** por R1–R9.
+
+```mermaid
+graph TD
+  ALGO["algoritmos puros<br/>(AutoTiler, AsepriteImporter, fnv1a)"]
+  DOM["dominio canonico<br/>(BlueprintStore, canonical/)"]
+  ORQ["orquestracao de aplicacao<br/>(orchestrator, gateway, governor, pipelines)"]
+  PORT["portas<br/>(RuntimeAdapter, ToolRunner, CapabilityRegistry)"]
+  EXT["adapters / IPC / MCP / filesystem / tools"]
+  ROOT["composition root (index.ts)"]
+  ROOT --> EXT --> PORT --> ORQ --> DOM --> ALGO
+  ROOT -->|"instancia e injeta"| ORQ
+  DOM -.->|"R5: zero imports"| ALGO
+```
+
+*Mostra a regra de dependencia do middleware: toda seta aponta para dentro (composition root -> externo -> portas -> orquestracao -> dominio -> algoritmos puros); o interno nunca conhece o externo. Nenhuma reescrita relaxa a regra — a correcao e mover a dependencia (R1-R9).*
 
 **Middleware — grafo permitido (imposto por import-graph scanning,
 `architecture.test.ts:25-66`):**
@@ -278,16 +314,25 @@ correção **DEVE** ser mover a dependência, não relaxar a regra.
 
 **Fluxo normativo (CONFIRMADO — `CanonicalOrchestrator.ts:31-51`):**
 
+```mermaid
+graph TD
+  A["dispatch(command)"] --> B["applyFilters command:kind"]
+  B -->|"um throw aborta a cadeia"| Bx(["cadeia abortada (fail-fast)"])
+  B --> C{"filter preservou o kind?"}
+  C -->|"nao"| Cx(["Error: orquestrador exige kind"])
+  C -->|"sim"| D["store.apply(filtered)"]
+  D --> E["validacao + mutacao + evento"]
+  E --> F["doAction event:kind"]
+  F -->|"actions isoladas: throw capturado em errors"| F
+  F --> G{"ha adapter?"}
+  G -->|"sim"| H["adapter.project(event)"]
+  G -->|"nao"| I["sem projecao (offline)"]
+  H --> J["doAction projection:completed"]
+  I --> J
+  J --> K(["DispatchResult { event, projection }"])
 ```
-dispatch(command)
-  = applyFilters("command:<kind>", command)   // 1. filters (fail-fast)
-  → [enforce kind preservado]                 // 2. invariante do orquestrador
-  → store.apply(filtered)                     // 3. validação + mutação + evento
-  → doAction("event:<kind>", event)           // 4. actions (fault-isolated)
-  → adapter?.project(event)                    // 5. projeção (se houver adapter)
-  → doAction("projection:completed", proj)     // 6. action pós-projeção
-  ⇒ { event, projection }                      // DispatchResult
-```
+
+*Mostra a cadeia unica de mutacao dispatch->filters->store.apply->actions->projecao e as duas politicas de erro do HookBus: filters FALHAM RAPIDO (um throw aborta a cadeia) enquanto actions sao ISOLADAS (throw capturado, nao derruba os demais). A projecao e condicional ao adapter injetado.*
 
 **Responsabilidades (normativas):**
 
@@ -641,10 +686,24 @@ que projetos salvos por builds anteriores continuam abrindo (P0.2 "migração de
 schemaVersion"). Testado em `middleware/test/blueprint-migration.test.ts` (upgrade v0/
 legacy, v0 explícito, rejeição de versão futura, rejeição de não-objeto).
 
+```mermaid
+graph TD
+  EXP["exportBlueprint"] --> DOC[("BlueprintDocument<br/>schemaVersion + dominios")]
+  DOC -.-> RAW["raw carregado"]
+  subgraph LOAD["LOAD"]
+    RAW --> MIG["migrateBlueprintDocument(raw)<br/>(sem schemaVersion = versao 0)"]
+    MIG --> V{"versao > suportada?"}
+    V -->|"sim"| REJ(["REJEITA (erro claro)"])
+    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1)"]
+    CHAIN --> CMD["documentToCommands<br/>(ordem de dependencia)"]
+    CMD --> CHK{"store vazio?"}
+    CHK -->|"nao"| ERR(["replayDocument exige store vazio"])
+    CHK -->|"sim"| REP["replayDocument: despacha cada comando pelo orquestrador"]
+    REP --> SUM(["ReplaySummary {applied, projected, deferred, skipped}"])
+  end
 ```
-documento → detectar versão → (rejeitar se > suportada) → migrar em cadeia até a atual
-          → reproduzir como comandos (store vazio) → invariantes no store → projetar
-```
+
+*Mostra o ciclo de persistencia: exportBlueprint produz o BlueprintDocument declarativo e o LOAD detecta a versao, rejeita se acima da suportada, migra em cadeia v(n)->v(n+1), converte em comandos na ordem de dependencia e faz replayDocument sobre store vazio, preservando validacao/hooks/projecao (P-10). O mesmo caminho serve a project/new (replay de template).*
 
 **Regra normativa:** ao subir `BLUEPRINT_DOCUMENT_VERSION`, o autor **DEVE** registrar a
 migração `v(n)→v(n+1)` correspondente em `MIGRATIONS` (senão o load lança "No migration
@@ -665,6 +724,39 @@ registro encadeável; resta apenas manter uma migração por incremento de vers�
   `"protocolError"` + fechamento da conexão.
 - **Programação/infra** → `Error` comum (ex.: `EngineBridge.requireSession` lança
   `Error("No engine session is connected")`).
+
+```mermaid
+mindmap
+  root(("Taxonomia de erros P7M"))
+    JsonRpcError dominio
+      Reservados JSON-RPC
+        -32700 ParseError
+        -32600 InvalidRequest
+        -32601 MethodNotFound
+        -32602 InvalidParams
+        -32603 InternalError
+      Dominio -32000 a -32006
+        -32000 EngineNotReady
+        -32001 ProtocolMismatch
+        -32002 UnknownSkeleton
+        -32003 UnknownMesh
+        -32004 SharedMemoryUnavailable
+        -32005 InvalidBinaryLayout
+        -32006 DuplicateId
+    Ferramenta externa
+      AssetToolError tool exitCode stderr
+    Framing e protocolo
+      FrameProtocolError fecha conexao
+    Programacao e infra
+      Error comum
+    Projecao esperada
+      ProjectionResult status
+        projected
+        skipped com reason
+        deferred com reason
+```
+
+*Mostra a taxonomia de erros do P7M: os 12 codigos JsonRpcError (5 reservados + 7 de dominio, identicos em nome PascalCase e valor entre TS e C#), falhas de ferramenta externa, erros de framing, Error comum de infra e o ProjectionResult para falhas esperadas de projecao.*
 
 **Resultados tipados para falhas *esperadas de projeção*:** `ProjectionResult` com
 `status: projected|skipped|deferred` + `reason?`. **NÃO DEVE** usar exceção para o fluxo
@@ -809,6 +901,18 @@ adversariais).
 | 4. E2E visual (Playwright + Electron da jornada) | ❌ ausente | — |
 | 5. Usabilidade | ❌ ausente | — |
 
+```mermaid
+graph TD
+  N5(["5 Usabilidade — ausente"])
+  N4["4 E2E visual (Playwright + Electron) — ausente"]
+  N3["3 Integracao da app (renderer-preload-main-gateway) — fino"]
+  N2["2 Componentes (inspector, toolbar, paleta, canvas) — ausente"]
+  N1["1 Unidade (logica pura, invariantes, algoritmos) — forte, 317 testes"]
+  N5 --> N4 --> N3 --> N2 --> N1
+```
+
+*Mostra a piramide de testes do P7M com o estado observado por nivel: base solida de unidade (317 testes: 113 engine + 120 middleware + 84 frontend) e topo vazio — componentes e e2e visual ausentes, integracao fina. O desequilibrio espelha o gap plataforma-madura x produto-embrionario.*
+
 **RISCO estrutural:** `renderer.ts` (738 linhas) e o wire de `main.ts` (440) não têm
 teste automatizado — toda a máquina de ferramentas, hit-test, drag, hidratação, chips
 de supervisor e diálogos vivem sem rede de segurança. É a maior lacuna de teste do
@@ -883,19 +987,18 @@ para o worker).
 
 **Dependency rule (CONFIRMADO — §7):**
 
+```mermaid
+graph BT
+  ROOT["composition root (index.ts)"]
+  EXT["adapters / IPC / MCP / filesystem / tools<br/>(ipc, mcp, runtime/MonoGameAdapter, sharedmem, assets) — R1, R6, R7"]
+  PORT["portas (RuntimeAdapter, ToolRunner, CapabilityRegistry)"]
+  ORQ["orquestracao de aplicacao<br/>(CanonicalOrchestrator, gateway, governor, pipelines)"]
+  DOM["dominio canonico (domain/BlueprintStore, canonical/) — R2, R3"]
+  ALGO["algoritmos puros (leveldesign, assets/importer, util) — R5 (zero imports)"]
+  ROOT --> EXT --> PORT --> ORQ --> DOM --> ALGO
 ```
-algoritmos puros (leveldesign, assets/importer, util)   ← R5 (zero imports)
-        ▲
-domínio canônico (domain/BlueprintStore, canonical/)    ← R2, R3
-        ▲
-orquestração de aplicação (CanonicalOrchestrator, gateway, governor, pipelines)
-        ▲
-portas (RuntimeAdapter, ToolRunner, CapabilityRegistry)
-        ▲
-adapters / IPC / MCP / filesystem / tools (ipc, mcp, runtime/MonoGameAdapter, sharedmem, assets)  ← R1, R6, R7
-        ▲
-composition root (index.ts)
-```
+
+*Mostra a pilha de dependencia do middleware de baixo para cima (seguindo as setas ascendentes do original): a composition root conhece tudo, cada camada externa depende da interna, e os algoritmos puros no topo nao importam nada (R5). Nenhuma seta aponta de dentro para fora.*
 
 Nenhuma seta aponta de dentro para fora. **CONFIRMADO** por R1–R9.
 
@@ -1009,6 +1112,17 @@ com: (1) Core/modelo testado; (2) Gateway/API operável; (3) Projeção no runti
 skip com razão); (4) Interface visual utilizável com vocabulário humano; (5) Jornada
 e2e validada por usuário. **NÃO DEVE** considerar pronta uma funcionalidade que só tem
 classe + teste unitário mas não é usável na jornada.
+
+```mermaid
+graph LR
+  D1["1 Core/modelo testado"] --> D2["2 Gateway/API operavel"]
+  D2 --> D3["3 Projecao no runtime<br/>(ou skip com razao)"]
+  D3 --> D4["4 Interface visual utilizavel<br/>(vocabulario humano)"]
+  D4 --> D5["5 Jornada e2e validada por usuario"]
+  D5 --> PROD(["PRODUTO entregue"])
+```
+
+*Mostra as cinco dimensoes sequenciais do DoD de funcionalidade: so ha PRODUTO entregue quando o core testado, o gateway operavel, a projecao no runtime, a UI utilizavel e a jornada e2e estao todos cobertos. Parar em qualquer dimensao anterior nao conta como pronto.*
 
 **DoD específico (preservar):** método JSON-RPC novo (schema+handler+teste+tabela);
 comando canônico novo (validação+`COMMAND_KINDS`+projeção+reidratação+serialização+

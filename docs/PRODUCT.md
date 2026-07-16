@@ -29,6 +29,34 @@ O que diferencia o P7M de um editor acoplado a uma engine:
 | **Programador de gameplay** | Motor previsível e performático | Núcleo DOD Zero-GC testado; física de câmera com parametrização f/ζ/r; contratos binários verificados entre runtimes |
 | **Agente de IA / pipeline** | Operar a ferramenta programaticamente | Ferramentas MCP para todo comando canônico; artefatos com hash e proveniência; hooks/filters inspecionáveis |
 
+```mermaid
+graph LR
+  subgraph P["Personas"]
+    p1["Designer de niveis"]
+    p2["Artista tecnico"]
+    p3["Programador de gameplay"]
+    p4["Agente de IA / pipeline"]
+  end
+  subgraph N["Necessidades"]
+    n1["Pintar jogabilidade rapido"]
+    n2["Timing e deformacao sob controle da arte"]
+    n3["Motor previsivel e performatico"]
+    n4["Operar programaticamente"]
+  end
+  subgraph C["Capacidades que o P7M entrega"]
+    c1["IntGrid + auto-tiling determinístico<br/>world map + undo/redo profundo"]
+    c2["Frame tags do Aseprite -> clipes<br/>rigs FABRIK + easing por segmento"]
+    c3["Nucleo DOD Zero-GC<br/>camera f/ζ/r + contratos binarios"]
+    c4["Ferramentas MCP + hash/proveniencia<br/>hooks/filters inspecionaveis"]
+  end
+  p1 --> n1 --> c1
+  p2 --> n2 --> c2
+  p3 --> n3 --> c3
+  p4 --> n4 --> c4
+```
+
+*Mostra o encadeamento persona -> necessidade -> capacidade, a mesma leitura da tabela acima em forma de fluxo.*
+
 ## Estado honesto do produto
 
 > **Diagnóstico (2026-07):** o P7M é hoje uma **plataforma técnica de edição
@@ -37,6 +65,22 @@ O que diferencia o P7M de um editor acoplado a uma engine:
 > experiência visual do usuário ainda não as expõe. A conversão em produto é
 > a milestone [`ALPHA-0.1.md`](ALPHA-0.1.md); a matriz funcional honesta em
 > cinco dimensões está em [`REQUIREMENTS.md`](REQUIREMENTS.md).
+
+```mermaid
+graph LR
+  subgraph PLAT["Plataforma (entregue e verificada)"]
+    d1["1 Core / modelo"]
+    d2["2 Gateway / API"]
+    d3["3 Projecao runtime"]
+  end
+  subgraph PROD["Produto (embrionario -> ALPHA-0.1)"]
+    d4["4 UI visual"]
+    d5(["5 Jornada e2e do usuario = PRODUTO"])
+  end
+  d1 --> d2 --> d3 --> d4 --> d5
+```
+
+*Mostra a maturidade em cinco dimensões sequenciais: as três primeiras (modelo, gateway, projeção) estão prontas na plataforma; a UI visual e a jornada e2e — que fecham o produto — são a lacuna que a ALPHA-0.1 cobre.*
 
 ## Capacidades da plataforma (entregues e verificadas)
 
@@ -63,6 +107,42 @@ O que diferencia o P7M de um editor acoplado a uma engine:
 - **Governança de runtime**: perfis versionados (monogame@3.8.0/3.8.2) ×
   manifesto vivo → matriz de decisões com razões.
 
+```mermaid
+mindmap
+  root(("Capacidades da plataforma P7M"))
+    Rigging
+      Esqueletos ate 64x256 ossos
+      Skinning LBS na GPU via shared memory
+      FABRIK no editor
+    PlanoDeDados
+      MMF com seqlock e checksum
+      Verificado entre Node e .NET
+      Layout publicado por reflexao
+    Camera cinematica
+      Massa-mola-amortecedor 2a ordem
+      Antecipacao preditiva
+      Screen shake determinístico
+    Iluminacao deferred 2D
+      MRT albedo mais normal
+      Direcional pontual e spot
+      LUT de cor para paletas
+    Niveis
+      IntGrid mais regras de auto-tiling
+      Consolidacao em batch estatico
+      World map com vizinhanca por borda
+    Assets
+      Pipeline Aseprite ao xnb
+      Watcher e dedup por conteudo
+    Entidades e Estados
+      Campos tipados geram a UI
+      Maquina Gum-like com easing Bezier
+    Projeto e Governanca
+      Export/load com replay canonico
+      Perfis versionados mais manifesto vivo
+```
+
+*Mostra o mapa de valor da plataforma: as nove famílias de capacidade já entregues, cada uma com seus recursos verificados.*
+
 ## Princípios de produto (invioláveis)
 
 1. **Pinte significado, derive arte** — o usuário edita intenção; derivações
@@ -73,6 +153,18 @@ O que diferencia o P7M de um editor acoplado a uma engine:
 4. **Offline-first** — editar sem engine conectada sempre funciona; a
    reconexão reidrata tudo.
 5. **Um caminho só** — UI, MCP e agentes mutam pelo mesmo funil validado.
+
+```mermaid
+graph TD
+  ui["UI (renderer)"] --> GW["Gateway canonico<br/>(comandos + ferramentas MCP)"]
+  mcp["Ferramentas MCP"] --> GW
+  ag["Agente LLM"] --> GW
+  GW --> DISP["dispatch(command)"]
+  DISP --> STORE[("store.apply (unica mutacao)")]
+  STORE --> PROJ(["projecao no runtime + proveniencia auditavel"])
+```
+
+*Mostra o princípio "um caminho só": UI, MCP e agentes convergem no mesmo gateway e mutam o modelo pela única mutação (store.apply), tornando a automação cidadã de primeira classe.*
 
 ## Fora de escopo (por ora)
 

@@ -5,6 +5,32 @@ Todo o conteúdo é **little-endian**. A fonte de verdade dos offsets é a struc
 (`LayoutKind.Sequential`) — a engine publica o layout via `engine/describe`, e o
 escritor **deve** usar os offsets publicados, nunca valores hardcoded.
 
+Este arquivo especifica o **plano de dados** do P7M — o Memory-Mapped File (MMF)
+compartilhado entre escritor e leitor. Para situá-lo no ecossistema, os dois planos
+que ligam as três camadas locais:
+
+```mermaid
+graph TD
+  subgraph NODE["Escritor (Node.js / Electron)"]
+    direction TB
+    Wproto["protocol"]
+    Wipc["ipc"]
+    Wproto --> Wipc
+  end
+  subgraph EN["Leitor (Engine .NET8)"]
+    direction TB
+    ENipc["Ipc (JSON-RPC)"]
+    ENcore["Core (DOD/Zero-GC)"]
+    ENipc --> ENcore
+  end
+  MMF[("MMF: plano de dados<br/>header 64B, seqlock, FNV-1a")]
+  Wipc == "controle: JSON-RPC 2.0 sobre pipes / UDS" ==> ENipc
+  Wproto -. "dados: escreve vertices" .-> MMF
+  MMF -. "le snapshot (somente-leitura)" .-> ENcore
+```
+
+*Mostra os dois planos: controle (JSON-RPC sobre pipes/UDS, aresta grossa) e dados (MMF com seqlock, aresta pontilhada) — aqui o escritor é o Node.js/Electron e o leitor é a engine .NET, conforme este contrato.*
+
 ## Resolução do endpoint físico
 
 O `sharedMemoryMapName` lógico (ex.: `p7m-mesh-hero`) resolve para um arquivo:
@@ -13,6 +39,22 @@ O `sharedMemoryMapName` lógico (ex.: `p7m-mesh-hero`) resolve para um arquivo:
 |---|---|
 | Linux/macOS | `$XDG_RUNTIME_DIR/<nome>.mmap` (fallback: tmpdir) |
 | Windows | `%TEMP%\<nome>.mmap` |
+
+A resolução do caminho físico a partir do nome lógico é uma decisão por plataforma:
+
+```mermaid
+graph TD
+  A["sharedMemoryMapName logico<br/>(ex.: p7m-mesh-hero)"] --> B{"plataforma?"}
+  B -->|"POSIX (Linux / macOS)"| C{"XDG_RUNTIME_DIR definido?"}
+  C -->|"sim"| D["$XDG_RUNTIME_DIR/&lt;nome&gt;.mmap"]
+  C -->|"nao"| E["tmpdir/&lt;nome&gt;.mmap (fallback)"]
+  B -->|"Windows"| F["%TEMP%\\&lt;nome&gt;.mmap"]
+  D --> G(["arquivo MMF resolvido"])
+  E --> G
+  F --> G
+```
+
+*Mostra a resolução do endpoint físico a partir do nome lógico: ramo POSIX (XDG_RUNTIME_DIR com fallback tmpdir) versus ramo Windows (%TEMP%).*
 
 O arquivo é criado pelo escritor com o tamanho final (`64 + vertexCount * stride`)
 **antes** do `mesh/bind_shared_memory`; a engine mapeia com acesso somente-leitura.
@@ -45,6 +87,33 @@ O escritor nunca bloqueia o leitor e o leitor nunca bloqueia o escritor:
 2. **Leitor** (snapshot estável): lê `sequence` (s1); se ímpar, tenta de novo.
    Copia os dados para o buffer pré-alocado, relê `sequence` (s2).
    Snapshot válido sse `s1 == s2 && s1 % 2 == 0`; caso contrário, retry.
+
+```mermaid
+sequenceDiagram
+  participant W as Escritor (Node / Electron)
+  participant H as Header MMF (seqlock)
+  participant R as Leitor (Engine .NET)
+  Note over W: publicar frame
+  W->>H: sequence++ (fica IMPAR)
+  W->>H: grava vertices
+  W->>H: frameIndex++
+  W->>H: sequence++ (fica PAR)
+  Note over R: snapshot estavel Zero-GC (buffer pre-alocado)
+  R->>H: le sequence s1
+  alt s1 impar
+    Note over R: retry
+  else s1 par
+    R->>R: copia dados p/ buffer pre-alocado
+    R->>H: rele sequence s2
+    alt s1 == s2
+      Note over R: snapshot valido
+    else s1 != s2
+      Note over R: retry
+    end
+  end
+```
+
+*Mostra o protocolo seqlock: escritor com sequence ímpar->par durante a escrita e leitor aceitando o snapshot só quando s1 == s2 e s1 par, senão retry sobre buffer pré-alocado (Zero-GC).*
 
 O leitor da engine copia para memória pré-alocada na inicialização — o retry do
 seqlock não aloca (política Zero-GC).

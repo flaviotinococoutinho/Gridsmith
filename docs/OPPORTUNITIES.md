@@ -9,6 +9,21 @@
 > OPP-11→**P0.6**. Adiados deliberadamente: OPP-07, OPP-13, OPP-17, OPP-18,
 > OPP-19 (validam a arquitetura, não o produto).
 
+```mermaid
+graph LR
+  A["Backlog OPP-xx"] --> D{"entrega valor<br/>direto ao usuário?"}
+  D -->|"sim"| P["promovido à milestone<br/>ALPHA-0.1 (tem precedência)"]
+  D -->|"não: valida arquitetura,<br/>não o produto"| X["adiado no backlog"]
+  P --> p05["OPP-02 -> P0.5"]
+  P --> p06["OPP-11 -> P0.6 (entregue)"]
+  P --> p07["OPP-05 -> P0.7"]
+  P --> p1a["OPP-01 -> P1"]
+  P --> p1b["OPP-03 -> P1"]
+  X --> x1(["OPP-07 / OPP-13 / OPP-17 / OPP-18 / OPP-19"])
+```
+
+*Mostra o fluxo de promoção pós-diagnóstico: uma oportunidade só sobe à milestone ALPHA-0.1 (P0.x/P1) se entrega valor direto ao usuário; as que apenas validam a arquitetura ficam adiadas no backlog.*
+
 ## Necessidades de usuário sem representação anterior (agora em ALPHA-0.1)
 
 Gerenciador de projetos · save/save as/autosave/crash recovery · inspector +
@@ -22,6 +37,38 @@ Backlog qualificado do que a arquitetura atual habilita. Cada item traz
 impacto, esforço e o alicerce já existente — oportunidade aqui significa
 "o terreno está preparado", não "ideia solta".
 
+```mermaid
+quadrantChart
+  title Impacto x Esforço das oportunidades (OPP-xx)
+  x-axis "Baixo esforço" --> "Alto esforço"
+  y-axis "Baixo impacto" --> "Alto impacto"
+  quadrant-1 "Apostas estratégicas"
+  quadrant-2 "Ganhos rápidos"
+  quadrant-3 "Preencher lacunas"
+  quadrant-4 "Reavaliar"
+  "OPP-01": [0.5, 0.85]
+  "OPP-02": [0.68, 0.9]
+  "OPP-03": [0.45, 0.8]
+  "OPP-04": [0.15, 0.52]
+  "OPP-05": [0.55, 0.83]
+  "OPP-06": [0.2, 0.46]
+  "OPP-07": [0.92, 0.74]
+  "OPP-08": [0.52, 0.78]
+  "OPP-09": [0.3, 0.5]
+  "OPP-10": [0.7, 0.5]
+  "OPP-11": [0.48, 0.92]
+  "OPP-12": [0.5, 0.47]
+  "OPP-13": [0.53, 0.72]
+  "OPP-14": [0.32, 0.56]
+  "OPP-15": [0.5, 0.42]
+  "OPP-16": [0.17, 0.57]
+  "OPP-17": [0.88, 0.7]
+  "OPP-18": [0.72, 0.68]
+  "OPP-19": [0.55, 0.4]
+```
+
+*Posiciona as 19 oportunidades por impacto (eixo Y) e esforço (eixo X), derivados das colunas Impacto/Esforço das tabelas abaixo (B/B-M/M/M-A/A); o quadrante superior-esquerdo (ganhos rápidos) prioriza alto impacto e baixo esforço, o superior-direito reúne as apostas estratégicas de alto esforço.*
+
 ## Produto / Experiência de criação
 
 | ID | Oportunidade | Impacto | Esforço | Alicerce existente |
@@ -32,6 +79,28 @@ impacto, esforço e o alicerce já existente — oportunidade aqui significa
 | OPP-04 | **Preview de regras de auto-tiling em tempo real** no pincel de IntGrid | Médio | B | `resolveAutoTiles` é puro e rápido; `IntGridDocument` já entrega snapshots |
 | OPP-05 | **Undo/redo global do Blueprint** (não só IntGrid) | Alto | M | todo evento carrega dados de inverso em potencial; o orquestrador é o ponto único para capturar |
 | OPP-06 | **Templates de projeto** ("plataforma 2D pronto para tocar") | Médio | B | `BlueprintDocument` é o formato de template natural (replay canônico valida tudo) |
+
+O alicerce de **OPP-05** (undo/redo global) é o fluxo canônico de mutação: como toda mutação passa por um único caminho, o `store.apply(filtered)` é o ponto único onde capturar o inverso de cada evento — não há mutação fora dele.
+
+```mermaid
+graph TD
+  A["dispatch(command)"] --> B["applyFilters('command:kind')"]
+  B -->|"um throw aborta a cadeia"| Bx(["cadeia abortada (fail-fast)"])
+  B --> C{"filter preservou o kind?"}
+  C -->|"nao"| Cx(["erro: orquestrador exige kind"])
+  C -->|"sim"| D["store.apply(filtered)<br/>(ponto único de captura undo/redo)"]
+  D --> E["validacao + mutacao + evento"]
+  E --> F["doAction('event:kind')"]
+  F -->|"actions isoladas: throw capturado"| F
+  F --> G{"ha adapter?"}
+  G -->|"sim"| H["adapter.project(event)"]
+  G -->|"nao"| I["sem projecao"]
+  H --> J["doAction('projection:completed')"]
+  I --> J
+  J --> K(["{ event, projection }"])
+```
+
+*Reutiliza o fluxo canônico de dispatch para mostrar por que OPP-05 é viável: sendo `store.apply` a única mutação do sistema, capturar ali o inverso de cada evento habilita undo/redo global do Blueprint (não só do IntGrid).*
 
 ## Plataforma / Runtimes
 

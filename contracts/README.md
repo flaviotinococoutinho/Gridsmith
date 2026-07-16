@@ -3,6 +3,27 @@
 Fonte única de verdade dos métodos trafegados entre Middleware (Node.js) e Engine
 (MonoGame) sobre Named Pipes / Unix Domain Sockets.
 
+Estes contratos vivem no **plano de controle** (JSON-RPC 2.0 sobre pipes/UDS). O
+**plano de dados** — vértices publicados via memory-mapped file com seqlock — é
+separado e trafega fora do JSON-RPC.
+
+```mermaid
+graph TD
+  subgraph MW["Middleware (Node/TS)"]
+    MWipc["ipc (JSON-RPC 2.0)"]
+  end
+  subgraph EN["Engine (.NET8 / MonoGame)"]
+    ENipc["Ipc (peer JSON-RPC)"]
+    ENrt["Runtime (EngineService)"]
+  end
+  MMF[("MMF: plano de dados<br/>header 64B, seqlock, FNV-1a")]
+  MWipc == "controle: contratos JSON-RPC (pipes / UDS)" ==> ENipc
+  MWipc -. "dados: escreve frame" .-> MMF
+  MMF -. "le snapshot" .-> ENrt
+```
+
+*Mostra onde os contratos deste documento se encaixam: o plano de controle JSON-RPC entre middleware e engine, distinto do plano de dados MMF/seqlock.*
+
 ## Métodos
 
 | Método | Direção | Tipo | Esquema |
@@ -19,6 +40,26 @@ Fonte única de verdade dos métodos trafegados entre Middleware (Node.js) e Eng
 | `tilemap/define`, `tilemap/remove`, `tilemap/inspect` | middleware → engine | request | [`schemas/level.methods.schema.json`](schemas/level.methods.schema.json) |
 | `entity/spawn`, `entity/move`, `entity/despawn`, `entity/inspect` | middleware → engine | request | [`schemas/actors.methods.schema.json`](schemas/actors.methods.schema.json) |
 
+O canal é simétrico full-duplex, mas cada método tem uma direção canônica. O
+middleware comanda a cena (skeleton/mesh/camera/lighting/tilemap/entity) e descobre
+capacidades (`engine/describe`); a engine inicia a sessão (`engine/handshake`) e
+notifica logs (`engine/log`); `engine/ping` flui nos dois sentidos (também como
+heartbeat).
+
+```mermaid
+graph LR
+  M(["Middleware (Node)"])
+  E(["Engine (MonoGame/.NET)"])
+  M ==>|"skeleton/initialize<br/>mesh/bind_shared_memory · mesh/inspect"| E
+  M ==>|"engine/describe (descoberta por reflexao)"| E
+  M ==>|"camera/* · lighting/* · tilemap/* · entity/*"| E
+  E ==>|"engine/handshake (request, inicia sessao)"| M
+  E ==>|"engine/log (notification)"| M
+  M <==>|"engine/ping (ambas · heartbeat)"| E
+```
+
+*Mostra o fluxo de mensagens por direção: o que o middleware envia à engine, o que a engine envia ao middleware e o método bidirecional (engine/ping).*
+
 ## Modelo canônico e governança
 
 | Contrato | Esquema |
@@ -28,6 +69,46 @@ Fonte única de verdade dos métodos trafegados entre Middleware (Node.js) e Eng
 
 O desenho completo (comandos, eventos, hooks, filters, pipelines, adapters e
 governança da experiência) está em [`../docs/CANONICAL-MODEL.md`](../docs/CANONICAL-MODEL.md).
+
+O mapa abaixo liga cada subsistema ao(s) arquivo(s) de esquema em `contracts/schemas`
+que definem seus contratos — a mesma partição das tabelas acima, vista por subsistema.
+
+```mermaid
+graph LR
+  subgraph SUB["Subsistemas"]
+    S1["Sessao / protocolo"]
+    S2["rigging (skeleton)"]
+    S3["sharedMemory (mesh)"]
+    S4["descoberta"]
+    S5["camera"]
+    S6["lighting"]
+    S7["level (tilemap)"]
+    S8["actors (entity)"]
+    S9["modelo canonico / governanca"]
+  end
+  subgraph SCH["Esquemas (contracts/schemas)"]
+    c1["engine.handshake · engine.ping · engine.log"]
+    c2["skeleton.initialize"]
+    c3["mesh.bind_shared_memory · mesh.inspect"]
+    c4["engine.describe"]
+    c5["camera.methods"]
+    c6["lighting.methods"]
+    c7["level.methods"]
+    c8["actors.methods"]
+    c9["artifact.envelope · runtime.profile"]
+  end
+  S1 --> c1
+  S2 --> c2
+  S3 --> c3
+  S4 --> c4
+  S5 --> c5
+  S6 --> c6
+  S7 --> c7
+  S8 --> c8
+  S9 --> c9
+```
+
+*Mostra o mapa contratos->schemas por subsistema: cada subsistema aponta para os arquivos .schema.json que definem seus métodos e artefatos.*
 
 ## Plano de dados
 
@@ -44,6 +125,35 @@ A versão do protocolo é `MAJOR.MINOR` e é negociada no `engine/handshake`:
 - **MINOR** diferente → aceita; campos desconhecidos são ignorados pelos dois lados.
 
 Versão atual: **1.0** (constante `PROTOCOL_VERSION` em ambas as implementações).
+
+A negociação acontece no ciclo de vida da conexão: a engine conecta e faz o
+handshake, o middleware valida **só o MAJOR**, responde com `sessionId` (uuid v4) e
+emite a sessão. A cada sessão nova o middleware faz welcome ping e reidrata o adapter.
+
+```mermaid
+sequenceDiagram
+  participant E as Engine (.NET)
+  participant M as Middleware (Node)
+  Note over M: listen no pipe / UDS
+  E->>M: engine/handshake {clientName, protocolVersion, capabilities}
+  alt MAJOR de protocolVersion diverge
+    M-->>E: erro ProtocolMismatch -32001
+  else MAJOR compativel (PROTOCOL_VERSION 1.0)
+    M-->>E: {sessionId uuid v4, serverName p7m-middleware, acceptedCapabilities}
+    Note over M: emite evento session
+    M->>E: welcome ping
+    M->>M: adapter.rehydrateFrom(store)
+  end
+  loop canal simetrico full-duplex
+    M->>E: skeleton/initialize, camera/*, entity/*, engine/describe
+    E-->>M: resposta (timeout 10s)
+    E->>M: engine/log notification
+    E->>M: engine/ping payload heartbeat
+  end
+  Note over E,M: EOF rejeita pendencias<br/>engine reconecta backoff 2s 4s 8s
+```
+
+*Mostra o handshake que negocia a versão (só o MAJOR), a criação de sessão com rehidratação e o canal full-duplex com reconexão por backoff.*
 
 ## Códigos de erro de domínio
 

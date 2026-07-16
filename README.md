@@ -10,6 +10,44 @@ composto por três macrocamadas independentes e altamente desacopladas:
 | **Backend** | [`engine/`](engine/) | C# / .NET 8 + MonoGame | Motor determinístico de baixo nível, Data-Oriented Design, alocação Zero-GC, consumo via IPC e Shared Memory |
 | **Contratos** | [`contracts/`](contracts/) | JSON Schema | Fonte única de verdade dos contratos JSON-RPC trafegados entre as camadas |
 
+```mermaid
+graph TD
+  subgraph FE["Frontend (Electron/TS)"]
+    direction TB
+    FEmain["main (Node privilegiado)"]
+    FEpre["preload (window.p7m)"]
+    FErnd["renderer (UI)"]
+    FEcore["core/ (12 nucleos puros)"]
+    FEmain --> FEpre --> FErnd --> FEcore
+  end
+  subgraph MW["Middleware (Node/TS)"]
+    direction TB
+    MWproto["protocol"]
+    MWipc["ipc"]
+    MWdom["domain"]
+    MWcanon["canonical"]
+    MWrt["runtime"]
+    MWproto --> MWipc --> MWdom --> MWcanon --> MWrt
+  end
+  subgraph EN["Engine (.NET8)"]
+    direction TB
+    ENgfx["Graphics (MonoGame)"]
+    ENrt["Runtime (EngineService)"]
+    ENcore["Core (DOD/Zero-GC)"]
+    ENipc["Ipc (JSON-RPC)"]
+    ENrt --> ENcore
+    ENrt --> ENipc
+    ENgfx --> ENcore
+  end
+  MMF[("MMF: plano de dados<br/>header 64B, seqlock, FNV-1a")]
+  FEmain == "controle: JSON-RPC 2.0" ==> MWproto
+  MWipc == "controle: pipes / UDS" ==> ENipc
+  MWrt -. "dados: escreve frame" .-> MMF
+  MMF -. "le snapshot" .-> ENrt
+```
+
+*Mostra as três camadas locais e os dois planos: controle (JSON-RPC 2.0 sobre pipes/UDS, aresta grossa) e dados (MMF com seqlock, aresta pontilhada). Repare na regra de dependência de assembly da engine: Graphics referencia só Core; Runtime referencia Core + Ipc, nunca Graphics.*
+
 ## Princípios arquiteturais
 
 O P7M é uma ferramenta visual **fortemente orientada a domínio**: o usuário
@@ -40,7 +78,33 @@ da engine, nunca assume suporte. Desenho completo em
 > A matriz honesta plataforma × produto está em
 > [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md).
 
+```mermaid
+graph LR
+  j1["Projeto"] --> j2["Asset"]
+  j2 --> j3["Entidade"]
+  j3 --> j4["Nivel"]
+  j4 --> j5["Preview"]
+  j5 --> j6["Live edit"]
+  j6 --> j7(["Save / reopen"])
+```
+
+*Mostra a jornada do corte vertical do Alpha-0.1: um único fluxo utilizável sem terminal, do novo projeto ao salvar e reabrir sem perdas — cada etapa exercita as 5 dimensões (Core, Gateway, Projeção runtime, UI, e2e) que juntas definem PRODUTO.*
+
 ## Roteiro de fases (histórico da plataforma)
+
+```mermaid
+graph LR
+  F1["Fase 1<br/>Core e IPC<br/>(concluida)"]
+  F2["Fase 2<br/>Shared Memory e Rigs<br/>(concluida)"]
+  F3["Fase 3<br/>Grafico, Shaders, Camera<br/>(concluida)"]
+  F35["Fase 3.5<br/>Editores e Niveis<br/>(concluida)"]
+  F36["Fase 3.6<br/>Modelo canonico e governanca<br/>(concluida)"]
+  F4["Fase 4<br/>Frontend Electron UX<br/>(fundacao entregue)"]
+  F5(["Fase 5<br/>Harness / Sandbox<br/>(planejada)"])
+  F1 --> F2 --> F3 --> F35 --> F36 --> F4 --> F5
+```
+
+*Mostra a linha do tempo das fases da plataforma: 1 a 3.6 concluídas, Fase 4 (Frontend UX) com fundação entregue e em andamento, Fase 5 (Harness) ainda planejada — resultado emitido como estádio.*
 
 - [x] **Fase 1 — Infraestrutura Core e IPC:** servidor MCP local em Node.js, canais de
   Named Pipes estáveis e fluxo JSON-RPC 2.0 bidirecional validado com o serviço de engine.

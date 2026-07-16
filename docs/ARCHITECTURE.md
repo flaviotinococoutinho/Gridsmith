@@ -2,17 +2,43 @@
 
 ## Visão geral
 
+```mermaid
+graph TD
+  subgraph FE["Frontend (Electron/TS)"]
+    direction TB
+    FEmain["main (Node privilegiado)"]
+    FEpre["preload (window.p7m)"]
+    FErnd["renderer (UI)"]
+    FEcore["core/ (12 nucleos puros)"]
+    FEmain --> FEpre --> FErnd --> FEcore
+  end
+  subgraph MW["Middleware (Node/TS)"]
+    direction TB
+    MWproto["protocol"]
+    MWipc["ipc"]
+    MWdom["domain"]
+    MWcanon["canonical"]
+    MWrt["runtime"]
+    MWproto --> MWipc --> MWdom --> MWcanon --> MWrt
+  end
+  subgraph EN["Engine (.NET8)"]
+    direction TB
+    ENgfx["Graphics (MonoGame)"]
+    ENrt["Runtime (EngineService)"]
+    ENcore["Core (DOD/Zero-GC)"]
+    ENipc["Ipc (JSON-RPC)"]
+    ENrt --> ENcore
+    ENrt --> ENipc
+    ENgfx --> ENcore
+  end
+  MMF[("MMF: plano de dados<br/>header 64B, seqlock, FNV-1a")]
+  FEmain == "controle: JSON-RPC 2.0" ==> MWproto
+  MWipc == "controle: pipes / UDS" ==> ENipc
+  MWrt -. "dados: escreve frame" .-> MMF
+  MMF -. "le snapshot" .-> ENcore
 ```
-┌────────────────────┐   Commands (CQRS)    ┌──────────────────────┐   JSON-RPC 2.0    ┌──────────────────────┐
-│  Electron UI       │ ───────────────────► │  Middleware Node.js  │ ◄───────────────► │  Engine MonoGame     │
-│  (WYSIWYG Editor)  │ ◄─────────────────── │  (MCP Server / AST)  │  Named Pipes /    │  (.NET 8, DOD,       │
-│                    │   Projeções (Query)  │                      │  Unix Sockets     │   Zero-GC)           │
-└────────────────────┘                      └──────────┬───────────┘                   └──────────┬───────────┘
-                                                       │                                          │
-                                                       └───────── Memory-Mapped File ────────────┘
-                                                            (vértices, UVs, BoneWeights —
-                                                             layout binário sequencial)
-```
+
+*Mostra as tres camadas locais e os dois planos: controle (JSON-RPC sobre pipes/UDS) e dados (MMF com seqlock).*
 
 Duas vias de dados coexistem, cada uma otimizada para seu regime:
 
@@ -25,10 +51,48 @@ Duas vias de dados coexistem, cada uma otimizada para seu regime:
    seqlock, layouts de vértice, checksum FNV-1a) está em
    [`../contracts/shared-memory-layout.md`](../contracts/shared-memory-layout.md).
 
+```mermaid
+graph LR
+  subgraph MW["Middleware (Node/TS)"]
+    MWctl["ipc (JSON-RPC 2.0)"]
+    MWwrite["runtime (escritor de frame)"]
+  end
+  subgraph EN["Engine (.NET8)"]
+    ENctl["Ipc (peer JSON-RPC)"]
+    ENread["Runtime (leitor de snapshot)"]
+  end
+  MMF[("MMF<br/>header 64B, seqlock, FNV-1a")]
+  MWctl == "plano de controle: mensagens pequenas<br/>(handshake, comandos, transicoes)" ==> ENctl
+  ENctl == "respostas + notifications (full-duplex)" ==> MWctl
+  MWwrite -. "plano de dados: frame de vertices/UVs/pesos" .-> MMF
+  MMF -. "snapshot estavel (seqlock)" .-> ENread
+```
+
+*Mostra os dois planos lado a lado: controle (aresta grossa JSON-RPC, mensagens pequenas) e dados (aresta pontilhada, blocos binarios grandes via MMF).*
+
 ## Descoberta de capacidades (proxy engine → editor)
 
-A engine é a fonte de verdade do que ela sabe fazer. No método **`engine/describe`**
-ela publica um manifesto com:
+A engine é a fonte de verdade do que ela sabe fazer. A cada sessão nova o
+`CapabilityRegistry` executa um `refresh` que consulta a engine e cacheia o manifesto:
+
+```mermaid
+sequenceDiagram
+  participant UI as Editor / Agente IA
+  participant CR as CapabilityRegistry (Middleware)
+  participant E as Engine (.NET)
+  Note over CR: nova sessao -> refresh()
+  CR->>E: request engine/describe
+  E-->>CR: manifest {engine, subsystems}
+  Note over CR: cacheia manifest
+  CR-->>UI: emit "capabilities"
+  Note over CR,UI: available: rigging, sharedMemory, camera,<br/>lighting, level, actors | planned: stateMachines, assets
+  UI->>CR: editorConcepts() / MCP engine_capabilities, editor_concepts
+  CR-->>UI: paineis, gizmos, nodeTypes, properties, vertexLayouts
+```
+
+*Mostra a descoberta de capacidades por sessao: refresh -> engine/describe -> cache do manifest -> emit "capabilities" projetado para UI e ferramentas MCP.*
+
+No método **`engine/describe`** a engine publica um manifesto com:
 
 - **limites reais** de cada subsistema, extraídos das constantes do núcleo DOD
   (ex.: `maxBonesPerSkeleton`);
@@ -50,12 +114,12 @@ contrato de descoberta.
 O JSON-RPC 2.0 é trafegado com **prefixo de tamanho** para ser binário-seguro e permitir
 parsing incremental sem heurística de delimitadores:
 
+```mermaid
+graph LR
+  H["HEADER: uint32 LE<br/>(body-length, 4 bytes)"] --> B["BODY: payload UTF-8<br/>(JSON-RPC 2.0, &lt;= 16 MiB)"]
 ```
-┌──────────────────┬─────────────────────────────┐
-│ uint32 LE        │ payload UTF-8 (JSON-RPC 2.0)│
-│ (tamanho do body)│                             │
-└──────────────────┴─────────────────────────────┘
-```
+
+*Mostra o framing do plano de controle: prefixo de 4 bytes com o tamanho do corpo seguido do corpo JSON-RPC UTF-8 (maximo 16 MiB).*
 
 - Tamanho máximo de frame: **16 MiB** (frames maiores encerram a conexão com erro de
   protocolo — dados em massa pertencem ao plano de dados, não ao de controle).
@@ -64,6 +128,31 @@ parsing incremental sem heurística de delimitadores:
   (sem `id`, fire-and-forget).
 
 ## Ciclo de vida da conexão
+
+```mermaid
+sequenceDiagram
+  participant E as Engine (.NET)
+  participant M as Middleware (Node)
+  Note over M: listen no pipe / UDS
+  E->>M: engine/handshake {clientName, protocolVersion, capabilities}
+  alt MAJOR de protocolVersion diverge
+    M-->>E: erro ProtocolMismatch -32001
+  else MAJOR compativel (PROTOCOL_VERSION 1.0)
+    M-->>E: {sessionId uuid v4, serverName p7m-middleware, acceptedCapabilities}
+    Note over M: emite evento session
+    M->>E: welcome ping
+    M->>M: adapter.rehydrateFrom(store)
+  end
+  loop canal simetrico full-duplex
+    M->>E: engine/ping, skeleton/initialize, camera/*, entity/*
+    E-->>M: resposta (timeout 10s)
+    E->>M: engine/log notification
+    E->>M: engine/ping payload heartbeat
+  end
+  Note over E,M: EOF rejeita pendencias. Engine reconecta backoff 2s 4s 8s
+```
+
+*Mostra o handshake, a criacao de sessao com rehidratacao, o canal full-duplex e a reconexao com backoff exponencial.*
 
 1. O middleware sobe o endpoint (`\\.\pipe\<nome>` no Windows; socket em
    `$XDG_RUNTIME_DIR` ou `/tmp` nos demais) e aguarda conexões.

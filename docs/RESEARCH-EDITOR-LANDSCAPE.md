@@ -15,6 +15,35 @@ e [custom properties](https://doc.mapeditor.org/en/stable/manual/custom-properti
 [Gum states](https://docs.flatredball.com/flatredball/gum/tutorials/tutorials-gum-states) e
 [MonoGameGum](https://docs.flatredball.com/gum/code/monogame).
 
+```mermaid
+mindmap
+  root(("P7M absorve o melhor de cada editor 2D"))
+    LDtk
+      IntGrid vira AutoTiler deterministico
+      Auto-layers regras NxN com wildcard e negacao
+      Entities de campos tipados no Blueprint
+      World map adiado para Fase 4
+    Tiled
+      Custom property types viram entitydef enum
+      Wang tiles como extensao futura do AutoTiler
+      Mapas por chunk via shared memory na Fase 5
+    Ogmo3
+      Projeto e schema
+      Editor e projecao de definicoes vivas
+    FlatRedBall
+      Generated code vira artefato binario deterministico
+      Variaveis tunaveis viram properties e live edit
+    Gum
+      Estados sao conjuntos nomeados de propriedades
+      Subsistema stateMachines planned Fase 4
+    Aseprite
+      frameTags viram clipes de animacao
+      slices viram pivo e 9-slice
+      CLI batch alimenta o watcher de assets
+```
+
+*Mostra os conceitos absorvidos de cada uma das seis ferramentas e a feature correspondente do P7M (AutoTiler, entitydef tipado, TilemapStore, importador Aseprite, stateMachines).*
+
 ---
 
 ## 1. LDtk — o padrão-ouro de UX para níveis
@@ -38,6 +67,21 @@ de vértices" do escopo original). Campos tipados de entidades entram no
 Blueprint com validação na borda (mesma filosofia dos nossos editor hints).
 → `middleware/src/leveldesign/AutoTiler.ts`, `BlueprintStore` (entity defs),
 `engine Core/Level/TilemapStore.cs`, métodos `tilemap/*`.
+
+```mermaid
+graph LR
+  subgraph MW["Middleware (Node/TS)"]
+    IG["designer pinta IntGrid<br/>(colisao, agua, perigo)"]
+    AT["AutoTiler (funcao pura, seed)<br/>regras NxN wildcard/negacao"]
+    IG --> AT
+  end
+  subgraph EN["Engine (.NET8)"]
+    TS[("TilemapStore DOD<br/>tiles resolvidos, buffer estatico")]
+  end
+  AT == "controle: tilemap/define (tiles ja resolvidos)" ==> TS
+```
+
+*Mostra a decisao LDtk do P7M: pinta-se significado (IntGrid), a resolucao deterministica por seed roda no middleware e a engine recebe apenas tiles resolvidos para consolidar em buffer estatico.*
 
 ## 2. Tiled — generalidade e propriedades customizadas
 
@@ -124,6 +168,23 @@ para `.xnb` — encaixando no fluxo já especificado no escopo original.
 → `middleware/src/assets/AsepriteImporter.ts` (implementado já; o watcher entra
 na Fase 4).
 
+```mermaid
+sequenceDiagram
+  participant FS as Watcher (assetsRoot)
+  participant AS as Aseprite CLI
+  participant IM as AsepriteImporter
+  participant MG as MGCB
+  FS->>AS: arquivo .aseprite alterado
+  AS->>AS: export sheet.png + data.json (json-hash / json-array)
+  AS->>IM: entrega spritesheet + frameTags + slices
+  Note over IM: frameTags viram clipes forward/reverse/pingpong<br/>slices viram pivo e 9-slice, durations viram timeline
+  IM->>MG: entrega .png
+  MG-->>IM: .xnb compilado
+  Note over FS,MG: watcher e MGCB entram na Fase 4, o importador ja esta pronto
+```
+
+*Mostra o pipeline de ingestao Aseprite como formato de primeira classe: watcher dispara a CLI, o AsepriteImporter converte frameTags/slices e o MGCB compila o .png em .xnb.*
+
 ---
 
 ## Síntese: o modelo unificado P7M
@@ -140,6 +201,20 @@ As seis ferramentas convergem para quatro princípios que o P7M adota como lei:
    gameplay, UI e animação compartilham o mesmo modelo com interpolação.
 4. **A arte manda no timing** (Aseprite): metadados de animação viajam com o
    asset; o importador é quem adapta, nunca o artista.
+
+```mermaid
+graph TD
+  A["Conceito de um editor 2D consolidado"] --> B{"Casa com o escopo atual?"}
+  B -->|"sim, e nucleo"| C["Absorve agora<br/>funcao pura no middleware + RPC + store DOD"]
+  B -->|"parcial"| D{"E extensao de algo que ja existe?"}
+  D -->|"sim"| E(["Registra como extensao futura no contrato<br/>(ex.: Wang tiles no AutoTiler)"])
+  D -->|"nao"| F{"Depende de infra ainda ausente?"}
+  F -->|"plano de dados / editor Electron"| G(["Adia com registro (Fase 4/5)"])
+  F -->|"nao"| C
+  C --> H(["vira lei do modelo unificado P7M"])
+```
+
+*Mostra o criterio de decisao de absorcao: nucleo entra agora como funcao pura + RPC + store DOD, extensoes ficam registradas no contrato e o que depende de infra ausente e adiado com registro para a Fase 4/5.*
 
 ### Ajustes aplicados agora (esta iteração)
 
