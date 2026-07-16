@@ -181,12 +181,38 @@ dotnet test
 dotnet run --project src/P7m.Engine.Runtime -- --pipe p7m-engine
 ```
 
+### Frontend (Electron)
+
+O frontend depende do middleware por `file:../middleware` — **compile o middleware
+antes** (`cd middleware && npm run build`). Para a supervisão local (padrão), a engine
+também precisa estar compilada (`cd engine && dotnet build`).
+
+```bash
+cd frontend
+npm install        # instala deps (Electron; no CI use ELECTRON_SKIP_BINARY_DOWNLOAD=1)
+npm run build      # tsc + copy-static (index.html, css, AutoTiler vendorizado)
+npm test           # núcleos puros + integração do EditorClient (node:test via tsx)
+npm run typecheck  # tsc --noEmit
+```
+
+O Electron é o **supervisor do ecossistema**: por padrão o processo `main` sobe o
+middleware (via `ELECTRON_RUN_AS_NODE`) e a engine (`dotnet <dll>`).
+
+```bash
+# supervisão local (padrão): o main spawna middleware e engine e reidrata a sessão
+npm run app
+
+# serviços externos (dev): suba middleware e engine à parte e conecte por --pipe
+npm run app -- --external-services --pipe p7m-engine
+```
+
 ### Validação ponta-a-ponta
 
 ```bash
 ./scripts/verify-phase1.sh   # plano de controle: handshake + JSON-RPC bidirecional
 ./scripts/verify-phase2.sh   # plano de dados: MMF + seqlock + checksum entre runtimes
 ./scripts/verify-phase3.sh   # câmera (física + determinismo) e equação de luz do shader
+./scripts/verify-phase4.sh   # fundação do editor: gateway + dispatch canônico + projeção + broadcast
 ```
 
 `verify-phase1` sobe o pipe server do middleware, conecta o host headless da engine e
@@ -195,13 +221,22 @@ papéis: o driver Node.js escreve vértices no memory-mapped file usando o layou
 **publicado pela própria engine** (`engine/describe`) e a engine devolve checksum e
 amostras via `mesh/inspect` — compatibilidade byte a byte comprovada entre os runtimes.
 
+`verify-phase4` sobe o **middleware real** (canal da engine + gateway do editor), conecta
+a **engine .NET real** e um **cliente de edição**, e prova o caminho completo da
+ferramenta visual: **dispatch pelo caminho canônico** (`blueprint/dispatch`), **projeção
+no runtime** confirmada na engine, **broadcast de eventos** (`blueprint/event`) recebido
+de volta e a **experiência governada** por perfil de runtime (`experience/resolve`,
+habilitação/desabilitação com razão).
+
 ## Documentação
 
 | Documento | Conteúdo |
 |---|---|
 | [`docs/PRODUCT.md`](docs/PRODUCT.md) | Visão de produto, personas, capacidades entregues e princípios invioláveis |
 | [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) | Requisitos funcionais, não funcionais e técnicos com status e verificação |
-| [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) | Governança arquitetural (18 regras executáveis), Definition of Done e quality gates |
+| [`docs/ALPHA-0.1.md`](docs/ALPHA-0.1.md) | Milestone Alpha 0.1, jornada de aceite e backlog P0 (status por evidência) |
+| [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Matriz de versionamento e compatibilidade (protocolo, documentos, artefatos, perfis, shared memory) |
+| [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) | Governança arquitetural (18 regras executáveis), Definition of Done, quality gates e fontes de verdade |
 | [`docs/ARCHITECTURE-SPEC.md`](docs/ARCHITECTURE-SPEC.md) | **Especificação técnica normativa (constituição de engenharia):** princípios invioláveis, regras de dependência, paradigmas, padrões, contratos, RFCs/ISO, versionamento, erros, testes e plano de evolução — construída a partir do código com evidência classificada |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Camadas, protocolo de framing e ciclo de vida da conexão |
 | [`docs/CANONICAL-MODEL.md`](docs/CANONICAL-MODEL.md) | Modelo canônico (comandos/eventos/hooks/pipelines/artefatos), adapters e perfis de runtime |

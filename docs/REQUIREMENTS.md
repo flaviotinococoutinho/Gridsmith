@@ -35,7 +35,7 @@ Legenda: ✅ completo · 🔶 parcial · ❌ ausente · — não se aplica.
 | Pipeline Aseprite/MGCB | ✅ | ✅ MCP | ✅ compilação | ❌ | ❌ | **Parcial** |
 | Câmera cinemática | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
 | Iluminação deferred | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
-| Save/load de projeto | ✅ | ✅ | — | 🔶 (client/preload expostos; sem diálogos) | ❌ | **Em fechamento** (P0.2) |
+| Save/load + criação de projeto | ✅ (migração de `schemaVersion` testada) | ✅ (`blueprint/load`, `project/new`, `project/templates`) | — | 🔶 (diálogos nativos + escrita `.p7m.json` no `main`, sem teste/e2e; template "Plataforma 2D" **não conectado** ao botão "Novo") | ❌ | **Em fechamento** (P0.2) |
 | Supervisão de processos | ✅ (máquina de estados testada) | — | — | 🔶 (wire real + chips de estado + restart; falta caminho empacotado) | ❌ | **Em fechamento** (P0.1↔P0.9) |
 | Preview embutido | 🔶 fundação | ❌ | 🔶 fundação | ❌ | ❌ | **Requisito P0.5** |
 | Undo/redo | ✅ IntGrid apenas | ❌ | — | ❌ | ❌ | **Incompleto** (P0.7) |
@@ -100,7 +100,7 @@ mindmap
       Frontend F1-F4
       Engine E1-E5 reflexao de assembly
     Semanticas
-      Zero-GC 8 testes allocation-free
+      Zero-GC allocation-free por hot loop
       Determinismo por seed
       Contrato binario reflexao mais checksum
       Shaders identicos a CPU
@@ -111,13 +111,13 @@ mindmap
       G2 engine
       G3 frontend
       G4 e2e verify-phase1-4
-    Testes 317
-      113 engine
-      120 middleware
-      84 frontend
+    Testes contados e validados no CI
+      suite engine
+      suite middleware
+      suite frontend
 ```
 
-*Mostra a taxonomia das fitness functions (estruturais e semânticas) que verificam os RNF, os quality gates G1-G4 e a suíte de 317 testes.*
+*Mostra a taxonomia das fitness functions (estruturais e semânticas) que verificam os RNF, os quality gates G1-G4 e a suíte completa (contagem no CI).*
 
 ## 3. Requisitos técnicos (RT)
 

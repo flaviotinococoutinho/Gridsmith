@@ -106,7 +106,7 @@ graph TD
 | **Fail-safe de experiência** (sem prova de suporte → recurso desabilitado com razão) | testes do `ExperienceGovernor`/`ExperienceGate` |
 
 Vista de conjunto: as fitness functions se dividem em estruturais e
-semânticas, todas convergindo nos quality gates e na suíte de 317 testes:
+semânticas, todas convergindo nos quality gates e na suíte completa (contagem calculada no CI):
 
 ```mermaid
 mindmap
@@ -127,13 +127,13 @@ mindmap
       G2 engine
       G3 frontend
       G4 e2e verify-phase1-4
-    Testes 317
-      113 engine
-      120 middleware
-      84 frontend
+    Testes contados e validados no CI
+      suite engine xUnit
+      suite middleware node test
+      suite frontend node test
 ```
 
-*Mostra a taxonomia das fitness functions (estruturais e semânticas), os quality gates G1-G4 e a suíte de 317 testes que as impõem.*
+*Mostra a taxonomia das fitness functions (estruturais e semânticas), os quality gates G1-G4 e a suíte completa (contagem no CI) que as impõem.*
 
 ## 2. Definition of Done
 
@@ -196,7 +196,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 
 | Item | Estado |
 |---|---|
-| Testes: 113 engine + 120 middleware + 84 frontend = **317** | ✅ verdes |
+| Testes: três suítes (engine/middleware/frontend), contagem calculada e validada pelo CI | ✅ verdes |
 | Testes arquiteturais (18 regras) | ✅ criados nesta revisão |
 | E2e fases 1–4 | ✅ verdes |
 | Persistência de projeto (export/load com replay canônico) | ✅ **fechado nesta revisão** (`BlueprintSerializer`, `blueprint/query document`, `blueprint/load`) |
@@ -207,9 +207,9 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 
 | Gate | Job | Conteúdo |
 |---|---|---|
-| G1 | `middleware` | build + 120 testes (inclui R1–R9) |
-| G2 | `engine` | build + 113 testes (inclui E1–E5, Zero-GC) |
-| G3 | `frontend` | build + 84 testes (inclui F1–F4) |
+| G1 | `middleware` | build + suíte middleware (inclui R1–R9) |
+| G2 | `engine` | build + suíte engine (inclui E1–E5, Zero-GC) |
+| G3 | `frontend` | build + suíte frontend (inclui F1–F4) |
 | G4 | `e2e` | verify-phase1..4 com processos reais |
 
 Os três gates de camada e o gate e2e devem convergir verdes para liberar a
@@ -217,9 +217,9 @@ integração:
 
 ```mermaid
 graph LR
-  G1["G1 middleware<br/>build + 120 testes (R1-R9)"] --> J{"4 gates verdes?"}
-  G2["G2 engine<br/>build + 113 testes (E1-E5, Zero-GC)"] --> J
-  G3["G3 frontend<br/>build + 84 testes (F1-F4)"] --> J
+  G1["G1 middleware<br/>build + suite (R1-R9)"] --> J{"4 gates verdes?"}
+  G2["G2 engine<br/>build + suite (E1-E5, Zero-GC)"] --> J
+  G3["G3 frontend<br/>build + suite (F1-F4)"] --> J
   G4["G4 e2e<br/>verify-phase1..4 (processos reais)"] --> J
   J -->|"sim"| OK(["PR integravel"])
   J -->|"nao"| NO(["bloqueado"])
@@ -229,3 +229,34 @@ graph LR
 
 Um PR só é integrável com os quatro gates verdes. Não há gate manual: o que a
 governança exige, um teste impõe.
+
+## 4. Fontes de verdade documentais
+
+Cada tipo de informação tem **uma** fonte de verdade. Documentos derivados
+**não devem contradizer** sua fonte; quando divergirem, a fonte prevalece e o
+documento derivado é corrigido (nunca o contrário).
+
+| Informação | Fonte de verdade |
+|---|---|
+| Status das entregas Alpha | GitHub Issues (#1–#9) e seus critérios de aceite |
+| Quantidade de testes | execução das suítes / CI (**nunca** fixada em prosa) |
+| Regras arquiteturais | testes arquiteturais (`*/test/architecture.test.ts`, `.../ArchitectureTests.cs`) |
+| Métodos JSON-RPC | `contracts/schemas/*.json` + handlers (`EngineService`, `EditorGateway`) |
+| Comandos canônicos | tipos (`BlueprintCommand`), registry (`commandShape.COMMAND_KINDS`) e schemas |
+| Compatibilidade / versionamento | [`COMPATIBILITY.md`](COMPATIBILITY.md) |
+| Requisitos (funcionais/não funcionais/técnicos) | [`REQUIREMENTS.md`](REQUIREMENTS.md) |
+| Constituição arquitetural (regras normativas) | [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md) |
+| Jornada Alpha | o teste e2e da jornada + [`ALPHA-0.1.md`](ALPHA-0.1.md) |
+
+Responsabilidade por documento (sem duplicação de conteúdo — use links):
+`README` entrada/execução · `ARCHITECTURE` topologia/funcionamento ·
+`ARCHITECTURE-SPEC` regras normativas · `GOVERNANCE` fitness functions/DoD/fontes ·
+`REQUIREMENTS` estado funcional e não funcional · `ALPHA-0.1` milestone/jornada ·
+`COMPATIBILITY` versionamento/compatibilidade.
+
+A verificação automática (`npm run docs:verify`, script `scripts/verify-docs.mjs`)
+impõe parte destas regras: links internos válidos, documentos obrigatórios
+presentes, scripts `verify-phase*.sh` referenciados existentes, ausência de
+referências transitórias (branches/sessões de geração), comandos `npm run`
+documentados que existam nos `package.json`, e ausência de contagens de teste
+fixadas manualmente.

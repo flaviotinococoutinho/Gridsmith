@@ -1,0 +1,154 @@
+# Compatibilidade e Versionamento
+
+Fonte de verdade única da **compatibilidade** do ecossistema P7M. Cada eixo é
+versionado de forma **independente** — **não** existe um número de versão único
+para tudo. Este documento consolida o que antes estava disperso entre
+[`ARCHITECTURE.md`](ARCHITECTURE.md), [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md)
+§19, [`CANONICAL-MODEL.md`](CANONICAL-MODEL.md) e
+[`../contracts/shared-memory-layout.md`](../contracts/shared-memory-layout.md).
+
+Cada linha abaixo é validada contra o código/contrato citado em **Fonte de verdade**.
+
+```mermaid
+graph TD
+  subgraph AX["Eixos de versão independentes"]
+    P["Protocolo JSON-RPC<br/>major.minor"]
+    B["Documento Blueprint<br/>schemaVersion (int)"]
+    A["Artefato<br/>schemaVersion + revision (int)"]
+    R["Runtime profile<br/>familia + versao"]
+    SM["Shared memory<br/>layoutVersion (int)"]
+    V["Layout de vertice<br/>LayoutVersion (int)"]
+    PR["Produto / pacotes<br/>SemVer (0.1.0)"]
+  end
+  P -->|"nao compativel"| e1(["ProtocolMismatch -32001"])
+  B -->|"versao antiga"| m1["migrateBlueprintDocument (encadeado)"]
+  R -->|"sem versao <= pedida"| e2(["UnknownRuntimeError"])
+  SM -->|"layout diverge"| e3(["InvalidBinaryLayout -32005"])
+  V -->|"stride/offset diverge"| e3
+```
+
+*Mostra os sete eixos de versão independentes do P7M e o comportamento de incompatibilidade de cada um: cada eixo tem sua própria regra, fallback e teste — nunca um único SemVer global.*
+
+## Matriz resumida
+
+| Componente | Formato | Fonte de verdade | Compatibilidade | Fallback |
+|---|---|---|---|---|
+| Protocolo JSON-RPC | `major.minor` (string) | `middleware/src/protocol/jsonrpc.ts` · `engine/.../Protocol/JsonRpcProtocol.cs` | MAJOR deve coincidir | `ProtocolMismatch` (-32001) |
+| Documento Blueprint | inteiro (`schemaVersion`) | `middleware/src/canonical/BlueprintSerializer.ts` | exato ou migrado | rejeita se > suportada |
+| Artefato | inteiro (`schemaVersion`) + `revision` | `contracts/schemas/artifact.envelope.schema.json` · `ArtifactStore.ts` | revisões append-only; dedup `(contentHash, schemaVersion)` | — |
+| Runtime profile | `família + versão` (`^\d+\.\d+(\.\d+)?$`) | `contracts/schemas/runtime.profile.schema.json` · `runtime/RuntimeProfile.ts` | exato ou maior `≤` pedida; imutável | `UnknownRuntimeError` |
+| Adapter de runtime | — (sem constante própria) | `runtime/RuntimeAdapter.ts` · `MonoGameAdapter.ts` | governado pelos perfis (família+versão) | projeção `deferred`/`skipped` com razão |
+| Shared memory | inteiro (`layoutVersion`) | `contracts/shared-memory-layout.md` · header MMF | binária estrita | `InvalidBinaryLayout` (-32005) |
+| Layout de vértice | inteiro (`LayoutVersion`, stride 36) | `engine/.../SharedMemory/SkinnedVertex2D.cs` | offsets publicados por reflexão | `InvalidBinaryLayout` (-32005) |
+| Produto / pacotes | SemVer (`0.1.0`) | `*/package.json` · `EngineChannel.ClientVersion` | alpha; sem garantia de compat | — |
+
+> **Não trate todos os componentes como SemVer.** Apenas os pacotes usam SemVer;
+> o protocolo usa `major.minor` com checagem só de MAJOR; documento, artefato,
+> shared memory e layout de vértice usam **inteiro monotônico**; o perfil de
+> runtime usa `família + versão` com resolução descendente.
+
+## Detalhamento por componente
+
+### Versão do produto / pacotes
+
+| Campo | Conteúdo |
+|---|---|
+| Componente | Pacotes `@p7m/middleware`, `frontend`, host da engine |
+| Formato da versão | SemVer — hoje `0.1.0` (middleware, frontend) e `ClientVersion = "0.1.0"` (engine) |
+| Fonte de verdade | `middleware/package.json`, `frontend/package.json`, `engine/src/P7m.Engine.Ipc/EngineChannel.cs` |
+| Regra de compatibilidade | Fase alpha — **não** há garantia de compatibilidade de produto; a interoperabilidade entre runtimes é regida pelo protocolo e pelos perfis, não pela versão de produto |
+| Breaking change | n/a (alpha; não versionado como contrato) |
+| Migração | n/a |
+| Fallback | n/a |
+| Teste | — (versões declaradas nos manifests; não há teste de compatibilidade de produto) |
+
+### Protocolo JSON-RPC
+
+| Campo | Conteúdo |
+|---|---|
+| Componente | Plano de controle (handshake + mensagens JSON-RPC 2.0) |
+| Formato da versão | `major.minor` (string) — `PROTOCOL_VERSION = "1.0"` |
+| Fonte de verdade | `middleware/src/protocol/jsonrpc.ts` · `engine/src/P7m.Engine.Ipc/Protocol/JsonRpcProtocol.cs` (`ProtocolVersion`) — idênticos nos dois lados |
+| Regra de compatibilidade | A versão **MAJOR** deve coincidir no `engine/handshake`; MINOR não bloqueia |
+| Breaking change | Bump de MAJOR (mudança incompatível de mensagens/erros) |
+| Migração | Nenhuma — renegociação exige atualizar os dois lados do fio |
+| Fallback | `ProtocolMismatch` (-32001); a sessão é recusada no handshake |
+| Teste | Testes de handshake (mismatch de MAJOR) + regra arquitetural **R9** (constantes de framing casam com o contrato) |
+
+### Documento Blueprint (projeto `.p7m.json`)
+
+| Campo | Conteúdo |
+|---|---|
+| Componente | Documento declarativo do projeto (`exportBlueprint` / load por replay) |
+| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 1`; documento sem `schemaVersion` é tratado como versão `0` |
+| Fonte de verdade | `middleware/src/canonical/BlueprintSerializer.ts` |
+| Regra de compatibilidade | Versão exata é carregada direto; versões anteriores são **migradas em cadeia** `v(n) → v(n+1)` antes do replay |
+| Breaking change | Qualquer mudança estrutural do documento exige nova versão **+** entrada correspondente no registro `MIGRATIONS` |
+| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (hoje `0 → 1`); `documentToCommands` migra de forma transparente na carga (`blueprint/load`) |
+| Fallback | Versão acima da suportada é **rejeitada** com `BlueprintDocumentError` (mensagem clara); versão sem migrador registrado é rejeitada |
+| Teste | `middleware/test/blueprint-migration.test.ts` (upgrade de v0/legado, v0 explícito, rejeição de versão futura, rejeição de não-objeto) |
+
+### Artefato versionável
+
+| Campo | Conteúdo |
+|---|---|
+| Componente | Envelope de artefato (ex.: `sprite-document`) no `ArtifactStore` |
+| Formato da versão | Inteiro `schemaVersion` (`≥ 1`) + `revision` (inteiro monotônico a partir de 1) |
+| Fonte de verdade | `contracts/schemas/artifact.envelope.schema.json` · `middleware/src/canonical/ArtifactStore.ts` |
+| Regra de compatibilidade | Revisões são **append-only**; dedup por `(contentHash, schemaVersion)`; histórico preservado e legível |
+| Breaking change | Bump de `schemaVersion` na mudança de forma do payload |
+| Migração | Não há migrador formal — as revisões históricas continuam legíveis pela sua própria `schemaVersion` |
+| Fallback | — |
+| Teste | `middleware/test/canonical-core.test.ts` (revisão, hash estável, proveniência obrigatória, dedup) |
+
+### Perfil de runtime
+
+| Campo | Conteúdo |
+|---|---|
+| Componente | Perfil versionado de capacidades por família de runtime (`runtime/profiles/`) |
+| Formato da versão | `família + versão`, versão em `major.minor[.patch]` (regex `^\d+\.\d+(\.\d+)?$`) |
+| Fonte de verdade | `contracts/schemas/runtime.profile.schema.json` · `middleware/src/runtime/RuntimeProfile.ts` · `runtime/profiles/monogame.ts` |
+| Regra de compatibilidade | `resolve(family, version)` = match exato; senão o **maior perfil `≤` versão pedida** (compatibilidade descendente); perfis publicados são **imutáveis** |
+| Breaking change | Publicar qualquer mudança em um perfil = **nova versão** (nunca mutar um perfil publicado) |
+| Migração | n/a — cada versão é um dado declarativo próprio |
+| Fallback | `UnknownRuntimeError` (família desconhecida, ou nenhuma versão `≤` a pedida) |
+| Teste | `middleware/test/runtime-governance.test.ts` (resolução exata/descendente, imutabilidade do registro) |
+
+### Adapter de runtime
+
+| Campo | Conteúdo |
+|---|---|
+| Componente | Tradutor de eventos canônicos → métodos do runtime (ex.: `MonoGameAdapter`) |
+| Formato da versão | — (o adapter **não** carrega constante de versão própria) |
+| Fonte de verdade | `middleware/src/runtime/RuntimeAdapter.ts` (contrato) · `middleware/src/runtime/MonoGameAdapter.ts` |
+| Regra de compatibilidade | O adapter declara `family` e obtém a `version` do runtime vivo via `identify()` (handshake/manifesto); a compatibilidade efetiva é governada pelos **perfis** (família+versão) |
+| Breaking change | n/a — o adapter acompanha os contratos JSON-RPC e os perfis; mudança incompatível recai sobre esses eixos |
+| Migração | n/a |
+| Fallback | Evento sem suporte no runtime → projeção `deferred`/`skipped` com **razão acionável** (nunca erro silencioso) |
+| Teste | `middleware/test/runtime-governance.test.ts` + `scripts/verify-phase4.sh` (projeção real na engine) |
+
+### Layout de shared memory (MMF)
+
+| Campo | Conteúdo |
+|---|---|
+| Componente | Header e região de dados do Memory-Mapped File (plano de dados) |
+| Formato da versão | Inteiro `layoutVersion` (header MMF, offset 4) — atual `1` |
+| Fonte de verdade | `contracts/shared-memory-layout.md` · header do MMF · engine |
+| Regra de compatibilidade | **Binária estrita** — o `layoutVersion` e o `strideInBytes` do escritor devem coincidir com o que a engine mapeia |
+| Breaking change | Qualquer mudança no header ou na struct de vértice bumpa `layoutVersion` |
+| Migração | Nenhuma (dado binário; não há migração de layout em runtime) |
+| Fallback | `InvalidBinaryLayout` (-32005) ao vincular a shared memory |
+| Teste | `scripts/verify-phase2.sh` (checksum FNV-1a cruzado entre runtimes) + teste de reflexão (manifesto ≡ struct) |
+
+### Layout de vértice
+
+| Campo | Conteúdo |
+|---|---|
+| Componente | Struct `SkinnedVertex2D` publicada por reflexão em `engine/describe` |
+| Formato da versão | Inteiro `LayoutVersion` (atual `1`), stride 36 bytes |
+| Fonte de verdade | `engine/src/P7m.Engine.Core/SharedMemory/SkinnedVertex2D.cs` (offsets via `Marshal.OffsetOf`) |
+| Regra de compatibilidade | O escritor Node usa os **offsets publicados** pela engine, nunca valores hardcoded |
+| Breaking change | Mudança de campo/ordem/tipo bumpa `LayoutVersion` |
+| Migração | Nenhuma (binário) |
+| Fallback | `InvalidBinaryLayout` (-32005) |
+| Teste | `scripts/verify-phase2.sh` + teste de reflexão (offsets do manifesto ≡ `Marshal.OffsetOf`) |

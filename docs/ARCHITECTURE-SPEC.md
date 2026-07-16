@@ -2,13 +2,25 @@
 
 > **Natureza deste documento.** Especificação **normativa** construída a partir do
 > código, contratos, testes e documentação **efetivamente existentes** no
-> repositório em `claude/eaas-2d-ecosystem-4gvsoh`. Não descreve uma arquitetura
+> repositório. Não descreve uma arquitetura
 > idealizada: cada regra referencia evidência real. Onde a evidência é
 > insuficiente, o texto declara explicitamente
 > «Não foi possível confirmar esta afirmação no estado analisado do repositório.»
 > Complementa (não substitui) `ARCHITECTURE.md`, `CANONICAL-MODEL.md` e
 > `GOVERNANCE.md`; em caso de conflito sobre uma regra executável, **o teste que
 > a impõe tem precedência sobre qualquer texto**.
+
+**Proveniência da análise.** Esta revisão descreve o estado do código no commit
+de referência abaixo. Contagens voláteis (ex.: número de testes) **não** são
+fixadas neste documento — são calculadas e validadas pelo CI (ver
+[`GOVERNANCE.md`](GOVERNANCE.md) §4, fontes de verdade).
+
+| Campo | Valor |
+|---|---|
+| Repository | `flaviotinococoutinho/p7m-design` |
+| Branch analisada | `main` |
+| Commit de referência | `d8220d5` |
+| Data da revisão | 2026-07-16 |
 
 ## Legendas
 
@@ -67,7 +79,7 @@ Três achados estruturais orientam as recomendações:
    convenção não imposta pelo tipo: `ProjectionResult.reason` é opcional
    (`RuntimeAdapter.ts:24`). **RISCO.**
 3. A **cobertura de testes espelha o diagnóstico de produto**: núcleos puros
-   fortemente testados (317 testes), mas a camada de produto — `renderer.ts` (738
+   fortemente testados (suíte completa validada pelo CI), mas a camada de produto — `renderer.ts` (738
    linhas) e o wire de `main.ts` (440 linhas) — sem teste automatizado, e sem e2e
    visual da jornada de aceite. **RISCO.**
 
@@ -126,7 +138,7 @@ vertical `Projeto → Asset → Entidade → Nível → Preview → Live edit �
 3. **Compatibilidade binária provada, não assumida** — offsets por
    `Marshal.OffsetOf` publicados em `engine/describe`, e checksum FNV-1a cruzado nos
    e2e (`shared-memory-layout.md`; `scripts/verify-phase2.sh`). **CONFIRMADO.**
-4. **Zero-GC verificado** — 8 testes `*_is_allocation_free` medem
+4. **Zero-GC verificado** — testes `*_is_allocation_free` (um por hot loop) medem
    `GC.GetAllocatedBytesForCurrentThread()` e exigem delta 0 após warmup de JIT
    escalonado. **CONFIRMADO** (ver §33).
 5. **Determinismo por seed** — AutoTiler, screen shake e simulação de câmera testados
@@ -155,7 +167,7 @@ preferência estética (ver Apêndice H).
 | # | Inconsistência | Evidência | Classificação | Ação |
 |---|---|---|---|---|
 | I-1 | `RuntimeAdapter` **não** declara `rehydrateFrom`; docs e o texto do escopo tratam a reidratação como parte do contrato de adapter | interface em `RuntimeAdapter.ts:29-40` (4 membros); método concreto em `MonoGameAdapter.ts:201`; `CANONICAL-MODEL.md:100-105` fala do adapter como "único dono da reidratação" | **DIVERGÊNCIA** | Elevar reidratação à porta (§12, R-02) |
-| I-2 | `GOVERNANCE.md` reportava **255** testes (104 engine + 107 mw + 44 fe) e gates com essas contagens; real: 113 + 120 + 84 = **317** | `GOVERNANCE.md:102,113-116` | **DIVERGÊNCIA** (drift) | ✅ corrigido nesta revisão (R-14) |
+| I-2 | `GOVERNANCE.md` fixava contagens de teste no próprio texto (propensas a drift) | `GOVERNANCE.md` | **DIVERGÊNCIA** (drift) | ✅ corrigido: contagens não são mais fixadas no texto — derivadas e validadas pelo CI (ver `GOVERNANCE.md` §4) |
 | I-3 | `REQUIREMENTS.md` falava em "6 hot loops cobertos"; há **8** métodos `*_is_allocation_free` em 7 arquivos (`SkeletonStoreTests`, `MeshSharedMemoryReaderTests`, `SkinningPipelineTests`, `CameraDynamicsTests` ×2, `ActorTests`, `LightingTests`, `TilemapTests`) | `REQUIREMENTS.md:44` | **DIVERGÊNCIA** (subcontagem) | ✅ corrigido nesta revisão |
 | I-4 | `ARCHITECTURE.md` listava `engine/heartbeat` como notification; o heartbeat real é um `engine/ping` com payload `"heartbeat"` | `ARCHITECTURE.md:76`; `engine/src/P7m.Engine.Runtime/Program.cs:68` | **DIVERGÊNCIA** | ✅ corrigido nesta revisão |
 | I-5 | `ARCHITECTURE.md` §capacidades dizia "Quando a Fase 3 adicionar câmera e iluminação…" (tempo futuro) — Fase 3 concluída | `ARCHITECTURE.md:44-45` | **DIVERGÊNCIA** (drift) | ✅ corrigido nesta revisão |
@@ -886,8 +898,9 @@ arbitrários. Schemas/payloads externos **DEVEM** ser validados na borda. Symlin
 
 ## 26. Testes (estratégia por camada)
 
-**Estado atual (CONFIRMADO):** **317 testes** — engine 113 (xUnit), middleware 120
-(node:test), frontend 84 (node:test) — mais e2e `verify-phase1..4` com processos reais.
+**Estado atual (CONFIRMADO):** três suítes — engine (xUnit), middleware e frontend
+(node:test) — mais e2e `verify-phase1..4` com processos reais. A contagem exata é
+calculada e validada pelo CI (ver `GOVERNANCE.md` §4), não fixada aqui.
 Onde há teste, é **rigoroso** (Zero-GC com warmup, checksums cruzados, arranjos
 adversariais).
 
@@ -907,11 +920,11 @@ graph TD
   N4["4 E2E visual (Playwright + Electron) — ausente"]
   N3["3 Integracao da app (renderer-preload-main-gateway) — fino"]
   N2["2 Componentes (inspector, toolbar, paleta, canvas) — ausente"]
-  N1["1 Unidade (logica pura, invariantes, algoritmos) — forte, 317 testes"]
+  N1["1 Unidade (logica pura, invariantes, algoritmos) — forte"]
   N5 --> N4 --> N3 --> N2 --> N1
 ```
 
-*Mostra a piramide de testes do P7M com o estado observado por nivel: base solida de unidade (317 testes: 113 engine + 120 middleware + 84 frontend) e topo vazio — componentes e e2e visual ausentes, integracao fina. O desequilibrio espelha o gap plataforma-madura x produto-embrionario.*
+*Mostra a piramide de testes do P7M com o estado observado por nivel: base solida de unidade e topo vazio — componentes e e2e visual ausentes, integracao fina. O desequilibrio espelha o gap plataforma-madura x produto-embrionario.*
 
 **RISCO estrutural:** `renderer.ts` (738 linhas) e o wire de `main.ts` (440) não têm
 teste automatizado — toda a máquina de ferramentas, hit-test, drag, hidratação, chips
@@ -1063,7 +1076,7 @@ critério de revisão, status, data e links para código e teste.
   `writeUInt32LE`/`readUInt32LE` no source).
 - **Engine E1–E5** (`ArchitectureTests.cs`) por **reflexão de assembly**: layering
   Core/Ipc/Graphics/Runtime + Core sem MonoGame.
-- **Semânticas:** 8 testes `*_is_allocation_free` (não 6 — I-3), determinismo por seed,
+- **Semânticas:** testes `*_is_allocation_free` (um por hot loop), determinismo por seed,
   contratos binários por reflexão+checksum, shaders≡CPU, imutabilidade de perfis,
   fail-safe de experiência.
 
@@ -1089,9 +1102,9 @@ executável, estável, relevante e difícil de validar manualmente.
 
 | Gate | Job | Conteúdo | Bloqueante |
 |---|---|---|---|
-| G1 | middleware | build + 120 testes (inclui R1–R9) | sim |
-| G2 | engine | build + 113 testes (inclui E1–E5, Zero-GC) | sim |
-| G3 | frontend | build + 84 testes (inclui F1–F4) | sim |
+| G1 | middleware | build + suíte middleware (inclui R1–R9) | sim |
+| G2 | engine | build + suíte engine (inclui E1–E5, Zero-GC) | sim |
+| G3 | frontend | build + suíte frontend (inclui F1–F4) | sim |
 | G4 | e2e | `verify-phase1..4` com processos reais | sim |
 
 **Recomendados (separar por velocidade):**
@@ -1320,7 +1333,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 | R-06 | middleware | Confirmado | ~~sem migração de schemaVersion~~ **implementada** (`af83a66`) | `BlueprintSerializer.ts` `migrateBlueprintDocument`/`MIGRATIONS` | P-10 | — | SemVer/schema | ✅ migradores encadeáveis v(n)→v(n+1) + rejeição de versão futura | — | — | doc v0 migra e replica; futura é rejeitada | `blueprint-migration.test.ts` | git revert |
 | R-07 | middleware | Risco | path traversal em ingest | `AssetPipelineService.ts:119` | trust boundary | — | ISO 25010 (segurança) | validar caminho sob `assetsRoot` | P | Alta | caminho externo é rejeitado | teste de borda | remover guarda |
 | R-08 | docs | Melhoria | sem ADRs | inexistência de `docs/adr/` | ISO 42010 | — | 42010 | 15 ADRs retroativos | P | Média | ADR-001..015 presentes | — | remover diretório |
-| R-14 | docs | Melhoria | contagens/textos desatualizados | `GOVERNANCE.md:102`, `REQUIREMENTS.md:44`, `ARCHITECTURE.md:44,76` | P-4 | — | — | ✅ aplicado (I-2..I-5); resta I-6 (nota de mapeamento de nomes no contrato) | P | Média | docs refletem 317 testes/8 hot loops | — | git revert |
+| R-14 | docs | Melhoria | contagens/textos desatualizados | `GOVERNANCE.md:102`, `REQUIREMENTS.md:44`, `ARCHITECTURE.md:44,76` | P-4 | — | — | ✅ aplicado (I-2..I-5); resta I-6 (nota de mapeamento de nomes no contrato) | P | Média | docs sem contagens fixas (derivadas do CI) | — | git revert |
 | PR-4 | frontend | Melhoria | UI sem teste | `renderer.ts` (738 linhas) | P-8 | — | ISO 25010 | extrair controlador puro p/ `core/` + testes | M | Alta | lógica de ferramenta testada fora do Electron (F1) | unit do controlador | manter em renderer |
 | PR-5 | todos | Melhoria | sem correlação ponta a ponta | ausência | — | — | Trace Context (local) | `correlationId` em dispatch→project→engine | M | Média | um id percorre os 3 processos no log | teste de propagação | remover campo |
 

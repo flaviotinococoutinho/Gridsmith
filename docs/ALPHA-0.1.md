@@ -161,9 +161,28 @@ stateDiagram-v2
 O editor começa pelo projeto, não pela conexão a um pipe.
 - [x] Máquina de estados do documento (sem projeto → aberto → modificado → salvando → fechado), dirty tracking por eventos, política de autosave, lista de recentes — `frontend/src/core/projectLifecycle.ts`, testada
 - [x] `EditorClient.saveDocument()/loadDocument()` expostos (gap apontado no diagnóstico) + preload com `saveProject/openProject`
-- [ ] Diálogos nativos (New/Open/Save As/Recent) e escrita em disco no processo main
-- [ ] Autosave + recovery pós-crash (journal de comandos)
-- [ ] Migração de `schemaVersion` e template "Plataforma 2D"
+- [x] Diálogos nativos e escrita em disco no `main`: Abrir/Salvar/Salvar como via
+  `dialog.showOpenDialog/showSaveDialog/showMessageBox`, leitura/escrita `.p7m.json`
+  (`fs`) e autosave `.autosave` — `frontend/src/main/main.ts`. **Caveat:** `main.ts`
+  é cola Electron **sem cobertura de teste automatizado nem e2e** (issue #2 marca este
+  critério; a prova de produto virá com o e2e da jornada — P0.9)
+- [x] Migração de `schemaVersion`: `migrateBlueprintDocument` + registro `MIGRATIONS`
+  encadeado (0→1) com rejeição de versão futura, aplicada de forma transparente na
+  carga (`blueprint/load`) — `middleware/src/canonical/BlueprintSerializer.ts`,
+  testada em `middleware/test/blueprint-migration.test.ts`
+- [x] Template canônico "Plataforma 2D" (`platformer-2d`) no middleware/gateway/cliente:
+  `ProjectTemplates.ts`, gateway `project/new` / `project/templates`,
+  `EditorClient.newProjectFromTemplate` / `listProjectTemplates` — testado
+  (`middleware/test/project-templates.test.ts`, `editor-gateway.test.ts`,
+  `frontend/test/editor-client.integration.test.ts`)
+- [ ] **Template ainda não conectado ao botão "Novo projeto" da UI**:
+  `projectCommand("new")` (`main.ts`) cria um projeto em branco; `newProjectFromTemplate`
+  só é chamado pelo teste de integração — o passo 2 da jornada ("Novo projeto de
+  plataforma 2D") ainda não usa o template
+- [ ] Recovery pós-crash: o autosave grava `.autosave`, mas a restauração na
+  inicialização (detectar `.autosave` mais novo que o save e oferecer restaurar) não existe
+- [ ] Menu "Recentes" nativo (recentes são rastreados e enviados ao renderer, mas não há
+  submenu nativo) e bloqueio contra duas instâncias no mesmo arquivo
 
 ```mermaid
 stateDiagram-v2
@@ -205,7 +224,7 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
 ### P0.4 — Vertical slice do editor de níveis 🔶
 - [x] Viewport do canvas — `core/canvasViewport.ts`: pan em pixels de tela,
   zoom centrado no cursor com clamps, fit centralizado, tela↔mundo↔célula
-  inversíveis e culling de células visíveis (7 testes)
+  inversíveis e culling de células visíveis (coberto por testes)
 - [x] Vista do editor no workbench: canvas com pincel/borracha/balde
   (arrasto), paleta de significados (nome+cor+valor ativo), pan (botão do
   meio), zoom (roda), enquadrar, desfazer/refazer, coordenadas do cursor e
