@@ -41,7 +41,7 @@ em um fluxo vertical utilizável** (ver decisão de congelamento em
 
 | ID | Requisito | Alvo | Status | Verificação |
 |---|---|---|---|---|
-| RNF-01 | **Zero-GC nos hot loops** da engine | 0 bytes alocados em Update/Draw-path | ✅ | testes `*_is_allocation_free` (6 hot loops cobertos) |
+| RNF-01 | **Zero-GC nos hot loops** da engine | 0 bytes alocados em Update/Draw-path | ✅ | testes `*_is_allocation_free` (8 métodos em 7 arquivos: esqueletos, leitor MMF, skinning, câmera×2, atores, luzes, tilemap) |
 | RNF-02 | **Determinismo** | mesma entrada+seed ⇒ mesmo resultado, entre runtimes | ✅ | checksums FNV-1a cruzados; trajetórias idênticas |
 | RNF-03 | **Robustez de protocolo** | frame inválido/oversized nunca derruba o peer; erros tipados | ✅ | testes de framing/peer (parse error, teardown, timeout) |
 | RNF-04 | **Offline-first** | mutações aceitas sem engine; reidratação completa na reconexão | ✅ | testes de rehydrate + deferred |

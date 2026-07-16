@@ -5,6 +5,12 @@ governança é uma asserção executável** (fitness function) que quebra o CI c
 o arquivo infrator no erro. Este documento enumera as regras, aponta o teste
 que as impõe e define o que "pronto" significa.
 
+> A **especificação técnica normativa** completa (constituição de engenharia:
+> princípios invioláveis, paradigmas, padrões, contratos, versionamento, erros,
+> testes e plano de evolução, com evidência classificada) está em
+> [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md). Este `GOVERNANCE.md` é o
+> subconjunto executável (as 18 regras e o DoD).
+
 ## 1. Regras arquiteturais e sua imposição
 
 ### Middleware (`middleware/test/architecture.test.ts`)
@@ -99,7 +105,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 
 | Item | Estado |
 |---|---|
-| Testes: 104 engine + 107 middleware + 44 frontend = **255** | ✅ verdes |
+| Testes: 113 engine + 120 middleware + 84 frontend = **317** | ✅ verdes |
 | Testes arquiteturais (18 regras) | ✅ criados nesta revisão |
 | E2e fases 1–4 | ✅ verdes |
 | Persistência de projeto (export/load com replay canônico) | ✅ **fechado nesta revisão** (`BlueprintSerializer`, `blueprint/query document`, `blueprint/load`) |
@@ -110,9 +116,9 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 
 | Gate | Job | Conteúdo |
 |---|---|---|
-| G1 | `middleware` | build + 107 testes (inclui R1–R9) |
-| G2 | `engine` | build + 104 testes (inclui E1–E5, Zero-GC) |
-| G3 | `frontend` | build + 44 testes (inclui F1–F4) |
+| G1 | `middleware` | build + 120 testes (inclui R1–R9) |
+| G2 | `engine` | build + 113 testes (inclui E1–E5, Zero-GC) |
+| G3 | `frontend` | build + 84 testes (inclui F1–F4) |
 | G4 | `e2e` | verify-phase1..4 com processos reais |
 
 Um PR só é integrável com os quatro gates verdes. Não há gate manual: o que a

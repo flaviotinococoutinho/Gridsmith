@@ -41,8 +41,9 @@ ela publica um manifesto com:
 
 O middleware cacheia o manifesto no `CapabilityRegistry` a cada sessão e o projeta
 como `editorConcepts()` para a UI e como as ferramentas MCP `engine_capabilities` e
-`editor_concepts` para agentes de IA. Quando a Fase 3 adicionar câmera e iluminação,
-o editor ganha os novos painéis sem mudança de contrato.
+`editor_concepts` para agentes de IA. Câmera, iluminação, níveis e atores já são
+subsistemas `available` no manifesto — cada um ganhou seu painel/hints sem mudança de
+contrato de descoberta.
 
 ## Framing do plano de controle
 
@@ -72,8 +73,8 @@ parsing incremental sem heurística de delimitadores:
    identidade da sessão e as capacidades habilitadas.
 4. A partir daí o canal é simétrico:
    - middleware → engine: `engine/ping`, `skeleton/initialize`, `mesh/bind_shared_memory`, …
-   - engine → middleware: `engine/log` (notification), `engine/heartbeat` (notification),
-     respostas aos requests recebidos.
+   - engine → middleware: `engine/log` (notification), heartbeat periódico via
+     `engine/ping` com payload `"heartbeat"`, respostas aos requests recebidos.
 5. Desconexões são detectadas por EOF/erro de socket; requests pendentes são rejeitados
    imediatamente com erro de transporte. A engine reconecta com backoff exponencial.
 
