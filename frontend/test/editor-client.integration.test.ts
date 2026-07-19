@@ -180,7 +180,10 @@ test("EditorClient v2: conecta via gRPC, despacha, consulta, recebe eventos por 
     assert.equal(gate.feature("shaders.hlsl-editing").enabled, true);
     const levelEditing = gate.feature("level.intgrid-editor");
     assert.equal(levelEditing.enabled, false); // requiresSubsystem sem engine
-    assert.match(levelEditing.reason, /no engine connected/);
+    assert.equal(
+      levelEditing.reason,
+      "Nenhuma engine está conectada para confirmar o subsistema “level”; recurso desabilitado por segurança.",
+    );
   } finally {
     client.close();
     await rig.close();
