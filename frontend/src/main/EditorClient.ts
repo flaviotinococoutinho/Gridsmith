@@ -528,13 +528,6 @@ export class EditorClient {
   }
 
   private currentProjectExpectation(): ProjectRevisionExpectation | undefined {
-    const cursor = this.cursor;
-    if (cursor) {
-      return {
-        projectSessionId: cursor.projectSessionId,
-        commandSequence: cursor.commandSequence,
-      };
-    }
     const status = this.projectionState?.status;
     if (!status) return undefined;
     return {
