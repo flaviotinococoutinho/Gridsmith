@@ -12,3 +12,4 @@ functions) estão registradas retroativamente em
 | [ADR-016](ADR-016-graphql-baseline-do-app.md) | GraphQL como superfície COMPLETA (baseline) do app | Accepted |
 | [ADR-017](ADR-017-grpc-caminho-quente-com-fallback.md) | gRPC no caminho quente, prioritário, com fallback para GraphQL | Accepted |
 | [ADR-018](ADR-018-endpoints-e-verbosidade-dos-transports.md) | Endpoints locais dos transports e controle de verbosidade | Accepted |
+| [ADR-019](ADR-019-freeze-medido-dos-transports.md) | Freeze medido: gRPC default em dispatch/eventos, GraphQL baseline completo, legado só compatibilidade | Accepted |

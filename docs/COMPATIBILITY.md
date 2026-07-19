@@ -189,3 +189,20 @@ graph TD
 | Autenticação | Metadata `authorization` com Bearer efêmero obrigatória. `UNAUTHENTICATED` nunca aciona fallback. |
 | Fallback | **Somente indisponibilidade** do canal → GraphQL; autenticação, domínio e incompatibilidade de contrato não são cobertos por fallback. Default/freeze segue ADR-019. |
 | Teste | Paridade `dist` ⇄ fonte em `middleware/test/transport-gateways.test.ts`; fallback ao vivo em `frontend/test/editor-client.integration.test.ts`; e2e `scripts/verify-transports.sh` |
+
+### Freeze do default (não é eixo de versão)
+
+O baseline oficial de 2026-07-19 manteve gRPC como default de
+dispatch/eventos: contra GraphQL, o p95 de dispatch foi 35,2% menor no payload
+pequeno e 39,3% no médio; `event-flow` foi 30,8% e 16,5% menor,
+respectivamente, sem erro, perda ou resync. Isso **não** implica vantagem em
+queries: o p95 gRPC regrediu entre 16,6% e 251,8% nos quatro cenários de query.
+
+O default só pode permanecer se dispatch conservar ganho p95 de pelo menos 20%
+nos dois payloads, `event-flow` não regredir mais de 10% e os fluxos seguirem
+sem erro/perda/resync. Falha rebaixa gRPC à feature flag até o PreviewHost.
+GraphQL permanece baseline completo. O gateway JSON-RPC legado teve menor p50
+e p95 nas oito combinações payload×operação, mas não em todo p99; permanece
+somente compatibilidade enquanto houver dependentes e não participa de
+promoção. Números, ambiente e tabela completa:
+[ADR-019](adr/ADR-019-freeze-medido-dos-transports.md).

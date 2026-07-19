@@ -39,9 +39,10 @@ baseline sempre disponível e transporte de **fallback** do caminho quente.
 2. **Apollo/Yoga + subscriptions WS** — dependências e superfície muito
    maiores para um processo local; polling incremental cobre o fallback com
    1 dep (`graphql`).
-3. **GraphQL como único transporte ativo por padrão** — opção válida quando o
-   benchmark não justificar o custo operacional do gRPC (ADR-019); o código
-   gRPC continua feature-flagged para a futura necessidade de streaming.
+3. **GraphQL como único transporte ativo por padrão** — não adotado no baseline
+   de 2026-07-19: gRPC reduziu o p95 de dispatch em 35,2%/39,3% nos payloads
+   pequeno/médio e satisfez o critério da ADR-019. A alternativa volta a ser
+   obrigatória se uma repetição oficial falhar nesse critério.
 
 ## Consequências
 
@@ -57,4 +58,5 @@ baseline sempre disponível e transporte de **fallback** do caminho quente.
 
 Reavaliar se o app precisar de subscriptions verdadeiras no fallback (hoje o
 polling de 500 ms atende) ou se um segundo cliente do app surgir fora do
-Electron.
+Electron. O status de GraphQL como baseline completo não depende da decisão de
+default medida na ADR-019.

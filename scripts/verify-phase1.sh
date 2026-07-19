@@ -8,6 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIPE_NAME="p7m-verify-$$"
 MIDDLEWARE_LOG="$(mktemp)"
 export P7M_EDITOR_AUTH_TOKEN="${P7M_EDITOR_AUTH_TOKEN:-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')}"
+unset P7M_EDITOR_AUTH_TOKEN_FILE
 
 cleanup() {
   if [[ -n "${MIDDLEWARE_PID:-}" ]] && kill -0 "$MIDDLEWARE_PID" 2>/dev/null; then

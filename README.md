@@ -47,7 +47,7 @@ graph TD
   MMF -. "le snapshot" .-> ENrt
 ```
 
-*Mostra as três camadas locais e os dois planos: app ↔ middleware via gRPC prioritário (caminho quente) com GraphQL como baseline/fallback (ADR-016/017); middleware ↔ engine via JSON-RPC 2.0 sobre pipes/UDS; dados em massa via MMF com seqlock. Regra de assembly da engine: Graphics referencia só Core; Runtime referencia Core + Ipc, nunca Graphics.*
+*Mostra as três camadas locais e os dois planos: app ↔ middleware via gRPC prioritário medido (caminho quente) com GraphQL como baseline/fallback (ADR-016/017/019); middleware ↔ engine via JSON-RPC 2.0 sobre pipes/UDS; dados em massa via MMF com seqlock. Regra de assembly da engine: Graphics referencia só Core; Runtime referencia Core + Ipc, nunca Graphics.*
 
 ## Princípios arquiteturais
 

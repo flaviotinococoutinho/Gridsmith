@@ -14,6 +14,7 @@ PIPE_NAME="p7m-transports-$$"
 MIDDLEWARE_LOG="$(mktemp)"
 ENGINE_LOG="$(mktemp)"
 export P7M_EDITOR_AUTH_TOKEN="${P7M_EDITOR_AUTH_TOKEN:-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')}"
+unset P7M_EDITOR_AUTH_TOKEN_FILE
 
 cleanup() {
   for pid in "${ENGINE_PID:-}" "${MIDDLEWARE_PID:-}"; do
@@ -28,12 +29,22 @@ trap cleanup EXIT
 
 start_middleware() {
   local extra_flags=("$@")
-  local previous_ready
-  previous_ready="$(grep -c "graphql gateway listening" "$MIDDLEWARE_LOG" 2>/dev/null || true)"
+  local expect_grpc=1
+  local flag
+  for flag in "${extra_flags[@]}"; do
+    [[ "$flag" == "--no-grpc" ]] && expect_grpc=0
+  done
+  local previous_graphql previous_grpc
+  previous_graphql="$(grep -c "graphql gateway listening" "$MIDDLEWARE_LOG" 2>/dev/null || true)"
+  previous_grpc="$(grep -c "grpc gateway listening" "$MIDDLEWARE_LOG" 2>/dev/null || true)"
   node "$ROOT/middleware/dist/index.js" --pipe "$PIPE_NAME" --no-mcp "${extra_flags[@]}" 2>>"$MIDDLEWARE_LOG" &
   MIDDLEWARE_PID=$!
   for _ in $(seq 1 50); do
-    if [ "$(grep -c "graphql gateway listening" "$MIDDLEWARE_LOG" 2>/dev/null || true)" -gt "$previous_ready" ]; then
+    local graphql_ready grpc_ready
+    graphql_ready="$(grep -c "graphql gateway listening" "$MIDDLEWARE_LOG" 2>/dev/null || true)"
+    grpc_ready="$(grep -c "grpc gateway listening" "$MIDDLEWARE_LOG" 2>/dev/null || true)"
+    if [ "$graphql_ready" -gt "$previous_graphql" ] && \
+      { [ "$expect_grpc" -eq 0 ] || [ "$grpc_ready" -gt "$previous_grpc" ]; }; then
       return 0
     fi
     sleep 0.1

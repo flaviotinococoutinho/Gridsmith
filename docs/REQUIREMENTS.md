@@ -85,7 +85,7 @@ graph LR
 | RNF-08 | **Segurança da borda** | execFile sem shell; renderer sem Node; transports locais autenticados; UDS privados/TCP loopback | ✅ | F2/F3 + testes de auth/endpoints + gateways reais |
 | RNF-09 | **Auditabilidade** | artefatos com revisão, hash estável e proveniência obrigatória | ✅ | canonical-core.test.ts |
 | RNF-10 | **Limites explícitos** | capacidades fixas com erro claro (nunca crescimento silencioso) | ✅ | testes de capacidade cheia (skeleton/light/tilemap) |
-| RNF-11 | Latência do plano de controle | decisão baseada em p50/p95/p99 reproduzíveis | 🔶 | harness versionado em `benchmarks/`; baseline oficial registrada pela ADR-019 |
+| RNF-11 | Latência do plano de controle | decisão baseada em p50/p95/p99 reproduzíveis | ✅ | harness e baseline oficial versionados; critério de default na ADR-019 |
 | RNF-12 | Escala de mapa | > 64k células por streaming/chunks | ⬜ | Fase 5 (shared memory para tiles) |
 
 A coluna **Verificação** acima é sustentada por fitness functions — divididas em
@@ -126,7 +126,7 @@ mindmap
 | RT-01 | Node.js ≥ 22, TypeScript strict (`exactOptionalPropertyTypes`) | ✅ |
 | RT-02 | .NET 8, `LayoutKind.Sequential` para todo dado de fio binário | ✅ |
 | RT-03 | MonoGame 3.8.2 (DesktopGL); shaders HLSL compilados via MGCB fora do CI headless (referências de CPU cobrem as equações) | ✅ (caveat documentado) |
-| RT-04 | Plano de controle da engine: JSON-RPC 2.0 com framing `uint32 LE` (16 MiB máx); app ↔ middleware: gRPC prioritário + GraphQL fallback ([`COMPATIBILITY.md`](COMPATIBILITY.md), ADR-016/017) | ✅ |
+| RT-04 | Plano de controle da engine: JSON-RPC 2.0 com framing `uint32 LE` (16 MiB máx); app ↔ middleware: gRPC prioritário medido + GraphQL fallback ([`COMPATIBILITY.md`](COMPATIBILITY.md), ADR-016/017/019) | ✅ |
 | RT-05 | Fronteiras de camada impostas por testes arquiteturais (22 regras) | ✅ |
 | RT-06 | CI: 4 gates (middleware, engine, frontend, e2e) | ✅ |
 | RT-07 | Electron com contextIsolation; binário dispensável no CI (`ELECTRON_SKIP_BINARY_DOWNLOAD`) | ✅ |
