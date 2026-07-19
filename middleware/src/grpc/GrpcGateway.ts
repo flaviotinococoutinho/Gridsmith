@@ -363,7 +363,10 @@ export class GrpcGateway {
     { seq: string; kind: string; payload_json: string }
   > = (call) => {
     if (!this.authenticated(call)) {
-      call.destroy(authenticationError());
+      // Em server-streaming, `destroy(error)` pode fechar o stream sem enviar
+      // um status final ao cliente grpc-js. Emitir `error` é a API que termina
+      // a chamada com o código tipado e impede consumidores presos.
+      call.emit("error", authenticationError());
       return;
     }
     const error = new Error(
@@ -371,7 +374,7 @@ export class GrpcGateway {
     ) as grpc.ServiceError;
     error.code = grpc.status.FAILED_PRECONDITION;
     error.details = error.message;
-    call.destroy(error);
+    call.emit("error", error);
   };
 
   private streamEventsV2: grpc.handleServerStreamingCall<
@@ -398,7 +401,7 @@ export class GrpcGateway {
     }
   > = (call) => {
     if (!this.authenticated(call)) {
-      call.destroy(authenticationError());
+      call.emit("error", authenticationError());
       return;
     }
     const result = this.options.journal.readSince(
