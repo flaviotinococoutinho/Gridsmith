@@ -16,8 +16,23 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSchema, graphql, type GraphQLSchema } from "graphql";
 import type { EditorSurface } from "../canonical/EditorSurface.js";
-import type { EventJournal } from "../transport/EventJournal.js";
-import { resolveTransportEndpoint, type TransportEndpoint } from "../transport/endpoints.js";
+import type {
+  EventEnvelope,
+  EventJournal,
+  JournalReadResult,
+} from "../transport/EventJournal.js";
+import {
+  normalizeEndpointListenError,
+  prepareTransportEndpoint,
+  removeOwnedUnixSocket,
+  resolveTransportEndpoint,
+  restrictUnixSocketPermissions,
+  type TransportEndpoint,
+} from "../transport/endpoints.js";
+import {
+  bearerTokenMatches,
+  validateTransportAuthToken,
+} from "../transport/auth.js";
 import { JsonRpcError } from "../protocol/jsonrpc.js";
 import type { Logger } from "../util/log.js";
 
@@ -48,11 +63,31 @@ export interface GraphQlGatewayOptions {
   surface: EditorSurface;
   journal: EventJournal;
   log: Logger;
+  authToken: string;
 }
 
 /** Enum GraphQL não admite '/': skeleton_define ⇄ skeleton/define. */
 export function graphqlKindToCanonical(kind: string): string {
   return kind.replace("_", "/");
+}
+
+function serializeEvent(event: EventEnvelope): {
+  seq: string;
+  kind: string;
+  payload: unknown;
+} {
+  return { seq: event.seq.toString(), kind: event.kind, payload: event.payload };
+}
+
+function serializeBatch(result: JournalReadResult): Record<string, unknown> {
+  return {
+    middlewareInstanceId: result.middlewareInstanceId,
+    firstAvailableSeq: result.firstAvailableSeq.toString(),
+    lastEventSeq: result.lastEventSeq.toString(),
+    resyncRequired: result.resyncRequired,
+    resyncReason: result.resyncReason ?? null,
+    events: result.events.map(serializeEvent),
+  };
 }
 
 export class GraphQlGateway {
@@ -61,38 +96,49 @@ export class GraphQlGateway {
   readonly endpoint: TransportEndpoint;
 
   constructor(private readonly options: GraphQlGatewayOptions) {
+    validateTransportAuthToken(options.authToken);
     this.schema = buildSchema(fs.readFileSync(resolveSdlPath(), "utf8"));
     this.endpoint = resolveTransportEndpoint(options.pipeName, "graphql");
     this.server = http.createServer((req, res) => void this.onRequest(req, res));
   }
 
   async listen(): Promise<void> {
-    if (this.endpoint.family === "uds" && fs.existsSync(this.endpoint.address)) {
-      fs.unlinkSync(this.endpoint.address);
-    }
-    await new Promise<void>((resolve, reject) => {
-      this.server.once("error", reject);
+    await prepareTransportEndpoint(this.endpoint);
+    try {
+      await new Promise<void>((resolve, reject) => {
+      const failed = (error: Error): void => reject(error);
+      this.server.once("error", failed);
       const done = (): void => {
-        this.server.removeListener("error", reject);
+        this.server.removeListener("error", failed);
         resolve();
       };
       if (this.endpoint.family === "uds") this.server.listen(this.endpoint.address, done);
       else this.server.listen(this.endpoint.port!, this.endpoint.address, done);
-    });
+      });
+      restrictUnixSocketPermissions(this.endpoint);
+    } catch (error) {
+      throw normalizeEndpointListenError(this.endpoint, error);
+    }
     this.options.log.info("graphql gateway listening", { endpoint: this.endpoint.grpcTarget });
   }
 
   async close(): Promise<void> {
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
-    if (this.endpoint.family === "uds" && fs.existsSync(this.endpoint.address)) {
-      fs.unlinkSync(this.endpoint.address);
-    }
+    removeOwnedUnixSocket(this.endpoint);
   }
 
   private async onRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (req.method !== "POST" || req.url !== "/graphql") {
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ errors: [{ message: "POST /graphql only" }] }));
+      return;
+    }
+    if (!bearerTokenMatches(req.headers.authorization, this.options.authToken)) {
+      res.writeHead(401, {
+        "content-type": "application/json",
+        "www-authenticate": "Bearer",
+      });
+      res.end(JSON.stringify({ errors: [{ message: "authentication failed" }] }));
       return;
     }
     let body: Buffer;
@@ -148,19 +194,48 @@ export class GraphQlGateway {
   private rootValue(): Record<string, unknown> {
     const { surface, journal } = this.options;
     return {
-      health: () => ({
-        ok: true,
-        engineConnected: surface.isEngineConnected,
-        lastEventSeq: journal.lastSeq,
-      }),
+      health: () => {
+        const position = journal.position;
+        return {
+          ok: true,
+          engineConnected: surface.isEngineConnected,
+          middlewareInstanceId: position.middlewareInstanceId,
+          firstAvailableSeq: position.firstAvailableSeq.toString(),
+          lastEventSeq: position.lastEventSeq.toString(),
+        };
+      },
       projection: (args: { name: string }) => surface.query(args.name),
+      snapshot: () => {
+        // `snapshot()` e a leitura da posição são síncronas: não há mutação
+        // intercalada no event loop entre a projeção e o cursor carimbado.
+        const projections = surface.snapshot();
+        const position = journal.position;
+        return {
+          projections,
+          middlewareInstanceId: position.middlewareInstanceId,
+          firstAvailableSeq: position.firstAvailableSeq.toString(),
+          lastEventSeq: position.lastEventSeq.toString(),
+        };
+      },
       experience: (args: { family?: string; version?: string }) =>
         surface.resolveExperience(args.family, args.version),
       templates: () => surface.listTemplates(),
+      eventBatch: (args: { middlewareInstanceId: string; afterSeq: string }) =>
+        serializeBatch(journal.readSince(args.middlewareInstanceId, args.afterSeq)),
+      // Compatibilidade temporária: preserva o contrato antigo, que não tem
+      // informação suficiente para detectar restart/gap. Novos usam eventBatch.
       eventsSince: (args: { afterSeq: number }) =>
-        journal.since(args.afterSeq).map((e) => ({ seq: e.seq, kind: e.kind, payload: e.payload })),
-      dispatch: async (args: { kind: string; payload: unknown }) => {
-        const result = await surface.dispatchByKind(graphqlKindToCanonical(args.kind), args.payload);
+        journal.since(args.afterSeq).map((event) => ({
+          seq: Number(event.seq),
+          kind: event.kind,
+          payload: event.payload,
+        })),
+      dispatch: async (args: { kind: string; payload: unknown; requestId?: string }) => {
+        const result = await surface.dispatchByKind(
+          graphqlKindToCanonical(args.kind),
+          args.payload,
+          args.requestId,
+        );
         return {
           event: result.event,
           projection: result.projection ?? null,

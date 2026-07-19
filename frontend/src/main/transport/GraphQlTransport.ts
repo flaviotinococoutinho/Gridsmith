@@ -11,6 +11,11 @@ import {
   resolveTransportEndpoint,
   type TransportEndpoint,
 } from "@p7m/middleware/dist/transport/endpoints.js";
+import {
+  AUTHENTICATION_ERROR_CODE,
+  bearerAuthorization,
+  loadTransportAuthToken,
+} from "@p7m/middleware/dist/transport/auth.js";
 import type { Logger } from "../../core/logging.js";
 
 export interface GraphQlErrorShape {
@@ -29,6 +34,17 @@ export class GraphQlDomainError extends Error {
   }
 }
 
+/** Falha de credencial local; nunca deve ser tratada como indisponibilidade. */
+export class GraphQlAuthenticationError extends Error {
+  readonly code = AUTHENTICATION_ERROR_CODE;
+  readonly statusCode = 401;
+
+  constructor(message = "editor transport authentication failed") {
+    super(message);
+    this.name = "GraphQlAuthenticationError";
+  }
+}
+
 export class GraphQlTransport {
   readonly endpoint: TransportEndpoint;
 
@@ -36,6 +52,7 @@ export class GraphQlTransport {
     pipeName: string,
     private readonly log: Logger,
     private readonly timeoutMs = 10_000,
+    private readonly authToken = loadTransportAuthToken(),
   ) {
     this.endpoint = resolveTransportEndpoint(pipeName, "graphql");
   }
@@ -52,7 +69,10 @@ export class GraphQlTransport {
   ): Promise<T> {
     this.log.trace("graphql execute", { operationName });
     const body = JSON.stringify({ query, variables, operationName });
-    const raw = await this.post(body);
+    const { statusCode, body: raw } = await this.post(body);
+    if (statusCode === 401 || statusCode === 403) {
+      throw new GraphQlAuthenticationError();
+    }
     const parsed = JSON.parse(raw) as { data?: T; errors?: GraphQlErrorShape[] };
     if (parsed.errors && parsed.errors.length > 0) {
       const first = parsed.errors[0]!;
@@ -64,12 +84,16 @@ export class GraphQlTransport {
     return parsed.data;
   }
 
-  private post(body: string): Promise<string> {
+  private post(body: string): Promise<{ statusCode: number; body: string }> {
     return new Promise((resolve, reject) => {
       const options: http.RequestOptions = {
         method: "POST",
         path: "/graphql",
-        headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+        headers: {
+          authorization: bearerAuthorization(this.authToken),
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+        },
         timeout: this.timeoutMs,
         ...(this.endpoint.family === "uds"
           ? { socketPath: this.endpoint.address }
@@ -78,7 +102,12 @@ export class GraphQlTransport {
       const req = http.request(options, (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        res.on("end", () =>
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+          }),
+        );
       });
       req.on("timeout", () => {
         req.destroy(Object.assign(new Error("graphql request timeout"), { code: "ETIMEDOUT" }));

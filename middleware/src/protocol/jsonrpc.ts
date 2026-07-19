@@ -53,6 +53,7 @@ export const RpcErrorCode = {
   SharedMemoryUnavailable: -32004,
   InvalidBinaryLayout: -32005,
   DuplicateId: -32006,
+  AuthenticationFailed: -32007,
 } as const;
 
 /** Erro lançável por handlers; convertido em resposta de erro JSON-RPC. */

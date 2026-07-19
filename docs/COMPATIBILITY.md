@@ -44,8 +44,8 @@ graph TD
 | Adapter de runtime | — (sem constante própria) | `runtime/RuntimeAdapter.ts` · `MonoGameAdapter.ts` | governado pelos perfis (família+versão) | projeção `deferred`/`skipped` com razão |
 | Shared memory | inteiro (`layoutVersion`) | `contracts/shared-memory-layout.md` · header MMF | binária estrita | `InvalidBinaryLayout` (-32005) |
 | Layout de vértice | inteiro (`LayoutVersion`, stride 36) | `engine/.../SharedMemory/SkinnedVertex2D.cs` | offsets publicados por reflexão | `InvalidBinaryLayout` (-32005) |
-| Contrato GraphQL do app | SDL (arquivo único) | `contracts/graphql/editor.schema.graphql` | evolução aditiva; enum `CommandKind` espelha `COMMAND_KINDS` | — (é o destino do fallback; ADR-016) |
-| Contrato gRPC do app | package proto (`p7m.editor.v1`) | `contracts/grpc/p7m_editor.proto` | protobuf aditivo; breaking = novo package | GraphQL em indisponibilidade (ADR-017) |
+| Contrato GraphQL do app | SDL (arquivo único) | `contracts/graphql/editor.schema.graphql` | evolução aditiva; cursor composto e snapshot completos | — (baseline e destino do fallback; ADR-016/019) |
+| Contrato gRPC do app | package proto (`p7m.editor.v1`) | `contracts/grpc/p7m_editor.proto` | protobuf aditivo; `StreamEventsV2` preserva o legado | GraphQL somente em indisponibilidade (ADR-017/019) |
 | Produto / pacotes | SemVer (`0.1.0`) | `*/package.json` · `EngineChannel.ClientVersion` | alpha; sem garantia de compat | — |
 
 > **Não trate todos os componentes como SemVer.** Apenas os pacotes usam SemVer;
@@ -164,24 +164,28 @@ graph TD
 
 | Campo | Conteúdo |
 |---|---|
-| Componente | Superfície baseline app ↔ middleware (queries, mutations e `eventsSince`) — também o destino do fallback do caminho quente (ADR-016/017) |
+| Componente | Superfície baseline app ↔ middleware: queries/mutations completas, `snapshot` e `eventBatch`; também destino do fallback (ADR-016/017/019) |
 | Formato da versão | Sem constante própria — o SDL é o contrato, versionado como arquivo único no repositório |
 | Fonte de verdade | `contracts/graphql/editor.schema.graphql` (o build do middleware copia para `dist/contracts/`; a cópia deve ser **byte-idêntica**) |
 | Regra de compatibilidade | Evolução **aditiva** (campo/valor novo não quebra cliente); o enum `CommandKind` deve espelhar `COMMAND_KINDS` (mapeamento `_` ⇄ `/` — GraphQL não aceita `/` em enum) |
 | Breaking change | Remover/renomear campo, tipo ou valor de enum — app e middleware são processos locais da mesma instalação e atualizam juntos |
 | Migração | n/a (distribuição conjunta) |
-| Fallback | — (o GraphQL **é** o fallback do caminho quente) |
+| Continuidade | Cursor novo é `(middlewareInstanceId, seq decimal uint64)`; `firstAvailableSeq`/`lastEventSeq` delimitam a janela; `resyncRequired` exige reconstrução por `snapshot`. `eventsSince(Int)` permanece legado e não oferece essa garantia. |
+| Autenticação | Bearer efêmero obrigatório. HTTP 401 é erro terminal e não aciona outro transport. |
+| Fallback | — (o GraphQL **é** o baseline completo e o fallback do caminho quente) |
 | Teste | Paridade `dist` ⇄ fonte + enum ⇄ `COMMAND_KINDS` em `middleware/test/transport-gateways.test.ts`; e2e `scripts/verify-transports.sh` |
 
 ### Contrato gRPC do app (proto)
 
 | Campo | Conteúdo |
 |---|---|
-| Componente | Caminho quente app ↔ middleware — serviço `EditorHotPath` (`Dispatch`, `Query`, `StreamEvents`, `Health`) |
+| Componente | Caminho quente app ↔ middleware — serviço `EditorHotPath` (`Dispatch`, `Query`, `Snapshot`, `StreamEventsV2`, `Health`; RPCs legados preservados) |
 | Formato da versão | Package proto — `p7m.editor.v1` |
 | Fonte de verdade | `contracts/grpc/p7m_editor.proto` (cópia em `dist/contracts/` gerada pelo build; byte-idêntica) |
 | Regra de compatibilidade | Protobuf aditivo (campos novos com tags novas); os payloads de comando viajam como `payload_json` e são validados na **mesma fonte única** (`BlueprintStore` + `contracts/schemas/`) — o proto não introduz segunda fonte de validação |
 | Breaking change | Mudança incompatível de mensagem/RPC = novo package (`p7m.editor.v2`) |
 | Migração | n/a (distribuição conjunta) |
-| Fallback | **Indisponibilidade** do canal → fallback imediato para GraphQL com continuidade de eventos por `seq` (`EventJournal`); **incompatibilidade de contrato não é coberta por fallback** |
+| Continuidade | `Health`/`Snapshot` expõem identidade e limites; `StreamEventsV2` envia um frame de status antes dos eventos. Restart/gap/cursor futuro resultam em `resync_required` sem cauda parcial. `request_id` torna retry cross-transport idempotente. |
+| Autenticação | Metadata `authorization` com Bearer efêmero obrigatória. `UNAUTHENTICATED` nunca aciona fallback. |
+| Fallback | **Somente indisponibilidade** do canal → GraphQL; autenticação, domínio e incompatibilidade de contrato não são cobertos por fallback. Default/freeze segue ADR-019. |
 | Teste | Paridade `dist` ⇄ fonte em `middleware/test/transport-gateways.test.ts`; fallback ao vivo em `frontend/test/editor-client.integration.test.ts`; e2e `scripts/verify-transports.sh` |

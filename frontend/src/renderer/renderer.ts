@@ -31,6 +31,8 @@ const log = new EventLog(500);
 
 /** Gate da experiência corrente (governança por runtime); definido no boot. */
 let experienceGate: ExperienceGate | undefined;
+/** Cópia substituível das projeções; resync nunca é tratado como evento incremental. */
+let projectionSnapshot: unknown;
 
 // ---------------------------------------------------------------- toolbar
 
@@ -239,6 +241,13 @@ async function boot(): Promise<void> {
     log.record(event as { kind: string } & Record<string, unknown>);
     refreshProblemBadge();
     renderBottom();
+  });
+  window.p7m.onProjectionResync(({ snapshot }) => {
+    projectionSnapshot = snapshot;
+    // Mantém a reconstrução separada do dirty tracking/event log. Vistas que
+    // consomem projeções leem esta referência no próximo render.
+    void projectionSnapshot;
+    renderView();
   });
 
   renderServices(await window.p7m.serviceStatus());

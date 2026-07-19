@@ -10,14 +10,21 @@ import { test } from "node:test";
 import {
   TransportRouter,
   classifyTransportError,
+  type ClassifiedError,
 } from "../src/core/transportRouter.js";
 import { createLogger, levelEnabled, parseLogLevel } from "../src/core/logging.js";
+
+const unavailable = (reason: string): ClassifiedError => ({
+  category: "availability",
+  transport: true,
+  reason,
+});
 
 test("prioridade: nasce no gRPC; falha de transporte única faz fallback imediato", () => {
   const router = new TransportRouter();
   assert.equal(router.active, "grpc");
 
-  const decision = router.onTransportFailure("grpc", 1_000, "socket ECONNREFUSED");
+  const decision = router.onTransportFailure("grpc", 1_000, unavailable("socket ECONNREFUSED"));
   assert.equal(decision, "fellBack");
   assert.equal(router.active, "graphql");
   assert.equal(router.snapshot.mode, "fallback");
@@ -28,29 +35,29 @@ test("prioridade: nasce no gRPC; falha de transporte única faz fallback imediat
 
 test("limiar configurável: com threshold 2, a primeira falha segura o primário", () => {
   const router = new TransportRouter({ failureThreshold: 2 });
-  assert.equal(router.onTransportFailure("grpc", 0, "x"), "stay");
+  assert.equal(router.onTransportFailure("grpc", 0, unavailable("x")), "stay");
   assert.equal(router.active, "grpc");
-  assert.equal(router.onTransportFailure("grpc", 0, "x"), "fellBack");
+  assert.equal(router.onTransportFailure("grpc", 0, unavailable("x")), "fellBack");
   assert.equal(router.active, "graphql");
 });
 
 test("sucesso zera o contador de falhas (falhas não-consecutivas não acumulam)", () => {
   const router = new TransportRouter({ failureThreshold: 2 });
-  router.onTransportFailure("grpc", 0, "x");
+  router.onTransportFailure("grpc", 0, unavailable("x"));
   router.onCallSuccess("grpc");
-  assert.equal(router.onTransportFailure("grpc", 0, "x"), "stay"); // recomeçou do zero
+  assert.equal(router.onTransportFailure("grpc", 0, unavailable("x")), "stay"); // recomeçou do zero
 });
 
 test("falha no GraphQL nunca muda o modo (não há transporte abaixo)", () => {
   const router = new TransportRouter();
-  router.onTransportFailure("grpc", 0, "down"); // agora em fallback
-  assert.equal(router.onTransportFailure("graphql", 10, "also down"), "stay");
+  router.onTransportFailure("grpc", 0, unavailable("down")); // agora em fallback
+  assert.equal(router.onTransportFailure("graphql", 10, unavailable("also down")), "stay");
   assert.equal(router.active, "graphql");
 });
 
 test("recovery: backoff sobe a escada em sondas ruins e histerese exige 2 boas consecutivas", () => {
   const router = new TransportRouter(); // backoff 2s,4s,8s,16s,30s; promote 2
-  router.onTransportFailure("grpc", 0, "down");
+  router.onTransportFailure("grpc", 0, unavailable("down"));
   assert.equal(router.shouldProbe(1_999), false);
   assert.equal(router.shouldProbe(2_000), true);
 
@@ -73,7 +80,7 @@ test("recovery: backoff sobe a escada em sondas ruins e histerese exige 2 boas c
 
 test("escada de backoff satura no último degrau", () => {
   const router = new TransportRouter({ recoveryBackoffMs: [10, 20] });
-  router.onTransportFailure("grpc", 0, "down");
+  router.onTransportFailure("grpc", 0, unavailable("down"));
   router.onProbeResult(false, 10); // degrau 1 (índice min(1,1)=1 → 20)
   assert.equal(router.snapshot.nextProbeAtMs, 30);
   router.onProbeResult(false, 30); // satura em 20
@@ -88,6 +95,23 @@ test("classificação: UNAVAILABLE/DEADLINE e erros de socket são transporte; d
   // INVALID_ARGUMENT (3) = domínio: o comando é inválido em QUALQUER transporte
   assert.equal(classifyTransportError({ code: 3, message: "bad kind" }).transport, false);
   assert.equal(classifyTransportError(new Error("validation failed")).transport, false);
+});
+
+test("autenticação é categoria própria e o router recusa fallback por construção", () => {
+  for (const error of [
+    { code: 16, message: "UNAUTHENTICATED" },
+    { code: 7, message: "PERMISSION_DENIED" },
+    { code: "P7M_AUTHENTICATION_FAILED", statusCode: 401 },
+    { code: "P7M_AUTH_CONFIGURATION" },
+  ]) {
+    const classified = classifyTransportError(error);
+    assert.equal(classified.category, "authentication");
+    assert.equal(classified.transport, false);
+    const router = new TransportRouter();
+    assert.equal(router.onTransportFailure("grpc", 0, classified), "stay");
+    assert.equal(router.active, "grpc");
+    assert.deepEqual(router.history, []);
+  }
 });
 
 test("opções inválidas são rejeitadas na construção", () => {

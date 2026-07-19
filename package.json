@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "P7M — Ecossistema EaaS para jogos 2D (raiz: apenas tooling de repositório).",
   "scripts": {
-    "docs:verify": "node scripts/verify-docs.mjs"
+    "docs:verify": "node scripts/verify-docs.mjs",
+    "benchmark:transports": "scripts/benchmark-transports.sh"
   }
 }

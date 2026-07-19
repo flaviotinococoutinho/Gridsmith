@@ -1,10 +1,14 @@
 import { EventEmitter } from "node:events";
-import fs from "node:fs";
 import net from "node:net";
 import { randomUUID } from "node:crypto";
 import { JsonRpcPeer } from "./JsonRpcPeer.js";
 import { resolvePipePath } from "./PipeEndpoint.js";
 import { JsonRpcError, PROTOCOL_VERSION, RpcErrorCode } from "../protocol/jsonrpc.js";
+import {
+  prepareUnixSocketPath,
+  removeOwnedUnixSocketPath,
+  restrictUnixSocketPathPermissions,
+} from "./UnixSocketLifecycle.js";
 
 export interface HandshakeParams {
   clientName: string;
@@ -62,10 +66,7 @@ export class EnginePipeServer extends EventEmitter {
   }
 
   async listen(): Promise<void> {
-    // Socket órfão de uma execução anterior impediria o bind no POSIX.
-    if (process.platform !== "win32" && fs.existsSync(this.pipePath)) {
-      fs.unlinkSync(this.pipePath);
-    }
+    if (process.platform !== "win32") await prepareUnixSocketPath(this.pipePath);
     await new Promise<void>((resolve, reject) => {
       this.server.once("error", reject);
       this.server.listen(this.pipePath, () => {
@@ -73,15 +74,14 @@ export class EnginePipeServer extends EventEmitter {
         resolve();
       });
     });
+    if (process.platform !== "win32") restrictUnixSocketPathPermissions(this.pipePath);
   }
 
   async close(): Promise<void> {
     for (const session of this.sessions.values()) session.peer.close();
     this.sessions.clear();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
-    if (process.platform !== "win32" && fs.existsSync(this.pipePath)) {
-      fs.unlinkSync(this.pipePath);
-    }
+    if (process.platform !== "win32") removeOwnedUnixSocketPath(this.pipePath);
   }
 
   get activeSessions(): readonly EngineSession[] {

@@ -9,6 +9,7 @@
 | `-32004` | `SHARED_MEMORY_UNAVAILABLE` | Memory-mapped file não pôde ser aberto/mapeado |
 | `-32005` | `INVALID_BINARY_LAYOUT` | `strideInBytes`/`vertexCount` inconsistentes com o mapa |
 | `-32006` | `DUPLICATE_ID` | Tentativa de registrar um id já existente |
+| `-32007` | `AUTHENTICATION_FAILED` | Token efêmero do editor ausente ou inválido no gateway legado |
 
 Os códigos padrão do JSON-RPC 2.0 (`-32700`, `-32600`, `-32601`, `-32602`, `-32603`)
 mantêm a semântica da especificação.
@@ -29,7 +30,7 @@ mindmap
         p602["Parametros invalidos"]
       c603["-32603 InternalError"]
         p603["Falha interna do servidor"]
-    Dominio P7M -32000 a -32006
+    Dominio P7M -32000 a -32007
       d000["-32000 EngineNotReady"]
         q000["Sem handshake ou reidratando"]
       d001["-32001 ProtocolMismatch"]
@@ -44,9 +45,11 @@ mindmap
         q005["stride ou vertexCount inconsistente"]
       d006["-32006 DuplicateId"]
         q006["id ja existente"]
+      d007["-32007 AuthenticationFailed"]
+        q007["token efemero ausente ou invalido"]
 ```
 
-*Mostra a taxonomia dos códigos de erro separando os reservados do JSON-RPC 2.0 (`-327xx`/`-326xx`) dos de domínio P7M (`-32000..-32006`), com o significado de cada um. Nomes/valores são idênticos em TypeScript e C#.*
+*Mostra a taxonomia dos códigos de erro separando os reservados do JSON-RPC 2.0 (`-327xx`/`-326xx`) dos de domínio P7M (`-32000..-32007`). Os códigos compartilhados com a engine permanecem idênticos em TypeScript e C#; `AuthenticationFailed` pertence ao gateway do editor no middleware.*
 
 ## Origem dos erros de sessão (`-32000` / `-32001`)
 

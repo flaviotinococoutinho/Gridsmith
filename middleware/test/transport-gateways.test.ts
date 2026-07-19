@@ -25,6 +25,10 @@ import { BlueprintStore, type BlueprintEvent } from "../src/domain/BlueprintStor
 import { GraphQlGateway, resolveSdlPath, graphqlKindToCanonical } from "../src/graphql/GraphQlGateway.js";
 import { GrpcGateway, resolveProtoPath, loadEditorProto } from "../src/grpc/GrpcGateway.js";
 import { EventJournal } from "../src/transport/EventJournal.js";
+import {
+  bearerAuthorization,
+  generateTransportAuthToken,
+} from "../src/transport/auth.js";
 import { ExperienceGovernor } from "../src/runtime/ExperienceGovernor.js";
 import { RuntimeProfileRegistry } from "../src/runtime/RuntimeProfile.js";
 import { MONOGAME_PROFILES } from "../src/runtime/profiles/monogame.js";
@@ -52,7 +56,7 @@ interface Rig {
   store: BlueprintStore;
 }
 
-function makeRig(): Rig {
+function makeRig(capacity = 512, middlewareInstanceId = "middleware-test"): Rig {
   const store = new BlueprintStore();
   const hooks = new HookBus();
   const adapter = offlineAdapter();
@@ -61,27 +65,44 @@ function makeRig(): Rig {
   for (const profile of MONOGAME_PROFILES) profiles.register(profile);
   const governor = new ExperienceGovernor(profiles);
   const surface = new EditorSurface({ orchestrator, store, governor, adapter });
-  const journal = new EventJournal();
+  const journal = new EventJournal(capacity, middlewareInstanceId);
   store.on("event", (event: BlueprintEvent) => journal.append(event.kind, event));
   return { surface, journal, store };
 }
 
 const silent = createLogger("test", { level: "silent" });
+const AUTH_TOKEN = generateTransportAuthToken();
 let pipeCounter = 0;
 
 function graphqlRequest(
   socketPath: string,
   query: string,
   variables?: Record<string, unknown>,
-): Promise<{ data?: Record<string, unknown>; errors?: Array<{ message: string; extensions?: { code?: number } }> }> {
+  authToken = AUTH_TOKEN,
+): Promise<{
+  statusCode: number;
+  data?: Record<string, unknown>;
+  errors?: Array<{ message: string; extensions?: { code?: number } }>;
+}> {
   const body = JSON.stringify({ query, variables });
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { socketPath, path: "/graphql", method: "POST", headers: { "content-type": "application/json" } },
+      {
+        socketPath,
+        path: "/graphql",
+        method: "POST",
+        headers: {
+          authorization: bearerAuthorization(authToken),
+          "content-type": "application/json",
+        },
+      },
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
+        res.on("end", () => resolve({
+          statusCode: res.statusCode ?? 0,
+          ...JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>,
+        }));
       },
     );
     req.on("error", reject);
@@ -90,13 +111,40 @@ function graphqlRequest(
 }
 
 interface HotPathClient {
-  Health(req: object, cb: (err: grpc.ServiceError | null, reply: { ok: boolean; last_event_seq: number }) => void): void;
+  Health(
+    req: object,
+    cb: (
+      err: grpc.ServiceError | null,
+      reply: {
+        ok: boolean;
+        middleware_instance_id: string;
+        first_available_seq: string;
+        last_event_seq: string;
+      },
+    ) => void,
+  ): void;
   Dispatch(
-    req: { kind: string; payload_json: string },
+    req: { kind: string; payload_json: string; request_id?: string },
     cb: (err: grpc.ServiceError | null, reply: { event_json: string; projection_json: string }) => void,
   ): void;
   Query(req: { projection: string }, cb: (err: grpc.ServiceError | null, reply: { result_json: string }) => void): void;
+  Snapshot(
+    req: object,
+    cb: (
+      err: grpc.ServiceError | null,
+      reply: {
+        projections_json: string;
+        middleware_instance_id: string;
+        first_available_seq: string;
+        last_event_seq: string;
+      },
+    ) => void,
+  ): void;
   StreamEvents(req: { after_seq: number }): { on(ev: string, fn: (arg: unknown) => void): void; cancel(): void };
+  StreamEventsV2(req: {
+    middleware_instance_id: string;
+    after_seq: string;
+  }): { on(ev: string, fn: (arg: unknown) => void): void; cancel(): void };
   close(): void;
 }
 
@@ -104,7 +152,22 @@ function grpcClient(target: string): HotPathClient {
   const pkg = loadEditorProto() as unknown as {
     p7m: { editor: { v1: { EditorHotPath: new (t: string, c: grpc.ChannelCredentials) => HotPathClient } } };
   };
-  return new pkg.p7m.editor.v1.EditorHotPath(target, grpc.credentials.createInsecure());
+  const raw = new pkg.p7m.editor.v1.EditorHotPath(target, grpc.credentials.createInsecure());
+  const authenticatedMethods = new Set([
+    "Health", "Dispatch", "Query", "Snapshot", "StreamEvents", "StreamEventsV2",
+  ]);
+  return new Proxy(raw as object, {
+    get(targetClient, property, receiver) {
+      const value = Reflect.get(targetClient, property, receiver) as unknown;
+      if (typeof value !== "function") return value;
+      if (!authenticatedMethods.has(String(property))) return value.bind(targetClient);
+      return (...args: unknown[]) => {
+        const metadata = new grpc.Metadata();
+        metadata.set("authorization", bearerAuthorization(AUTH_TOKEN));
+        return Reflect.apply(value, targetClient, [args[0], metadata, ...args.slice(1)]);
+      };
+    },
+  }) as HotPathClient;
 }
 
 const LIGHT = { lightId: "sun", type: "point", position: [0, 0], color: [1, 1, 1], intensity: 1, radius: 64 };
@@ -140,6 +203,37 @@ test("paridade de contrato: cópias em dist/ idênticas à fonte em contracts/ e
   );
 });
 
+test("EditorSurface: snapshot completo e requestId impedem dispatch duplicado", async () => {
+  const rig = makeRig(8, "middleware-pure");
+  const payload = { entityDefId: "coin", fields: [{ name: "value", type: "int", default: 1 }] };
+
+  const first = rig.surface.dispatchByKind("entitydef/define", payload, "request-1");
+  const concurrentRetry = rig.surface.dispatchByKind("entitydef/define", payload, "request-1");
+  const [firstResult, retryResult] = await Promise.all([first, concurrentRetry]);
+  assert.equal(firstResult, retryResult);
+  assert.equal(rig.journal.lastSeq, 1n);
+
+  const completedRetry = await rig.surface.dispatchByKind("entitydef/define", payload, "request-1");
+  assert.equal(completedRetry, firstResult);
+  assert.equal(rig.journal.lastSeq, 1n);
+  await assert.rejects(
+    rig.surface.dispatchByKind(
+      "entitydef/define",
+      { ...payload, entityDefId: "other" },
+      "request-1",
+    ),
+    /different command/,
+  );
+
+  const snapshot = rig.surface.snapshot();
+  assert.deepEqual(Object.keys(snapshot).sort(),
+    ["camera", "document", "entities", "entityDefs", "levels", "lights", "meshes", "skeletons", "world"].sort());
+  assert.equal(
+    (snapshot.entityDefs["entityDefs"] as Array<{ entityDefId: string }>)[0]?.entityDefId,
+    "coin",
+  );
+});
+
 test("GraphQL: dispatch/query/eventsSince/templates/experience na mesma superfície canônica", async () => {
   const { surface, journal } = makeRig();
   const gateway = new GraphQlGateway({
@@ -147,13 +241,32 @@ test("GraphQL: dispatch/query/eventsSince/templates/experience na mesma superfí
     surface,
     journal,
     log: silent,
+    authToken: AUTH_TOKEN,
   });
   await gateway.listen();
   try {
     const socketPath = gateway.endpoint.address;
 
-    const health = await graphqlRequest(socketPath, "{ health { ok engineConnected lastEventSeq } }");
-    assert.deepEqual(health.data?.["health"], { ok: true, engineConnected: false, lastEventSeq: 0 });
+    const health = await graphqlRequest(
+      socketPath,
+      "{ health { ok engineConnected middlewareInstanceId firstAvailableSeq lastEventSeq } }",
+    );
+    assert.deepEqual(health.data?.["health"], {
+      ok: true,
+      engineConnected: false,
+      middlewareInstanceId: "middleware-test",
+      firstAvailableSeq: "1",
+      lastEventSeq: "0",
+    });
+
+    const unauthorized = await graphqlRequest(
+      socketPath,
+      "{ health { ok } }",
+      undefined,
+      generateTransportAuthToken(),
+    );
+    assert.equal(unauthorized.statusCode, 401);
+    assert.equal(unauthorized.data, undefined);
 
     const dispatched = await graphqlRequest(
       socketPath,
@@ -174,6 +287,55 @@ test("GraphQL: dispatch/query/eventsSince/templates/experience na mesma superfí
     // eventos por polling incremental (fallback): o dispatch acima é seq 1
     const events = await graphqlRequest(socketPath, `{ eventsSince(afterSeq: 0) { seq kind } }`);
     assert.deepEqual(events.data?.["eventsSince"], [{ seq: 1, kind: "lightAdded" }]);
+
+    const batch = await graphqlRequest(
+      socketPath,
+      `query ($instance: String!, $after: String!) {
+        eventBatch(middlewareInstanceId: $instance, afterSeq: $after) {
+          middlewareInstanceId firstAvailableSeq lastEventSeq
+          resyncRequired resyncReason events { seq kind }
+        }
+      }`,
+      { instance: "middleware-test", after: "0" },
+    );
+    assert.deepEqual(batch.data?.["eventBatch"], {
+      middlewareInstanceId: "middleware-test",
+      firstAvailableSeq: "1",
+      lastEventSeq: "1",
+      resyncRequired: false,
+      resyncReason: null,
+      events: [{ seq: "1", kind: "lightAdded" }],
+    });
+
+    const changed = await graphqlRequest(
+      socketPath,
+      `query { eventBatch(middlewareInstanceId: "old-process", afterSeq: "99") {
+        resyncRequired resyncReason events { seq }
+      } }`,
+    );
+    assert.deepEqual(changed.data?.["eventBatch"], {
+      resyncRequired: true,
+      resyncReason: "instance_changed",
+      events: [],
+    });
+
+    const snapshot = await graphqlRequest(
+      socketPath,
+      `{ snapshot { middlewareInstanceId firstAvailableSeq lastEventSeq projections } }`,
+    );
+    const snap = snapshot.data?.["snapshot"] as {
+      middlewareInstanceId: string;
+      lastEventSeq: string;
+      projections: Record<string, unknown>;
+    };
+    assert.equal(snap.middlewareInstanceId, "middleware-test");
+    assert.equal(snap.lastEventSeq, "1");
+    assert.deepEqual(Object.keys(snap.projections).sort(),
+      ["camera", "document", "entities", "entityDefs", "levels", "lights", "meshes", "skeletons", "world"].sort());
+    assert.equal(
+      ((snap.projections["lights"] as { lights: Array<{ lightId: string }> }).lights[0]?.lightId),
+      "sun",
+    );
 
     const templates = await graphqlRequest(socketPath, "{ templates { id label } }");
     assert.ok(
@@ -197,6 +359,51 @@ test("GraphQL: dispatch/query/eventsSince/templates/experience na mesma superfí
   }
 });
 
+test("GraphQL eventBatch: gap/cursor futuro são explícitos e nunca retornam cauda parcial", async () => {
+  const { surface, journal } = makeRig(2, "middleware-gap");
+  journal.append("a", { kind: "a" });
+  journal.append("b", { kind: "b" });
+  journal.append("c", { kind: "c" });
+  const gateway = new GraphQlGateway({
+    pipeName: `p7m-gql-gap-${process.pid}-${pipeCounter++}`,
+    surface,
+    journal,
+    log: silent,
+    authToken: AUTH_TOKEN,
+  });
+  await gateway.listen();
+  try {
+    const query = `query ($after: String!) {
+      eventBatch(middlewareInstanceId: "middleware-gap", afterSeq: $after) {
+        firstAvailableSeq lastEventSeq resyncRequired resyncReason events { seq }
+      }
+    }`;
+    const gap = await graphqlRequest(gateway.endpoint.address, query, { after: "0" });
+    assert.deepEqual(gap.data?.["eventBatch"], {
+      firstAvailableSeq: "2",
+      lastEventSeq: "3",
+      resyncRequired: true,
+      resyncReason: "journal_gap",
+      events: [],
+    });
+    const ahead = await graphqlRequest(gateway.endpoint.address, query, { after: "9" });
+    assert.deepEqual(ahead.data?.["eventBatch"], {
+      firstAvailableSeq: "2",
+      lastEventSeq: "3",
+      resyncRequired: true,
+      resyncReason: "cursor_ahead",
+      events: [],
+    });
+    const invalid = await graphqlRequest(gateway.endpoint.address, query, { after: "01" });
+    assert.equal(
+      (invalid.data?.["eventBatch"] as { resyncReason: string }).resyncReason,
+      "invalid_cursor",
+    );
+  } finally {
+    await gateway.close();
+  }
+});
+
 test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", async () => {
   const { surface, journal } = makeRig();
   const gateway = new GrpcGateway({
@@ -204,14 +411,23 @@ test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", asyn
     surface,
     journal,
     log: silent,
+    authToken: AUTH_TOKEN,
   });
   await gateway.listen();
   const client = grpcClient(gateway.endpoint.grpcTarget);
   try {
-    const health = await new Promise<{ ok: boolean }>((resolve, reject) =>
+    const health = await new Promise<{
+      ok: boolean;
+      middleware_instance_id: string;
+      first_available_seq: string;
+      last_event_seq: string;
+    }>((resolve, reject) =>
       client.Health({}, (err, reply) => (err ? reject(err) : resolve(reply))),
     );
     assert.equal(health.ok, true);
+    assert.equal(health.middleware_instance_id, "middleware-test");
+    assert.equal(health.first_available_seq, "1");
+    assert.equal(health.last_event_seq, "0");
 
     // catch-up: um evento ANTES do stream abrir
     await new Promise<void>((resolve, reject) =>
@@ -223,14 +439,14 @@ test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", asyn
       }),
     );
 
-    const received: Array<{ seq: number; kind: string }> = [];
+    const received: Array<{ seq: string; kind: string }> = [];
     const stream = client.StreamEvents({ after_seq: 0 });
     stream.on("error", () => {
       // CANCELLED esperado quando o teste encerra o stream
     });
     const gotTwo = new Promise<void>((resolve) => {
       stream.on("data", (raw) => {
-        const e = raw as { seq: number; kind: string };
+        const e = raw as { seq: string; kind: string };
         received.push({ seq: e.seq, kind: e.kind });
         if (received.length === 2) resolve();
       });
@@ -245,8 +461,8 @@ test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", asyn
     );
     await gotTwo;
     assert.deepEqual(received, [
-      { seq: 1, kind: "lightAdded" },
-      { seq: 2, kind: "lightRemoved" },
+      { seq: "1", kind: "lightAdded" },
+      { seq: "2", kind: "lightRemoved" },
     ]);
     stream.cancel();
 
@@ -255,6 +471,56 @@ test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", asyn
       client.Query({ projection: "lights" }, (err, reply) => (err ? reject(err) : resolve(reply))),
     );
     assert.deepEqual(JSON.parse(result.result_json), { lights: [] }); // removida acima
+
+    const snapshot = await new Promise<{
+      projections_json: string;
+      middleware_instance_id: string;
+      first_available_seq: string;
+      last_event_seq: string;
+    }>((resolve, reject) =>
+      client.Snapshot({}, (snapshotError, reply) =>
+        snapshotError ? reject(snapshotError) : resolve(reply)),
+    );
+    assert.equal(snapshot.middleware_instance_id, "middleware-test");
+    assert.equal(snapshot.last_event_seq, "2");
+    const projections = JSON.parse(snapshot.projections_json) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(projections).sort(),
+      ["camera", "document", "entities", "entityDefs", "levels", "lights", "meshes", "skeletons", "world"].sort());
+
+    const status = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const v2 = client.StreamEventsV2({
+        middleware_instance_id: "middleware-test",
+        after_seq: "2",
+      });
+      v2.on("error", reject);
+      v2.on("data", (raw) => {
+        const frame = raw as { status?: Record<string, unknown> };
+        if (frame.status) {
+          resolve(frame.status);
+          v2.cancel();
+        }
+      });
+    });
+    assert.equal(status["resync_required"], false);
+    assert.equal(status["last_event_seq"], "2");
+
+    // Estoura a janela e prova que o V2 envia apenas controle de resync, sem
+    // entregar a cauda parcial disponível no ring.
+    for (let i = 0; i < 513; i++) journal.append("synthetic", { kind: "synthetic", i });
+    const gapFrames = await new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
+      const frames: Array<Record<string, unknown>> = [];
+      const v2 = client.StreamEventsV2({
+        middleware_instance_id: "middleware-test",
+        after_seq: "0",
+      });
+      v2.on("data", (raw) => frames.push(raw as Record<string, unknown>));
+      v2.on("error", reject);
+      v2.on("end", () => resolve(frames));
+    });
+    assert.equal(gapFrames.length, 1, "gap não pode entregar eventos parciais");
+    const gapStatus = gapFrames[0]?.["status"] as Record<string, unknown>;
+    assert.equal(gapStatus["resync_required"], true);
+    assert.equal(gapStatus["resync_reason"], "journal_gap");
 
     // erro tipado: kind inválido -> INVALID_ARGUMENT com código estável nos details
     const err = await new Promise<grpc.ServiceError>((resolve) =>
@@ -271,17 +537,59 @@ test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", asyn
 test("paridade entre transports: mesma mutação via GraphQL aparece na query gRPC (superfície única)", async () => {
   const rig = makeRig();
   const pipe = `p7m-both-${process.pid}-${pipeCounter++}`;
-  const gql = new GraphQlGateway({ pipeName: pipe, surface: rig.surface, journal: rig.journal, log: silent });
-  const hot = new GrpcGateway({ pipeName: pipe, surface: rig.surface, journal: rig.journal, log: silent });
+  const gql = new GraphQlGateway({
+    pipeName: pipe,
+    surface: rig.surface,
+    journal: rig.journal,
+    log: silent,
+    authToken: AUTH_TOKEN,
+  });
+  const hot = new GrpcGateway({
+    pipeName: pipe,
+    surface: rig.surface,
+    journal: rig.journal,
+    log: silent,
+    authToken: AUTH_TOKEN,
+  });
   await gql.listen();
   await hot.listen();
   const client = grpcClient(hot.endpoint.grpcTarget);
   try {
+    const definition = { entityDefId: "player", archetypeId: "hero", fields: [] };
     await graphqlRequest(
       gql.endpoint.address,
-      `mutation ($p: JSON!) { dispatch(kind: entitydef_define, payload: $p) { event } }`,
-      { p: { entityDefId: "player", archetypeId: "hero", fields: [] } },
+      `mutation ($p: JSON!) {
+        dispatch(kind: entitydef_define, payload: $p, requestId: "same-dispatch") { event }
+      }`,
+      { p: definition },
     );
+
+    // Simula resposta gRPC perdida e retry no GraphQL (ou vice-versa): o mesmo
+    // requestId cruza transports sem reaplicar o comando/evento.
+    await new Promise<void>((resolve, reject) =>
+      client.Dispatch(
+        {
+          kind: "entitydef/define",
+          payload_json: JSON.stringify(definition),
+          request_id: "same-dispatch",
+        },
+        (err) => (err ? reject(err) : resolve()),
+      ),
+    );
+    assert.equal(rig.journal.lastSeq, 1n, "retry cross-transport deve emitir um único evento");
+    const reused = await new Promise<grpc.ServiceError>((resolve) =>
+      client.Dispatch(
+        {
+          kind: "entitydef/define",
+          payload_json: JSON.stringify({ ...definition, entityDefId: "enemy" }),
+          request_id: "same-dispatch",
+        },
+        (err) => resolve(err!),
+      ),
+    );
+    assert.equal(reused.code, grpc.status.INVALID_ARGUMENT);
+    assert.match(reused.details, /different command/);
+
     const viaGrpc = await new Promise<{ result_json: string }>((resolve, reject) =>
       client.Query({ projection: "entityDefs" }, (err, reply) => (err ? reject(err) : resolve(reply))),
     );

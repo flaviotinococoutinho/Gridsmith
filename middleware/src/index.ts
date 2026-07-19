@@ -18,6 +18,7 @@ import { EditorSurface } from "./canonical/EditorSurface.js";
 import { GraphQlGateway } from "./graphql/GraphQlGateway.js";
 import { GrpcGateway } from "./grpc/GrpcGateway.js";
 import { EventJournal } from "./transport/EventJournal.js";
+import { loadTransportAuthToken } from "./transport/auth.js";
 import { createLogger } from "./util/log.js";
 import { EditorGateway } from "./ipc/EditorGateway.js";
 import { EnginePipeServer, type EngineLogEntry, type EngineSession } from "./ipc/EnginePipeServer.js";
@@ -66,6 +67,7 @@ function parseArgs(argv: string[]): {
 async function main(): Promise<void> {
   const { pipeName, mcp, assetsRoot, grpc, graphql } = parseArgs(process.argv.slice(2));
   const log = createLogger("p7m");
+  const authToken = loadTransportAuthToken();
 
   const pipeServer = new EnginePipeServer({
     ...(pipeName !== undefined ? { pipeName } : {}),
@@ -117,6 +119,7 @@ async function main(): Promise<void> {
     store,
     governor,
     adapter,
+    authToken,
   });
   editorGateway.on("session", (session) => {
     console.error(`[p7m] editor session ${session.sessionId} established: ${session.clientName}`);
@@ -179,6 +182,7 @@ async function main(): Promise<void> {
         surface,
         journal,
         log: log.child("graphql"),
+        authToken,
       })
     : undefined;
   const grpcGateway = grpc
@@ -187,6 +191,7 @@ async function main(): Promise<void> {
         surface,
         journal,
         log: log.child("grpc"),
+        authToken,
       })
     : undefined;
 

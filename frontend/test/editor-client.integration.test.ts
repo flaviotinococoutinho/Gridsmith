@@ -9,6 +9,8 @@
  */
 
 import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { EnginePipeServer } from "@p7m/middleware/dist/ipc/EnginePipeServer.js";
 import { BlueprintStore } from "@p7m/middleware/dist/domain/BlueprintStore.js";
@@ -19,12 +21,17 @@ import { HookBus } from "@p7m/middleware/dist/canonical/HookBus.js";
 import { GraphQlGateway } from "@p7m/middleware/dist/graphql/GraphQlGateway.js";
 import { GrpcGateway } from "@p7m/middleware/dist/grpc/GrpcGateway.js";
 import { EventJournal } from "@p7m/middleware/dist/transport/EventJournal.js";
+import { generateTransportAuthToken } from "@p7m/middleware/dist/transport/auth.js";
 import { ExperienceGovernor } from "@p7m/middleware/dist/runtime/ExperienceGovernor.js";
 import { MonoGameAdapter } from "@p7m/middleware/dist/runtime/MonoGameAdapter.js";
 import { RuntimeProfileRegistry } from "@p7m/middleware/dist/runtime/RuntimeProfile.js";
 import { MONOGAME_PROFILES } from "@p7m/middleware/dist/runtime/profiles/monogame.js";
 import { createLogger as createMiddlewareLogger } from "@p7m/middleware/dist/util/log.js";
-import { EditorClient } from "../src/main/EditorClient.js";
+import {
+  EditorClient,
+  type ProjectionSnapshot,
+  type ResynchronizationRecord,
+} from "../src/main/EditorClient.js";
 import { createLogger } from "../src/core/logging.js";
 import { ExperienceGate } from "../src/core/experienceGate.js";
 
@@ -37,11 +44,19 @@ interface Rig {
   graphql: GraphQlGateway;
   grpc: GrpcGateway;
   surface: EditorSurface;
+  store: BlueprintStore;
   journal: EventJournal;
+  authToken: string;
   close(): Promise<void>;
 }
 
-async function makeRig(tag: string): Promise<Rig> {
+interface RigOptions {
+  journalCapacity?: number;
+  graphqlAuthToken?: string;
+  grpcAuthToken?: string;
+}
+
+async function makeRig(tag: string, options: RigOptions = {}): Promise<Rig> {
   const pipeName = `p7m-fe-${tag}-${process.pid}-${Date.now() % 100000}`;
   const engineServer = new EnginePipeServer({ pipeName, requestTimeoutMs: 2000 });
   const capabilities = new CapabilityRegistry(engineServer);
@@ -55,11 +70,24 @@ async function makeRig(tag: string): Promise<Rig> {
     governor: new ExperienceGovernor(profiles, capabilities),
     adapter,
   });
-  const journal = new EventJournal();
+  const journal = new EventJournal(options.journalCapacity);
+  const authToken = generateTransportAuthToken();
   store.on("event", (event: { kind: string }) => journal.append(event.kind, event));
 
-  const graphql = new GraphQlGateway({ pipeName, surface, journal, log: silentMw });
-  const grpc = new GrpcGateway({ pipeName, surface, journal, log: silentMw });
+  const graphql = new GraphQlGateway({
+    pipeName,
+    surface,
+    journal,
+    log: silentMw,
+    authToken: options.graphqlAuthToken ?? authToken,
+  });
+  const grpc = new GrpcGateway({
+    pipeName,
+    surface,
+    journal,
+    log: silentMw,
+    authToken: options.grpcAuthToken ?? authToken,
+  });
   await engineServer.listen();
   await graphql.listen();
   await grpc.listen();
@@ -69,7 +97,9 @@ async function makeRig(tag: string): Promise<Rig> {
     graphql,
     grpc,
     surface,
+    store,
     journal,
+    authToken,
     close: async () => {
       grpc.forceShutdown();
       await graphql.close();
@@ -80,12 +110,15 @@ async function makeRig(tag: string): Promise<Rig> {
 
 test("EditorClient v2: conecta via gRPC, despacha, consulta, recebe eventos por stream e alimenta o gate", async () => {
   const rig = await makeRig("hot");
-  const client = new EditorClient(rig.pipeName, { requestTimeoutMs: 2000, log: silentFe });
+  const client = new EditorClient(rig.pipeName, {
+    requestTimeoutMs: 2000,
+    authToken: rig.authToken,
+    log: silentFe,
+  });
   try {
-    const { sessionId } = await client.connect();
-    assert.ok(sessionId.length > 0);
+    await client.connect();
     assert.equal(client.isConnected, true);
-    assert.equal(client.activeTransport, "grpc");
+    assert.equal(client.technicalDiagnostics.activeTransport, "gRPC");
 
     const received: string[] = [];
     client.onBlueprintEvent((event) => received.push(event.kind));
@@ -119,7 +152,11 @@ test("EditorClient v2: conecta via gRPC, despacha, consulta, recebe eventos por 
 
 test("EditorClient v2: template Plataforma 2D pela superfície GraphQL", async () => {
   const rig = await makeRig("tpl");
-  const client = new EditorClient(rig.pipeName, { requestTimeoutMs: 2000, log: silentFe });
+  const client = new EditorClient(rig.pipeName, {
+    requestTimeoutMs: 2000,
+    authToken: rig.authToken,
+    log: silentFe,
+  });
   try {
     await client.connect();
 
@@ -138,17 +175,19 @@ test("EditorClient v2: template Plataforma 2D pela superfície GraphQL", async (
   }
 });
 
-test("fallback ao vivo: gRPC cai no meio da sessão → chamadas e eventos seguem via GraphQL; recovery repromove", async () => {
+test("resiliência: fallback gRPC → GraphQL mantém chamadas e eventos", async () => {
   const rig = await makeRig("fb");
   const client = new EditorClient(rig.pipeName, {
     requestTimeoutMs: 2000,
     eventPollMs: 50,
     probeTickMs: 50,
+    authToken: rig.authToken,
+    router: { recoveryBackoffMs: [25], promoteAfterProbes: 2 },
     log: silentFe,
   });
   try {
     await client.connect();
-    assert.equal(client.activeTransport, "grpc");
+    assert.equal(client.technicalDiagnostics.activeTransport, "gRPC");
 
     const received: string[] = [];
     client.onBlueprintEvent((event) => received.push(event.kind));
@@ -168,7 +207,7 @@ test("fallback ao vivo: gRPC cai no meio da sessão → chamadas e eventos segue
     // a PRÓXIMA chamada quente falha no transporte e cai para o GraphQL
     const viaFallback = await client.dispatch("light/remove", { lightId: "sun" });
     assert.equal(viaFallback.event.kind, "lightRemoved");
-    assert.equal(client.activeTransport, "graphql");
+    assert.equal(client.technicalDiagnostics.activeTransport, "GraphQL fallback");
 
     // eventos seguem chegando (polling incremental, sem perder o seq 2)
     await new Promise((r) => setTimeout(r, 300));
@@ -176,31 +215,296 @@ test("fallback ao vivo: gRPC cai no meio da sessão → chamadas e eventos segue
 
     // erro de DOMÍNIO no fallback NÃO derruba nada e carrega o código estável
     await assert.rejects(client.query("projecao-inexistente"), /-32602|must be one of/);
-    assert.equal(client.activeTransport, "graphql");
+    assert.equal(client.technicalDiagnostics.activeTransport, "GraphQL fallback");
 
-    // ---- gRPC volta: sondas com histerese repromovem ----
-    const revived = new GrpcGateway({
-      pipeName: rig.pipeName,
-      surface: rig.surface,
-      journal: rig.journal,
-      log: silentMw,
-    });
-    await revived.listen();
-    try {
-      const deadline = Date.now() + 15_000;
-      while (client.activeTransport !== "grpc" && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      assert.equal(client.activeTransport, "grpc", "recovery deve repromover ao gRPC");
-
-      // e o caminho quente volta a funcionar no primário
-      const back = await client.query<{ lights: unknown[] }>("lights");
-      assert.deepEqual(back.lights, []);
-    } finally {
-      revived.forceShutdown();
-    }
   } finally {
     client.close();
     await rig.close();
   }
 });
+
+test("resiliência: repromoção GraphQL → gRPC exige sondas saudáveis consecutivas", async () => {
+  const rig = await makeRig("promote");
+  const client = new EditorClient(rig.pipeName, {
+    requestTimeoutMs: 1000,
+    eventPollMs: 25,
+    probeTickMs: 20,
+    authToken: rig.authToken,
+    router: { recoveryBackoffMs: [15], promoteAfterProbes: 2 },
+    log: silentFe,
+  });
+  let revived: GrpcGateway | undefined;
+  try {
+    await client.connect();
+    rig.grpc.forceShutdown();
+
+    const whileDown = await client.query<{ lights: unknown[] }>("lights");
+    assert.deepEqual(whileDown.lights, []);
+    assert.equal(client.technicalDiagnostics.activeTransport, "GraphQL fallback");
+
+    revived = new GrpcGateway({
+      pipeName: rig.pipeName,
+      surface: rig.surface,
+      journal: rig.journal,
+      log: silentMw,
+      authToken: rig.authToken,
+    });
+    await revived.listen();
+
+    await waitUntil(
+      () => client.technicalDiagnostics.activeTransport === "gRPC",
+      10_000,
+      "gRPC não foi repromovido após duas sondas saudáveis",
+    );
+    assert.match(client.technicalDiagnostics.switchReason ?? "", /healthy after 2 consecutive probes/);
+
+    const afterPromotion = await client.query<{ lights: unknown[] }>("lights");
+    assert.deepEqual(afterPromotion.lights, []);
+  } finally {
+    revived?.forceShutdown();
+    client.close();
+    await rig.close();
+  }
+});
+
+test("resiliência: autenticação gRPC inválida não faz fallback para GraphQL", async () => {
+  const rig = await makeRig("auth", { grpcAuthToken: generateTransportAuthToken() });
+  const client = new EditorClient(rig.pipeName, {
+    requestTimeoutMs: 1000,
+    authToken: rig.authToken,
+    log: silentFe,
+  });
+  try {
+    await assert.rejects(() => client.connect(), /authentication failed/i);
+    assert.equal(client.technicalDiagnostics.activeTransport, "gRPC");
+    assert.equal(client.technicalDiagnostics.resynchronizationCount, 0);
+    assert.equal(client.latestProjectionSnapshot, undefined);
+  } finally {
+    client.close();
+    await rig.close();
+  }
+});
+
+test("resiliência: gap maior que EventJournal faz resync completo sem cauda parcial", async () => {
+  const rig = await makeRig("gap", { journalCapacity: 2 });
+  const client = new EditorClient(rig.pipeName, {
+    requestTimeoutMs: 1000,
+    eventPollMs: 20,
+    probeTickMs: 1000,
+    authToken: rig.authToken,
+    router: { recoveryBackoffMs: [10_000], promoteAfterProbes: 2 },
+    log: silentFe,
+  });
+  const deliveredResponses: number[] = [];
+  const resyncs: Array<{
+    reason: string;
+    firstAvailableSeq: string;
+    lastEventSeq: string;
+    response?: number;
+  }> = [];
+  try {
+    await client.connect();
+    client.onBlueprintEvent((event) => {
+      const settings = event["settings"] as { response?: number } | undefined;
+      if (settings?.response !== undefined) deliveredResponses.push(settings.response);
+    });
+    client.onResynchronized((snapshot, record) => {
+      const camera = snapshot.projections["camera"] as
+        | { camera?: { response?: number } }
+        | undefined;
+      resyncs.push({
+        reason: record.reason,
+        firstAvailableSeq: snapshot.firstAvailableSeq,
+        lastEventSeq: snapshot.lastEventSeq,
+        ...(camera?.camera?.response !== undefined ? { response: camera.camera.response } : {}),
+      });
+    });
+
+    rig.grpc.forceShutdown();
+    // Tudo ocorre no mesmo turno: o ring de capacidade 2 perde seq 1–2 antes
+    // que o cliente possa iniciar o polling de fallback.
+    for (let response = 1; response <= 4; response++) {
+      rig.store.apply({ kind: "camera/configure", settings: { response } });
+    }
+
+    await client.query("camera");
+    assert.equal(client.technicalDiagnostics.activeTransport, "GraphQL fallback");
+    await waitUntil(
+      () => resyncs.some((entry) => entry.reason === "journal_gap"),
+      5000,
+      "gap do journal não provocou ressincronização",
+    );
+
+    const gapResync = resyncs.find((entry) => entry.reason === "journal_gap");
+    assert.deepEqual(gapResync, {
+      reason: "journal_gap",
+      firstAvailableSeq: "3",
+      lastEventSeq: "4",
+      response: 4,
+    });
+    assert.equal(deliveredResponses.length, 0, "seq 3–4 não podem vazar como cauda parcial");
+
+    // Depois do snapshot, a entrega incremental retoma exatamente em seq 5.
+    rig.store.apply({ kind: "camera/configure", settings: { response: 5 } });
+    await waitUntil(
+      () => deliveredResponses.includes(5),
+      5000,
+      "evento posterior ao resync não foi entregue",
+    );
+    assert.deepEqual(deliveredResponses, [5]);
+    assert.equal(client.technicalDiagnostics.cursor?.lastEventSeq, "5");
+  } finally {
+    client.close();
+    await rig.close();
+  }
+});
+
+test(
+  "resiliência: reinício completo do middleware troca instância, refaz snapshot e aceita seq reiniciado",
+  { timeout: 45_000 },
+  async () => {
+    const pipeName = `p7m-restart-${process.pid}-${Date.now() % 100000}`;
+    const authToken = generateTransportAuthToken();
+    const client = new EditorClient(pipeName, {
+      requestTimeoutMs: 1000,
+      eventPollMs: 25,
+      probeTickMs: 20,
+      resyncRetryMs: 25,
+      authToken,
+      router: { recoveryBackoffMs: [15], promoteAfterProbes: 2 },
+      log: silentFe,
+    });
+    let middleware = startMiddlewareProcess(pipeName, authToken);
+    try {
+      await waitUntil(
+        async () => {
+          const readiness = await client.probeReadiness().catch(() => undefined);
+          return readiness?.graphqlActive === true && readiness.grpcActive === true;
+        },
+        15_000,
+        () => `primeiro middleware não ficou pronto: ${middleware.stderr()}`,
+      );
+      await client.connect();
+      const previousInstanceId = client.technicalDiagnostics.cursor?.middlewareInstanceId;
+      assert.ok(previousInstanceId);
+
+      await client.dispatch("entitydef/define", {
+        entityDefId: "before-restart-a",
+        fields: [],
+      });
+      await client.dispatch("entitydef/define", {
+        entityDefId: "before-restart-b",
+        fields: [],
+      });
+      await waitUntil(
+        () => client.technicalDiagnostics.cursor?.lastEventSeq === "2",
+        5000,
+        "cliente não consumiu os eventos do processo antigo",
+      );
+
+      await stopMiddlewareProcess(middleware.child);
+      await assert.rejects(() => client.query("entityDefs"));
+      assert.equal(client.technicalDiagnostics.activeTransport, "GraphQL fallback");
+
+      const restartResyncs: Array<{
+        snapshot: ProjectionSnapshot;
+        record: ResynchronizationRecord;
+      }> = [];
+      client.onResynchronized((snapshot, record) => restartResyncs.push({ snapshot, record }));
+
+      middleware = startMiddlewareProcess(pipeName, authToken);
+      await waitUntil(
+        async () => {
+          const readiness = await client.probeReadiness().catch(() => undefined);
+          return readiness?.graphqlActive === true && readiness.grpcActive === true;
+        },
+        15_000,
+        () => `middleware reiniciado não ficou pronto: ${middleware.stderr()}`,
+      );
+      await waitUntil(
+        () => restartResyncs.some(({ record }) => record.reason === "instance_changed"),
+        10_000,
+        "mudança de middlewareInstanceId não provocou snapshot completo",
+      );
+
+      const restarted = restartResyncs.find(({ record }) => record.reason === "instance_changed");
+      assert.ok(restarted);
+      assert.equal(restarted.record.previousMiddlewareInstanceId, previousInstanceId);
+      assert.notEqual(restarted.record.middlewareInstanceId, previousInstanceId);
+      assert.equal(restarted.record.lastEventSeq, "0");
+      assert.equal(restarted.snapshot.firstAvailableSeq, "1");
+      assert.equal(Object.keys(restarted.snapshot.projections).length, 9);
+      assert.equal(client.latestProjectionSnapshot?.middlewareInstanceId, restarted.record.middlewareInstanceId);
+
+      const deliveredAfterRestart: string[] = [];
+      client.onBlueprintEvent((event) => deliveredAfterRestart.push(String(event["kind"] ?? "")));
+      await client.dispatch("entitydef/define", {
+        entityDefId: "after-restart",
+        fields: [],
+      });
+      await waitUntil(
+        () => deliveredAfterRestart.includes("entityDefDefined"),
+        5000,
+        "evento seq 1 do processo novo foi descartado pelo cursor antigo",
+      );
+      assert.deepEqual(deliveredAfterRestart, ["entityDefDefined"]);
+      assert.equal(client.technicalDiagnostics.cursor?.middlewareInstanceId, restarted.record.middlewareInstanceId);
+      assert.equal(client.technicalDiagnostics.cursor?.lastEventSeq, "1");
+    } finally {
+      client.close();
+      await stopMiddlewareProcess(middleware.child);
+    }
+  },
+);
+
+interface MiddlewareProcess {
+  child: ChildProcess;
+  stderr(): string;
+}
+
+function startMiddlewareProcess(pipeName: string, authToken: string): MiddlewareProcess {
+  const entry = fileURLToPath(new URL("../../middleware/dist/index.js", import.meta.url));
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    P7M_EDITOR_AUTH_TOKEN: authToken,
+    P7M_VERBOSITY: "silent",
+  };
+  delete env["P7M_EDITOR_AUTH_TOKEN_FILE"];
+  const child = spawn(process.execPath, [entry, "--pipe", pipeName, "--no-mcp"], {
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let diagnostics = "";
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    diagnostics = `${diagnostics}${chunk}`.slice(-8000);
+  });
+  return { child, stderr: () => diagnostics };
+}
+
+async function stopMiddlewareProcess(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  child.kill("SIGTERM");
+  const graceful = await Promise.race([
+    exited.then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 5000)),
+  ]);
+  if (!graceful && child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await exited;
+  }
+}
+
+async function waitUntil(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  failure: string | (() => string),
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(typeof failure === "function" ? failure() : failure);
+}

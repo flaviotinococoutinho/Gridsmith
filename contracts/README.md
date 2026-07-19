@@ -123,8 +123,8 @@ prioritário) — decisões em [`../docs/adr/`](../docs/adr/README.md)
 
 | Contrato | Arquivo | Papel | Operações |
 |---|---|---|---|
-| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | queries `health`, `projection`, `experience`, `templates`, `eventsSince` · mutations `dispatch`, `loadDocument`, `newProjectFromTemplate` |
-| gRPC proto | [`grpc/p7m_editor.proto`](grpc/p7m_editor.proto) — `p7m.editor.v1.EditorHotPath` | caminho quente prioritário | `Dispatch`, `Query`, `StreamEvents` (server streaming com catch-up por `after_seq`), `Health` |
+| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | queries `health`, `projection`, `snapshot`, `eventBatch`, `experience`, `templates` (`eventsSince` legado) · mutations `dispatch`, `loadDocument`, `newProjectFromTemplate` |
+| gRPC proto | [`grpc/p7m_editor.proto`](grpc/p7m_editor.proto) — `p7m.editor.v1.EditorHotPath` | caminho quente condicionado pela ADR-019 | `Dispatch`, `Query`, `Snapshot`, `StreamEventsV2`, `Health` (`StreamEvents` legado) |
 
 Regras de evolução:
 
@@ -137,6 +137,11 @@ Regras de evolução:
   `payload_json` no proto) e são validados na **mesma fonte única**
   (`BlueprintStore` + [`schemas/`](schemas/)) — os transports não introduzem
   segunda fonte de validação.
+- Clientes novos usam cursor composto `(middlewareInstanceId, seq)` e strings
+  decimais para `uint64`. `resyncRequired` obriga snapshot completo; APIs
+  legadas sem epoch permanecem somente para compatibilidade.
+- GraphQL exige `Authorization: Bearer`; gRPC exige a mesma credencial em
+  metadata. Autenticação não participa da política de fallback.
 - Compatibilidade e breaking changes destes eixos:
   [`../docs/COMPATIBILITY.md`](../docs/COMPATIBILITY.md).
 

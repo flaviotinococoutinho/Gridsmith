@@ -196,6 +196,13 @@ npm test           # núcleos puros + integração do EditorClient (node:test vi
 npm run typecheck  # tsc --noEmit
 ```
 
+Benchmark reproduzível dos três caminhos locais existentes (não cria novo
+transport), com p50/p95/p99 e fluxo de 1.000 eventos:
+
+```bash
+npm run benchmark:transports
+```
+
 O Electron é o **supervisor do ecossistema**: por padrão o processo `main` sobe o
 middleware (via `ELECTRON_RUN_AS_NODE`) e a engine (`dotnet <dll>`). O app fala com o
 middleware por **gRPC no caminho quente** (fallback automático para **GraphQL** —

@@ -24,12 +24,27 @@ export interface ManagedProcess {
   kill(): void;
 }
 
+export type ServiceCheckState =
+  | "pending"
+  | "active"
+  | "inactive"
+  | "authentication-failed";
+
+/** Resultado rico para diferenciar processo, GraphQL e gRPC na prontidão. */
+export interface ServiceReadiness {
+  readonly ready: boolean;
+  readonly detail?: string;
+  readonly checks?: Readonly<Record<string, ServiceCheckState>>;
+  /** false para configuração/autenticação: reiniciar não resolverá. */
+  readonly retryable?: boolean;
+}
+
 export interface ServiceSpec {
   readonly id: string;
   /** Nome humano para a UI ("Middleware P7M", "MonoGame Runtime"). */
   readonly displayName: string;
   /** Sinal de prontidão: resolve true quando o serviço responde (health check). */
-  readonly waitReady: () => Promise<boolean>;
+  readonly waitReady: () => Promise<boolean | ServiceReadiness>;
   /** Dispara o processo. */
   readonly launch: () => ManagedProcess;
   /** Tentativas antes de "failed". Default 3. */
@@ -43,6 +58,8 @@ export interface ServiceStatus {
   readonly displayName: string;
   readonly state: ServiceState;
   readonly attempts: number;
+  /** Checks técnicos; não devem ser promovidos à UI principal do produto. */
+  readonly checks?: Readonly<Record<string, ServiceCheckState>>;
   /** Razão legível do estado corrente (falha, backoff...). */
   readonly detail?: string;
 }
@@ -66,6 +83,7 @@ export class ProcessSupervisor {
     private readonly services: readonly ServiceSpec[],
     private readonly sleep: (ms: number) => Promise<void> = (ms) =>
       new Promise((resolve) => setTimeout(resolve, ms)),
+    private readonly terminationTimeoutMs = 5_000,
   ) {
     for (const spec of services) {
       this.statuses.set(spec.id, {
@@ -116,9 +134,21 @@ export class ProcessSupervisor {
   async restart(id: string): Promise<boolean> {
     const spec = this.services.find((s) => s.id === id);
     if (!spec) throw new Error(`Unknown service "${id}"`);
-    this.processes.get(id)?.kill();
+    const current = this.processes.get(id);
+    // Remove primeiro: o watcher do processo antigo não pode iniciar um
+    // segundo restart enquanto aguardamos a liberação do endpoint.
     this.processes.delete(id);
-    this.update(id, { state: "stopped", attempts: 0 });
+    if (current) {
+      const stopped = await this.stopManaged(current);
+      if (stopped.timedOut) {
+        this.update(id, {
+          state: "failed",
+          detail: `processo anterior não encerrou; reinício cancelado para evitar colisão de endpoint`,
+        });
+        return false;
+      }
+    }
+    this.update(id, { state: "stopped", attempts: 0, checks: undefined });
     return this.startService(spec);
   }
 
@@ -128,9 +158,8 @@ export class ProcessSupervisor {
     for (const spec of [...this.services].reverse()) {
       const managed = this.processes.get(spec.id);
       if (managed) {
-        managed.kill();
-        await managed.exited.catch(() => undefined);
         this.processes.delete(spec.id);
+        await this.stopManaged(managed);
       }
       this.update(spec.id, { state: "stopped" });
     }
@@ -144,19 +173,34 @@ export class ProcessSupervisor {
         state: "starting",
         attempts: attempt,
         detail: attempt > 1 ? `tentativa ${attempt} de ${maxAttempts}` : undefined,
+        checks: undefined,
       });
 
       const managed = spec.launch();
       this.processes.set(spec.id, managed);
 
-      // corrida: prontidão × término prematuro
-      const ready = await Promise.race([
-        spec.waitReady(),
-        managed.exited.then(() => false),
+      // corrida tipada: prontidão × término prematuro. Rejeição do
+      // probe vira falha operacional, nunca escapa deixando estado "starting".
+      const outcome = await Promise.race([
+        spec.waitReady().then(
+          (value) => ({ kind: "ready" as const, readiness: normalizeReadiness(value) }),
+          (error: unknown) => ({ kind: "probe-error" as const, error }),
+        ),
+        managed.exited.then(
+          (exit) => ({ kind: "exit" as const, exit }),
+          (error: unknown) => ({
+            kind: "exit" as const,
+            exit: { code: null, error: errorMessage(error) },
+          }),
+        ),
       ]);
 
-      if (ready) {
-        this.update(spec.id, { state: "running", detail: undefined });
+      if (outcome.kind === "ready" && outcome.readiness.ready) {
+        this.update(spec.id, {
+          state: "running",
+          detail: outcome.readiness.detail,
+          checks: outcome.readiness.checks,
+        });
         // vigia: se cair depois de pronto, reinicia sozinho
         void managed.exited.then((exit) => {
           if (this.shuttingDown || this.processes.get(spec.id) !== managed) return;
@@ -164,14 +208,45 @@ export class ProcessSupervisor {
           this.update(spec.id, {
             state: "retrying",
             detail: `processo terminou (código ${exit.code ?? "?"}) — reiniciando`,
+            checks: undefined,
           });
           void this.startService(spec);
         });
         return true;
       }
 
-      const exit = await managed.exited.catch(() => ({ code: null, error: "unknown" }));
       this.processes.delete(spec.id);
+      let exit: { code: number | null; error?: string };
+      let retryable = true;
+      if (outcome.kind === "exit") {
+        exit = outcome.exit;
+      } else {
+        const stopped = await this.stopManaged(managed);
+        if (stopped.timedOut) {
+          this.update(spec.id, {
+            state: "failed",
+            detail: `processo não encerrou após falhar prontidão; retry cancelado`,
+          });
+          return false;
+        }
+        const readinessDetail =
+          outcome.kind === "probe-error"
+            ? `health check failed: ${errorMessage(outcome.error)}`
+            : outcome.readiness.detail ?? "health check returned not ready";
+        exit = { code: stopped.code, error: readinessDetail };
+        retryable = outcome.kind !== "ready" || outcome.readiness.retryable !== false;
+        if (outcome.kind === "ready" && outcome.readiness.checks !== undefined) {
+          this.update(spec.id, { checks: outcome.readiness.checks });
+        }
+      }
+
+      if (!retryable) {
+        this.update(spec.id, {
+          state: "failed",
+          detail: `${spec.displayName} falhou com erro não recuperável${exit.error ? `: ${exit.error}` : ""}`,
+        });
+        return false;
+      }
       if (attempt < maxAttempts) {
         const delay = backoffDelayMs(attempt);
         this.update(spec.id, {
@@ -194,18 +269,62 @@ export class ProcessSupervisor {
 
   private update(
     id: string,
-    changes: { state?: ServiceState; attempts?: number; detail?: string | undefined },
+    changes: {
+      state?: ServiceState;
+      attempts?: number;
+      detail?: string | undefined;
+      checks?: Readonly<Record<string, ServiceCheckState>> | undefined;
+    },
   ): void {
     const current = this.statuses.get(id)!;
     const detail = "detail" in changes ? changes.detail : current.detail;
+    const checks = "checks" in changes ? changes.checks : current.checks;
     const next: ServiceStatus = {
       id: current.id,
       displayName: current.displayName,
       state: changes.state ?? current.state,
       attempts: changes.attempts ?? current.attempts,
       ...(detail !== undefined ? { detail } : {}),
+      ...(checks !== undefined ? { checks } : {}),
     };
     this.statuses.set(id, next);
     for (const listener of this.listeners) listener({ service: next });
   }
+
+  private stopManaged(managed: ManagedProcess): Promise<{
+    code: number | null;
+    error?: string;
+    timedOut: boolean;
+  }> {
+    try {
+      managed.kill();
+    } catch (error) {
+      return Promise.resolve({ code: null, error: errorMessage(error), timedOut: true });
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result: { code: number | null; error?: string; timedOut: boolean }): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(
+        () => finish({ code: null, error: "termination timeout", timedOut: true }),
+        this.terminationTimeoutMs,
+      );
+      void managed.exited.then(
+        (exit) => finish({ ...exit, timedOut: false }),
+        (error: unknown) => finish({ code: null, error: errorMessage(error), timedOut: false }),
+      );
+    });
+  }
+}
+
+function normalizeReadiness(value: boolean | ServiceReadiness): ServiceReadiness {
+  return typeof value === "boolean" ? { ready: value } : value;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

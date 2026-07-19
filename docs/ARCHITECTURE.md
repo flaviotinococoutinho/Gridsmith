@@ -210,12 +210,12 @@ stateDiagram-v2
   graphql --> graphql : sonda ruim (backoff 2s 4s 8s 16s 30s)
   graphql --> grpc : 2 sondas Health boas consecutivas (histerese)
   note right of graphql
-    eventos por polling incremental
-    eventsSince(afterSeq) no EventJournal
+    eventBatch(instanceId, afterSeq)
+    resync explicito
   end note
   note right of grpc
-    eventos por StreamEvents
-    com catch-up por after_seq
+    StreamEventsV2
+    status antes do catch-up
   end note
 ```
 
@@ -229,15 +229,22 @@ pelos dois lados):
 | POSIX | UDS `$XDG_RUNTIME_DIR/<pipe>-graphql.sock` | UDS `$XDG_RUNTIME_DIR/<pipe>-grpc.sock` |
 | Windows | TCP `127.0.0.1:<porta derivada>` | TCP `127.0.0.1:<porta derivada>` (grpc-js não suporta named pipes) |
 
-A porta derivada é FNV-1a determinística de `<pipe>-<transport>` na faixa
-dinâmica 49152–65535 — sem arquivo de descoberta.
+A porta derivada usa FNV-1a em metades disjuntas da faixa dinâmica
+49152–65535, sempre em `127.0.0.1`; colisão de bind é explícita. Sockets POSIX
+são privados (`0600`) e nunca substituem um listener vivo ou path não-socket.
 
-**Eventos sem perda no fallback:** o middleware mantém um `EventJournal`
-(janela 512, `seq` monotônico). O stream gRPC faz catch-up por `after_seq` e o
-polling GraphQL continua de `eventsSince(afterSeq)` — o cliente dedupa por
-`seq`, então a troca de transporte não perde nem duplica eventos. Consumidor
-atrasado além da janela detecta o gap (`canResumeFrom`) e ressincroniza por
-query completa.
+O Electron gera um token efêmero e o entrega ao middleware por ambiente (ou,
+em execução externa, por arquivo privado). GraphQL valida Bearer, gRPC valida
+metadata e o gateway legado valida o handshake. Autenticação não é classificada
+como indisponibilidade, portanto nunca provoca fallback.
+
+**Continuidade explícita:** o `EventJournal` mantém janela 512 e cursor composto
+por identidade do processo + sequência decimal. `StreamEventsV2` e
+`eventBatch` informam `firstAvailableSeq`, `lastEventSeq` e `resyncRequired`.
+Restart, cursor futuro ou consumidor além da janela retornam zero eventos
+parciais; o `EditorClient` busca `snapshot` de todas as projeções, substitui o
+estado local e só então reinicia stream/polling. Um `requestId` compartilhado
+impede reaplicação de dispatch durante retry cross-transport.
 
 **Verbosidade:** `P7M_VERBOSITY=silent|error|warn|info|debug|trace` controla os
 loggers estruturados dos dois lados (stdout do middleware pertence ao MCP; logs
