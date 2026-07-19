@@ -46,9 +46,11 @@ const REQUIRED = [
   "docs/RESEARCH-EDITOR-LANDSCAPE.md",
   "docs/adr/README.md",
   "docs/adr/ADR-019-freeze-medido-dos-transports.md",
+  "docs/adr/ADR-020-sessao-de-projeto-transacional.md",
   "contracts/README.md",
   "contracts/shared-memory-layout.md",
   "contracts/schemas/error-codes.md",
+  "contracts/schemas/engine.reset_session.schema.json",
   "contracts/graphql/editor.schema.graphql",
   "contracts/grpc/p7m_editor.proto",
   ".github/workflows/ci.yml",
@@ -130,6 +132,22 @@ if (fs.existsSync(ciPath)) {
     {
       label: "npm run test:transport-middleware-restart",
       pattern: /^\s*run:\s+cd frontend && npm run test:transport-middleware-restart\s*$/m,
+    },
+    {
+      label: "middleware npm run test:project-session",
+      pattern: /^\s*run:\s+npm run test:project-session\s*$/m,
+    },
+    {
+      label: "middleware npm run test:project-session-transports",
+      pattern: /^\s*run:\s+npm run test:project-session-transports\s*$/m,
+    },
+    {
+      label: "frontend npm run test:project-session",
+      pattern: /^\s*run:\s+cd frontend && npm run test:project-session\s*$/m,
+    },
+    {
+      label: "EngineSessionResetTests",
+      pattern: /^\s*run:\s+dotnet test --no-build --nologo --filter FullyQualifiedName~EngineSessionResetTests\s*$/m,
     },
   ];
   for (const invocation of requiredCiInvocations) {
@@ -240,7 +258,10 @@ if (fs.existsSync(benchmarkPath)) {
 const linkRe = /\[[^\]]*\]\(([^)]+)\)/g;
 const npmRunRe = /npm run ([a-z0-9:_-]+)/gi;
 const testCountRe = /\b\d{1,4}[ \t]*(?:testes|tests)\b/gi;
-const transitionalRe = /(claude\/[a-z0-9][a-z0-9-]*|session_[0-9A-Za-z]{6,}|eaas-2d-ecosystem-[a-z0-9]+)/g;
+// `project_session_changed` é um valor estável do contrato de resync, não o id
+// transitório de uma sessão de geração. A negative lookahead preserva essa
+// allowlist sem enfraquecer a detecção de ids `session_<token>` acidentais.
+const transitionalRe = /(claude\/[a-z0-9][a-z0-9-]*|session_(?!changed\b)[0-9A-Za-z]{6,}|eaas-2d-ecosystem-[a-z0-9]+)/g;
 const schemaRefRe = /contracts\/schemas\/([a-z0-9._-]+\.json)/gi;
 const verifyPhaseRe = /verify-phase([1-9][0-9]?)\.sh/g;
 

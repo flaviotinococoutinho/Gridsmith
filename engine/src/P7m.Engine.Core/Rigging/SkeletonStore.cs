@@ -115,6 +115,22 @@ public sealed class SkeletonStore
         return SkeletonHandle.Invalid;
     }
 
+    /// <summary>
+    /// Remove todos os esqueletos da sessão anterior, preservando a alocação
+    /// fixa exigida pelo hot loop.
+    /// </summary>
+    public void Reset()
+    {
+        Array.Clear(_parentIndices, 0, _parentIndices.Length);
+        Array.Clear(_inverseBind, 0, _inverseBind.Length);
+        Array.Clear(_localPose, 0, _localPose.Length);
+        Array.Clear(_worldPose, 0, _worldPose.Length);
+        Array.Clear(_skinning, 0, _skinning.Length);
+        Array.Clear(_boneCounts, 0, _boneCounts.Length);
+        Array.Clear(_skeletonIds, 0, _skeletonIds.Length);
+        _liveCount = 0;
+    }
+
     public int BoneCount(SkeletonHandle handle) => _boneCounts[handle.Slot];
 
     /// <summary>Fatia mutável da pose local — escrita pelo sampler de animação (sem cópia).</summary>

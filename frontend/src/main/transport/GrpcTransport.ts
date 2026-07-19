@@ -1,6 +1,7 @@
 /**
- * Transporte gRPC do caminho quente. Cursores são compostos por instância +
- * sequência decimal; nenhum uint64 cruza a borda como Number.
+ * Transporte gRPC do caminho quente. Cursores são compostos por instância do
+ * middleware + sessão de projeto + sequência decimal; nenhum uint64 cruza a
+ * borda como Number e um cursor de A nunca pode consumir eventos de B.
  */
 
 import * as grpc from "@grpc/grpc-js";
@@ -18,6 +19,9 @@ import type { Logger } from "../../core/logging.js";
 
 interface RawJournalStatus {
   middleware_instance_id: string;
+  project_session_id: string;
+  project_id: string;
+  command_sequence: string;
   first_available_seq: string;
   last_event_seq: string;
   resync_required: boolean;
@@ -27,6 +31,9 @@ interface RawJournalStatus {
 interface RawEvent {
   seq: string;
   kind: string;
+  project_session_id: string;
+  project_id: string;
+  command_sequence: string;
   payload_json: string;
 }
 
@@ -41,6 +48,9 @@ interface HotPathClient extends grpc.Client {
         ok: boolean;
         engine_connected: boolean;
         middleware_instance_id: string;
+        project_session_id: string;
+        project_id: string;
+        command_sequence: string;
         first_available_seq: string;
         last_event_seq: string;
       },
@@ -67,19 +77,25 @@ interface HotPathClient extends grpc.Client {
       reply: {
         projections_json: string;
         middleware_instance_id: string;
+        project_session_id: string;
+        project_id: string;
+        command_sequence: string;
         first_available_seq: string;
         last_event_seq: string;
       },
     ) => void,
   ): void;
   StreamEventsV2(
-    req: { middleware_instance_id: string; after_seq: string },
+    req: { middleware_instance_id: string; project_session_id: string; after_seq: string },
     metadata: grpc.Metadata,
   ): grpc.ClientReadableStream<{ status?: RawJournalStatus; event?: RawEvent }>;
 }
 
 export interface HotCursor {
   readonly middlewareInstanceId: string;
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly commandSequence: string;
   readonly lastEventSeq: string;
 }
 
@@ -103,6 +119,9 @@ export interface HotSnapshot extends HotCursor {
 export interface HotEvent {
   readonly seq: string;
   readonly kind: string;
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly commandSequence: string;
   readonly payload: unknown;
 }
 
@@ -155,6 +174,9 @@ export class GrpcTransport {
           ok: reply.ok,
           engineConnected: reply.engine_connected,
           middlewareInstanceId: reply.middleware_instance_id,
+          projectSessionId: reply.project_session_id,
+          projectId: reply.project_id,
+          commandSequence: reply.command_sequence,
           firstAvailableSeq: reply.first_available_seq,
           lastEventSeq: reply.last_event_seq,
         });
@@ -201,6 +223,9 @@ export class GrpcTransport {
         resolve({
           projections: JSON.parse(reply.projections_json) as Record<string, unknown>,
           middlewareInstanceId: reply.middleware_instance_id,
+          projectSessionId: reply.project_session_id,
+          projectId: reply.project_id,
+          commandSequence: reply.command_sequence,
           firstAvailableSeq: reply.first_available_seq,
           lastEventSeq: reply.last_event_seq,
         });
@@ -218,6 +243,7 @@ export class GrpcTransport {
     const stream = this.client.StreamEventsV2(
       {
         middleware_instance_id: cursor.middlewareInstanceId,
+        project_session_id: cursor.projectSessionId,
         after_seq: cursor.lastEventSeq,
       },
       this.metadata(),
@@ -229,6 +255,9 @@ export class GrpcTransport {
         statusSeen = true;
         onStatus({
           middlewareInstanceId: frame.status.middleware_instance_id,
+          projectSessionId: frame.status.project_session_id,
+          projectId: frame.status.project_id,
+          commandSequence: frame.status.command_sequence,
           firstAvailableSeq: frame.status.first_available_seq,
           lastEventSeq: frame.status.last_event_seq,
           resyncRequired: frame.status.resync_required,
@@ -244,6 +273,9 @@ export class GrpcTransport {
       onEvent({
         seq: frame.event.seq,
         kind: frame.event.kind,
+        projectSessionId: frame.event.project_session_id,
+        projectId: frame.event.project_id,
+        commandSequence: frame.event.command_sequence,
         payload: JSON.parse(frame.event.payload_json),
       });
     });

@@ -54,6 +54,8 @@ export const RpcErrorCode = {
   InvalidBinaryLayout: -32005,
   DuplicateId: -32006,
   AuthenticationFailed: -32007,
+  ProjectNotOpen: -32008,
+  ProjectSessionConflict: -32009,
 } as const;
 
 /** Erro lançável por handlers; convertido em resposta de erro JSON-RPC. */

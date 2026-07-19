@@ -23,15 +23,19 @@ import { createLogger } from "./util/log.js";
 import { EditorGateway } from "./ipc/EditorGateway.js";
 import { EnginePipeServer, type EngineLogEntry, type EngineSession } from "./ipc/EnginePipeServer.js";
 import { ArtifactStore } from "./canonical/ArtifactStore.js";
-import { CanonicalOrchestrator } from "./canonical/CanonicalOrchestrator.js";
 import { HookBus } from "./canonical/HookBus.js";
+import {
+  ProjectSessionManager,
+  type ProjectSessionChangedEvent,
+  type SessionBlueprintEvent,
+} from "./canonical/ProjectSessionManager.js";
 import { ASEPRITE_PIPELINE, PipelineRunner } from "./canonical/Pipeline.js";
 import { importAseprite } from "./assets/AsepriteImporter.js";
-import { BlueprintStore } from "./domain/BlueprintStore.js";
 import { CapabilityRegistry, type EngineManifest } from "./domain/CapabilityRegistry.js";
 import { EngineBridge } from "./domain/EngineBridge.js";
 import { startMcpStdio } from "./mcp/McpFacade.js";
 import { ExperienceGovernor } from "./runtime/ExperienceGovernor.js";
+import { bindEngineProjectSessionLifecycle } from "./runtime/EngineProjectSessionLifecycle.js";
 import { MonoGameAdapter } from "./runtime/MonoGameAdapter.js";
 import { RuntimeProfileRegistry } from "./runtime/RuntimeProfile.js";
 import { MONOGAME_PROFILES } from "./runtime/profiles/monogame.js";
@@ -73,8 +77,6 @@ async function main(): Promise<void> {
     ...(pipeName !== undefined ? { pipeName } : {}),
     supportedCapabilities: ["skeleton", "mesh", "shared-memory"],
   });
-  const store = new BlueprintStore();
-  const bridge = new EngineBridge(pipeServer, store);
   const capabilities = new CapabilityRegistry(pipeServer);
 
   // ---- Modelo canônico + governança de runtime (docs/CANONICAL-MODEL.md) ----
@@ -92,7 +94,49 @@ async function main(): Promise<void> {
   for (const profile of MONOGAME_PROFILES) profiles.register(profile);
   const governor = new ExperienceGovernor(profiles, capabilities);
   const adapter = new MonoGameAdapter(pipeServer, capabilities);
-  const orchestrator = new CanonicalOrchestrator(store, hooks, adapter);
+  const sessions = new ProjectSessionManager({ hooks, adapter });
+  const bridge = new EngineBridge(pipeServer, sessions);
+
+  // Uma única porta de aplicação para JSON-RPC, GraphQL, gRPC e MCP.
+  const surface = new EditorSurface({ sessions, governor, adapter });
+  const journal = new EventJournal();
+  sessions.on("event", (event: SessionBlueprintEvent) => {
+    journal.appendForSession(
+      event.projectSessionId,
+      event.projectId,
+      event.commandSequence,
+      event.kind,
+      event,
+    );
+  });
+  sessions.on("sessionChanged", (event: ProjectSessionChangedEvent) => {
+    if (event.action === "activated") {
+      const position = journal.activateSession(
+        event.projectSessionId!,
+        event.projectId!,
+        event.commandSequence,
+      );
+      journal.appendForSession(
+        position.projectSessionId,
+        position.projectId,
+        event.commandSequence,
+        event.kind,
+        event,
+      );
+      return;
+    }
+    // O close pertence à partição que está sendo encerrada; só depois o
+    // cursor gira para o estado sem projeto.
+    const closing = journal.position;
+    journal.appendForSession(
+      closing.projectSessionId,
+      closing.projectId,
+      event.commandSequence,
+      event.kind,
+      event,
+    );
+    journal.deactivateSession();
+  });
 
   // Pipeline de assets (watcher + Aseprite CLI + MGCB) quando --assets <dir>
   let assetService: AssetPipelineService | undefined;
@@ -115,10 +159,8 @@ async function main(): Promise<void> {
   // Endpoint do editor (Electron/clientes de edição) em <pipe>-editor
   const editorGateway = new EditorGateway({
     pipeName: pipeName ?? "p7m-engine",
-    orchestrator,
-    store,
-    governor,
-    adapter,
+    surface,
+    journal,
     authToken,
   });
   editorGateway.on("session", (session) => {
@@ -150,16 +192,6 @@ async function main(): Promise<void> {
       .pingEngine("welcome")
       .then((pong) => console.error(`[p7m] welcome ping ok (echo "${pong.echo}")`))
       .catch((err: Error) => console.error(`[p7m] welcome ping failed: ${err.message}`));
-    // Reidratação canônica: o adapter projeta o Blueprint inteiro na sessão nova.
-    void adapter
-      .rehydrateFrom(store)
-      .then((results) => {
-        const projected = results.filter((r) => r.status === "projected").length;
-        if (results.length > 0) {
-          console.error(`[p7m] rehydration: ${projected}/${results.length} events projected`);
-        }
-      })
-      .catch((err: Error) => console.error(`[p7m] rehydration failed: ${err.message}`));
   });
   pipeServer.on("sessionClosed", (session: EngineSession, reason: Error) => {
     console.error(`[p7m] engine session ${session.sessionId} closed: ${reason.message}`);
@@ -167,15 +199,32 @@ async function main(): Promise<void> {
   pipeServer.on("engineLog", (_session: EngineSession, entry: EngineLogEntry) => {
     console.error(`[engine:${entry.level}]${entry.category ? ` (${entry.category})` : ""} ${entry.message}`);
   });
+  // Somente a troca da engine efetivamente corrente dispara reset/reidratação.
+  // Fechar A depois que B a supersedeu não produz um segundo ciclo nem pode
+  // fazer o runtime voltar para A. O manager lê apenas sua sessão de projeto
+  // ativa dentro da fila serializada.
+  const unbindEngineProjectSessionLifecycle = bindEngineProjectSessionLifecycle(
+    pipeServer,
+    sessions,
+    {
+      onRehydrated: (status, change) => {
+        if (status.active) {
+          console.error(
+            `[p7m] rehydration (${change.reason}): project ${status.projectId} ` +
+              `session ${status.projectSessionId} (${status.runtimeState})`,
+          );
+        }
+      },
+      onError: (err, change) => {
+        console.error(`[p7m] rehydration (${change.reason}) failed: ${err.message}`);
+      },
+    },
+  );
 
   // ---- Transports do app (ADR-016/017): gRPC prioritário + GraphQL fallback ----
   // Ambos são fachadas finas sobre a MESMA EditorSurface do gateway JSON-RPC;
   // o EventJournal dá seq monotônico aos eventos (stream no gRPC, polling no
   // GraphQL) para o fallback não perder eventos.
-  const surface = new EditorSurface({ orchestrator, store, governor, adapter });
-  const journal = new EventJournal();
-  store.on("event", (event: { kind: string }) => journal.append(event.kind, event));
-
   const graphqlGateway = graphql
     ? new GraphQlGateway({
         pipeName: pipeName ?? "p7m-engine",
@@ -204,7 +253,7 @@ async function main(): Promise<void> {
 
   if (mcp) {
     await startMcpStdio(bridge, pipeServer, capabilities, {
-      orchestrator,
+      surface,
       artifacts,
       hooks,
       profiles,
@@ -217,6 +266,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     console.error("[p7m] shutting down");
+    unbindEngineProjectSessionLifecycle();
     assetService?.close();
     await grpcGateway?.close();
     await graphqlGateway?.close();

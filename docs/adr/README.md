@@ -13,3 +13,4 @@ functions) estão registradas retroativamente em
 | [ADR-017](ADR-017-grpc-caminho-quente-com-fallback.md) | gRPC no caminho quente, prioritário, com fallback para GraphQL | Accepted |
 | [ADR-018](ADR-018-endpoints-e-verbosidade-dos-transports.md) | Endpoints locais dos transports e controle de verbosidade | Accepted |
 | [ADR-019](ADR-019-freeze-medido-dos-transports.md) | Freeze medido: gRPC default em dispatch/eventos, GraphQL baseline completo, legado só compatibilidade | Accepted |
+| [ADR-020](ADR-020-sessao-de-projeto-transacional.md) | Sessão de projeto explícita, replay isolado e substituição atômica | Accepted |

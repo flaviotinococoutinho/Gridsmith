@@ -96,14 +96,9 @@ test("replay valida na borda: documento corrompido falha com o erro do domínio"
   );
 });
 
-test("carregar sobre projeto aberto e versão desconhecida são rejeitados", async () => {
-  const { store, orchestrator } = await buildFullProject();
+test("versão desconhecida é rejeitada sem depender de Blueprint vazio", async () => {
+  const { store } = await buildFullProject();
   const document = exportBlueprint(store);
-
-  await assert.rejects(
-    replayDocument(document, store, orchestrator),
-    (err: unknown) => err instanceof BlueprintDocumentError && /must be empty/.test(err.message),
-  );
 
   assert.throws(
     () => documentToCommands({ ...document, schemaVersion: 99 }),

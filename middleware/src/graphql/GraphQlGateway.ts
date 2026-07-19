@@ -33,7 +33,7 @@ import {
   bearerTokenMatches,
   validateTransportAuthToken,
 } from "../transport/auth.js";
-import { JsonRpcError } from "../protocol/jsonrpc.js";
+import { JsonRpcError, RpcErrorCode } from "../protocol/jsonrpc.js";
 import type { Logger } from "../util/log.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -73,15 +73,28 @@ export function graphqlKindToCanonical(kind: string): string {
 
 function serializeEvent(event: EventEnvelope): {
   seq: string;
+  projectSessionId: string;
+  projectId: string;
+  commandSequence: string;
   kind: string;
   payload: unknown;
 } {
-  return { seq: event.seq.toString(), kind: event.kind, payload: event.payload };
+  return {
+    seq: event.seq.toString(),
+    projectSessionId: event.projectSessionId,
+    projectId: event.projectId,
+    commandSequence: event.commandSequence.toString(),
+    kind: event.kind,
+    payload: event.payload,
+  };
 }
 
 function serializeBatch(result: JournalReadResult): Record<string, unknown> {
   return {
     middlewareInstanceId: result.middlewareInstanceId,
+    projectSessionId: result.projectSessionId,
+    projectId: result.projectId,
+    commandSequence: result.commandSequence.toString(),
     firstAvailableSeq: result.firstAvailableSeq.toString(),
     lastEventSeq: result.lastEventSeq.toString(),
     resyncRequired: result.resyncRequired,
@@ -200,6 +213,9 @@ export class GraphQlGateway {
           ok: true,
           engineConnected: surface.isEngineConnected,
           middlewareInstanceId: position.middlewareInstanceId,
+          projectSessionId: position.projectSessionId,
+          projectId: position.projectId,
+          commandSequence: position.commandSequence.toString(),
           firstAvailableSeq: position.firstAvailableSeq.toString(),
           lastEventSeq: position.lastEventSeq.toString(),
         };
@@ -208,11 +224,15 @@ export class GraphQlGateway {
       snapshot: () => {
         // `snapshot()` e a leitura da posição são síncronas: não há mutação
         // intercalada no event loop entre a projeção e o cursor carimbado.
-        const projections = surface.snapshot();
+        const snapshot = surface.snapshot();
         const position = journal.position;
         return {
-          projections,
+          projections: snapshot.projections,
+          status: snapshot.status,
           middlewareInstanceId: position.middlewareInstanceId,
+          projectSessionId: position.projectSessionId,
+          projectId: position.projectId,
+          commandSequence: position.commandSequence.toString(),
           firstAvailableSeq: position.firstAvailableSeq.toString(),
           lastEventSeq: position.lastEventSeq.toString(),
         };
@@ -220,16 +240,22 @@ export class GraphQlGateway {
       experience: (args: { family?: string; version?: string }) =>
         surface.resolveExperience(args.family, args.version),
       templates: () => surface.listTemplates(),
-      eventBatch: (args: { middlewareInstanceId: string; afterSeq: string }) =>
-        serializeBatch(journal.readSince(args.middlewareInstanceId, args.afterSeq)),
-      // Compatibilidade temporária: preserva o contrato antigo, que não tem
-      // informação suficiente para detectar restart/gap. Novos usam eventBatch.
-      eventsSince: (args: { afterSeq: number }) =>
-        journal.since(args.afterSeq).map((event) => ({
-          seq: Number(event.seq),
-          kind: event.kind,
-          payload: event.payload,
-        })),
+      projectStatus: () => surface.projectStatus(),
+      eventBatch: (args: {
+        middlewareInstanceId: string;
+        projectSessionId?: string;
+        afterSeq: string;
+      }) => serializeBatch(
+        journal.readSince(args.middlewareInstanceId, args.projectSessionId, args.afterSeq),
+      ),
+      // Sem a identidade da sessão, um seq pode pertencer ao projeto anterior.
+      // Preservamos o campo no SDL apenas para produzir uma falha explícita.
+      eventsSince: () => {
+        throw new JsonRpcError(
+          RpcErrorCode.InvalidParams,
+          `eventsSince is unsafe without projectSessionId; use eventBatch`,
+        );
+      },
       dispatch: async (args: { kind: string; payload: unknown; requestId?: string }) => {
         const result = await surface.dispatchByKind(
           graphqlKindToCanonical(args.kind),
@@ -241,9 +267,48 @@ export class GraphQlGateway {
           projection: result.projection ?? null,
         };
       },
-      loadDocument: (args: { document: unknown }) => surface.loadDocument(args.document),
-      newProjectFromTemplate: (args: { templateId: string }) =>
-        surface.newProjectFromTemplate(args.templateId),
+      projectCreate: (args: {
+        projectId?: string | null;
+        templateId?: string | null;
+        expectedProjectSessionId?: string | null;
+      }) => surface.projectCreate(
+        args.projectId ?? undefined,
+        args.templateId ?? undefined,
+        args.expectedProjectSessionId ?? undefined,
+      ),
+      projectOpenDocument: (args: {
+        document: unknown;
+        expectedProjectSessionId?: string | null;
+      }) => surface.projectOpenDocument(
+        args.document,
+        args.expectedProjectSessionId ?? undefined,
+      ),
+      projectClose: (args: { expectedProjectSessionId?: string | null }) =>
+        surface.projectClose(args.expectedProjectSessionId ?? undefined),
+      // Aliases legados preservam o wire, mas usam a mesma troca transacional.
+      loadDocument: async (args: {
+        document: unknown;
+        expectedProjectSessionId?: string | null;
+      }) => (await surface.projectOpenDocument(
+        args.document,
+        args.expectedProjectSessionId ?? undefined,
+      )).summary,
+      newProjectFromTemplate: async (args: {
+        templateId: string;
+        expectedProjectSessionId?: string | null;
+      }) => {
+        const result = await surface.projectCreate(
+          undefined,
+          args.templateId,
+          args.expectedProjectSessionId ?? undefined,
+        );
+        const template = surface.listTemplates().find((item) => item.id === args.templateId);
+        return {
+          templateId: args.templateId,
+          name: template?.label ?? args.templateId,
+          ...result.summary,
+        };
+      },
     };
   }
 }

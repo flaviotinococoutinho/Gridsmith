@@ -31,7 +31,7 @@ import {
   type ServiceReadiness,
   type ServiceStatus,
 } from "./ProcessSupervisor.js";
-import { EditorClient } from "./EditorClient.js";
+import { EditorClient, type ProjectStatus } from "./EditorClient.js";
 import {
   ensureSingleInstance,
   hardenNavigation,
@@ -234,7 +234,12 @@ interface ProjectStatusPayload {
   state: string;
   windowTitle: string;
   isDirty: boolean;
-  project?: { filePath?: string; name: string };
+  project?: {
+    filePath?: string;
+    name: string;
+    projectSessionId?: string;
+    projectId?: string;
+  };
   recents: readonly unknown[];
 }
 
@@ -291,17 +296,49 @@ void app.whenReady().then(async () => {
   };
   lifecycle.onEvent(() => broadcast());
 
-  const writeDocument = async (filePath: string): Promise<void> => {
-    const document = await client.saveDocument();
+  const descriptorFromStatus = (
+    status: ProjectStatus,
+    name: string,
+    filePath?: string,
+  ): ProjectDescriptor => {
+    if (!status.active || !status.projectSessionId || !status.projectId) {
+      throw new Error("middleware did not activate the requested project session");
+    }
+    return {
+      name,
+      projectSessionId: status.projectSessionId,
+      projectId: status.projectId,
+      ...(filePath ? { filePath } : {}),
+    };
+  };
+
+  const writeDocument = async (
+    filePath: string,
+    expectedProjectSessionId: string,
+  ): Promise<void> => {
+    const document = await client.saveDocument(expectedProjectSessionId);
+    if (
+      lifecycle.project?.projectSessionId !== expectedProjectSessionId ||
+      client.activeProjectSessionId !== expectedProjectSessionId
+    ) {
+      throw new Error("project session changed before the document could be written");
+    }
     fs.writeFileSync(filePath, JSON.stringify(document, null, 2));
   };
 
   // Autosave: limiar de comandos (via commandApplied) + intervalo (tick)
   const autosave = async (): Promise<void> => {
-    const filePath = lifecycle.project?.filePath;
-    if (!filePath) return; // projeto ainda sem arquivo: autosave aguarda Save As
+    const descriptor = lifecycle.project;
+    const filePath = descriptor?.filePath;
+    const expectedProjectSessionId = descriptor?.projectSessionId;
+    if (!filePath || !expectedProjectSessionId) return;
     try {
-      const document = await client.saveDocument();
+      const document = await client.saveDocument(expectedProjectSessionId);
+      if (
+        lifecycle.project?.projectSessionId !== expectedProjectSessionId ||
+        lifecycle.project.filePath !== filePath ||
+        client.activeProjectSessionId !== expectedProjectSessionId
+      ) return;
       fs.writeFileSync(`${filePath}.autosave`, JSON.stringify(document));
     } catch {
       // autosave é best-effort; o save explícito reporta erros
@@ -311,6 +348,33 @@ void app.whenReady().then(async () => {
     if (lifecycle.autosaveTick()) void autosave();
   }, 5_000).unref();
 
+  const saveCurrentProject = async (forceSaveAs: boolean): Promise<boolean> => {
+    const descriptor = lifecycle.project;
+    const expectedProjectSessionId = descriptor?.projectSessionId;
+    if (!descriptor || !expectedProjectSessionId) {
+      throw new Error("cannot save without an active project session");
+    }
+    let filePath = forceSaveAs ? undefined : descriptor.filePath;
+    if (!filePath) {
+      const picked = await dialog.showSaveDialog(window, {
+        title: "Salvar projeto P7M",
+        filters: PROJECT_FILTER,
+        defaultPath: `${descriptor.name}.p7m.json`,
+      });
+      if (picked.canceled || !picked.filePath) return false;
+      filePath = picked.filePath;
+    }
+    lifecycle.beginSave();
+    try {
+      await writeDocument(filePath, expectedProjectSessionId);
+      lifecycle.saved(filePath);
+      return true;
+    } catch (error) {
+      lifecycle.saveFailed();
+      throw error;
+    }
+  };
+
   const projectCommand = async (
     command: "new" | "open" | "openPath" | "save" | "saveAs" | "close",
     payload?: { filePath?: string },
@@ -318,7 +382,13 @@ void app.whenReady().then(async () => {
     switch (command) {
       case "new": {
         lifecycle.beginOpen();
-        lifecycle.opened({ name: "Projeto sem título" });
+        try {
+          const result = await client.createProject();
+          lifecycle.opened(descriptorFromStatus(result.status, "Projeto sem título"));
+        } catch (error) {
+          lifecycle.openFailed();
+          throw error;
+        }
         break;
       }
       case "open":
@@ -334,15 +404,19 @@ void app.whenReady().then(async () => {
           filePath = picked.filePaths[0]!;
         }
         if (!filePath) break;
+        // Parse local acontece antes da transação; JSON inválido sequer altera
+        // a máquina de estados e a sessão A continua íntegra.
+        const document: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
         lifecycle.beginOpen();
         try {
-          const document: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
-          await client.loadDocument(document);
-          const descriptor: ProjectDescriptor = {
-            filePath,
-            name: path.basename(filePath).replace(/\.p7m\.json$/, ""),
-          };
-          lifecycle.opened(descriptor);
+          const result = await client.openProjectDocument(document);
+          lifecycle.opened(
+            descriptorFromStatus(
+              result.status,
+              path.basename(filePath).replace(/\.p7m\.json$/, ""),
+              filePath,
+            ),
+          );
         } catch (err) {
           lifecycle.openFailed();
           throw err;
@@ -351,27 +425,14 @@ void app.whenReady().then(async () => {
       }
       case "save":
       case "saveAs": {
-        let filePath = command === "save" ? lifecycle.project?.filePath : undefined;
-        if (!filePath) {
-          const picked = await dialog.showSaveDialog(window, {
-            title: "Salvar projeto P7M",
-            filters: PROJECT_FILTER,
-            defaultPath: `${lifecycle.project?.name ?? "projeto"}.p7m.json`,
-          });
-          if (picked.canceled || !picked.filePath) break;
-          filePath = picked.filePath;
-        }
-        lifecycle.beginSave();
-        try {
-          await writeDocument(filePath);
-          lifecycle.saved(filePath);
-        } catch (err) {
-          lifecycle.saveFailed();
-          throw err;
-        }
+        await saveCurrentProject(command === "saveAs");
         break;
       }
       case "close": {
+        if (!lifecycle.project) {
+          await client.closeProject();
+          break;
+        }
         const decision = lifecycle.requestClose();
         if (decision === "confirm-discard") {
           const { response } = await dialog.showMessageBox(window, {
@@ -384,13 +445,23 @@ void app.whenReady().then(async () => {
           });
           if (response === 2) {
             lifecycle.cancelClose();
-          } else {
-            if (response === 0) {
-              const filePath = lifecycle.project?.filePath;
-              if (filePath) await writeDocument(filePath);
-            }
-            lifecycle.confirmClose();
+            break;
           }
+          if (response === 0) {
+            // Save usa sua própria transação; só depois voltamos a closing.
+            lifecycle.cancelClose();
+            if (!(await saveCurrentProject(false))) break;
+            lifecycle.requestClose();
+          }
+        }
+        const expectedProjectSessionId = lifecycle.project?.projectSessionId;
+        try {
+          const status = await client.closeProject(expectedProjectSessionId);
+          if (status.active) throw new Error("middleware kept the project session active");
+          lifecycle.confirmClose();
+        } catch (error) {
+          lifecycle.cancelClose();
+          throw error;
         }
         break;
       }
@@ -490,14 +561,43 @@ void app.whenReady().then(async () => {
     ]),
   );
 
+  let projectReconciliationGeneration = 0;
   client.onBlueprintEvent((event) => {
-    // dirty tracking: todo evento do Blueprint suja o documento aberto
+    // Um callback atrasado de A nunca suja nem chega ao renderer de B.
+    if (event.projectSessionId !== lifecycle.project?.projectSessionId) return;
     if (lifecycle.commandApplied()) void autosave();
     if (!window.isDestroyed()) {
       window.webContents.send("p7m:blueprint-event", event);
     }
   });
   client.onResynchronized((snapshot, record) => {
+    const generation = ++projectReconciliationGeneration;
+    const reconcileProjectSession = (): void => {
+      if (generation !== projectReconciliationGeneration) return;
+      if (
+        lifecycle.currentState === "opening" ||
+        lifecycle.currentState === "saving" ||
+        lifecycle.currentState === "closing"
+      ) {
+        const retry = setTimeout(reconcileProjectSession, 25);
+        retry.unref();
+        return;
+      }
+      const remote = snapshot.status;
+      const localSessionId = lifecycle.project?.projectSessionId;
+      if (remote.active && remote.projectSessionId && remote.projectId) {
+        if (remote.projectSessionId !== localSessionId) {
+          lifecycle.beginOpen();
+          lifecycle.opened(
+            descriptorFromStatus(remote, `Projeto ${remote.projectId}`),
+          );
+        }
+      } else if (lifecycle.project) {
+        lifecycle.requestClose();
+        lifecycle.confirmClose();
+      }
+    };
+    reconcileProjectSession();
     if (!window.isDestroyed()) {
       window.webContents.send("p7m:projection-resync", { snapshot, record });
     }

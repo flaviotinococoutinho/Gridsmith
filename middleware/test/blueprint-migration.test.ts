@@ -24,6 +24,21 @@ test("schemaVersion 0 explícito também migra", () => {
   assert.equal(migrateBlueprintDocument(doc).schemaVersion, BLUEPRINT_DOCUMENT_VERSION);
 });
 
+test("documento v1 sem projectId recebe identidade legada determinística", () => {
+  const legacyV1: Record<string, unknown> = {
+    ...createPlatformer2DDocument(),
+    schemaVersion: 1,
+  };
+  delete legacyV1["projectId"];
+
+  const first = migrateBlueprintDocument(legacyV1);
+  const second = migrateBlueprintDocument({ ...legacyV1 });
+
+  assert.equal(first.schemaVersion, 2);
+  assert.match(first.projectId, /^legacy-[0-9a-f]{24}$/);
+  assert.equal(second.projectId, first.projectId);
+});
+
 test("versão futura é recusada com erro claro contendo a versão", () => {
   const doc = { ...createPlatformer2DDocument(), schemaVersion: 99 };
   assert.throws(

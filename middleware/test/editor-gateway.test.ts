@@ -4,16 +4,22 @@ import net from "node:net";
 import { EditorGateway } from "../src/ipc/EditorGateway.js";
 import { EnginePipeServer } from "../src/ipc/EnginePipeServer.js";
 import { JsonRpcPeer } from "../src/ipc/JsonRpcPeer.js";
-import { BlueprintStore, type BlueprintEvent } from "../src/domain/BlueprintStore.js";
+import type { BlueprintEvent, BlueprintStore } from "../src/domain/BlueprintStore.js";
 import { CapabilityRegistry, type EngineManifest } from "../src/domain/CapabilityRegistry.js";
-import { CanonicalOrchestrator } from "../src/canonical/CanonicalOrchestrator.js";
+import { EditorSurface } from "../src/canonical/EditorSurface.js";
 import { HookBus } from "../src/canonical/HookBus.js";
+import {
+  ProjectSessionManager,
+  type ProjectSessionChangedEvent,
+  type SessionBlueprintEvent,
+} from "../src/canonical/ProjectSessionManager.js";
 import { ExperienceGovernor } from "../src/runtime/ExperienceGovernor.js";
 import { MonoGameAdapter } from "../src/runtime/MonoGameAdapter.js";
 import { RuntimeProfileRegistry } from "../src/runtime/RuntimeProfile.js";
 import { MONOGAME_PROFILES } from "../src/runtime/profiles/monogame.js";
 import { JsonRpcError, PROTOCOL_VERSION, RpcErrorCode } from "../src/protocol/jsonrpc.js";
 import { generateTransportAuthToken } from "../src/transport/auth.js";
+import { EventJournal } from "../src/transport/EventJournal.js";
 
 let pipeCounter = 0;
 const AUTH_TOKEN = generateTransportAuthToken();
@@ -35,11 +41,21 @@ const LIVE_MANIFEST: EngineManifest = {
 interface Harness {
   gateway: EditorGateway;
   engineServer: EnginePipeServer;
-  store: BlueprintStore;
+  readonly store: BlueprintStore;
+  sessions: ProjectSessionManager;
   engineCalls: Array<{ method: string; params: unknown }>;
   connectEditor(name?: string): Promise<JsonRpcPeer>;
   connectEngine(): Promise<JsonRpcPeer>;
   close(): Promise<void>;
+}
+
+interface SessionEventEnvelope {
+  readonly seq: string;
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly commandSequence: string;
+  readonly kind: string;
+  readonly payload: BlueprintEvent | ProjectSessionChangedEvent;
 }
 
 async function makeHarness(): Promise<Harness> {
@@ -47,15 +63,53 @@ async function makeHarness(): Promise<Harness> {
   const engineServer = new EnginePipeServer({ pipeName, requestTimeoutMs: 2000 });
   const capabilities = new CapabilityRegistry(engineServer);
   const adapter = new MonoGameAdapter(engineServer, capabilities);
-  const store = new BlueprintStore();
+  const sessions = new ProjectSessionManager({ hooks: new HookBus(), adapter });
   const profiles = new RuntimeProfileRegistry();
   for (const profile of MONOGAME_PROFILES) profiles.register(profile);
-  const gateway = new EditorGateway({
-    pipeName,
-    orchestrator: new CanonicalOrchestrator(store, new HookBus(), adapter),
-    store,
+  const surface = new EditorSurface({
+    sessions,
     governor: new ExperienceGovernor(profiles, capabilities),
     adapter,
+  });
+  const journal = new EventJournal(512, "editor-gateway-test");
+  await sessions.activate(sessions.createEmptySession("initial-project"));
+  const initial = sessions.status;
+  journal.activateSession(initial.projectSessionId!, initial.projectId!, initial.commandSequence);
+  sessions.on("event", (event: SessionBlueprintEvent) => {
+    journal.appendForSession(
+      event.projectSessionId,
+      event.projectId,
+      event.commandSequence,
+      event.kind,
+      event,
+    );
+  });
+  sessions.on("sessionChanged", (event: ProjectSessionChangedEvent) => {
+    if (event.action === "activated") {
+      journal.activateSession(event.projectSessionId!, event.projectId!, event.commandSequence);
+      journal.appendForSession(
+        event.projectSessionId!,
+        event.projectId!,
+        event.commandSequence,
+        event.kind,
+        event,
+      );
+      return;
+    }
+    const previous = journal.position;
+    journal.appendForSession(
+      previous.projectSessionId,
+      previous.projectId,
+      previous.commandSequence,
+      event.kind,
+      event,
+    );
+    journal.deactivateSession();
+  });
+  const gateway = new EditorGateway({
+    pipeName,
+    surface,
+    journal,
     authToken: AUTH_TOKEN,
     requestTimeoutMs: 2000,
   });
@@ -76,7 +130,10 @@ async function makeHarness(): Promise<Harness> {
   return {
     gateway,
     engineServer,
-    store,
+    get store() {
+      return sessions.current!.store;
+    },
+    sessions,
     engineCalls,
     async connectEditor(name = "electron-editor") {
       const peer = await connect(gateway.pipePath, name);
@@ -91,6 +148,7 @@ async function makeHarness(): Promise<Harness> {
       const peer = await connect(engineServer.pipePath, "fake-engine");
       let nextLightId = 300;
       peer.registerMethod("engine/describe", () => LIVE_MANIFEST);
+      peer.registerMethod("engine/reset_session", () => ({ status: "reset" }));
       peer.registerMethod("lighting/add", (params) => {
         engineCalls.push({ method: "lighting/add", params });
         return { lightId: nextLightId++ };
@@ -121,9 +179,10 @@ test("dispatch do editor percorre o caminho canônico até a engine e faz broadc
     const editorA = await h.connectEditor("editor-a");
     const editorB = await h.connectEditor("editor-b");
 
-    const broadcastToB = new Promise<BlueprintEvent>((resolve) => {
+    const broadcastToB = new Promise<SessionEventEnvelope>((resolve) => {
       // notifications sem handler são descartadas pelo peer: registra o receptor
-      editorB.registerMethod("blueprint/event", (params) => resolve(params as BlueprintEvent));
+      editorB.registerMethod("blueprint/event", (params) =>
+        resolve(params as SessionEventEnvelope));
     });
 
     const result = (await editorA.request("blueprint/dispatch", {
@@ -138,6 +197,8 @@ test("dispatch do editor percorre o caminho canônico até a engine e faz broadc
     // o OUTRO editor recebeu o evento por broadcast (coerência multi-janela)
     const broadcast = await broadcastToB;
     assert.equal(broadcast.kind, "lightAdded");
+    assert.equal(broadcast.projectSessionId, h.sessions.current?.sessionId);
+    assert.equal(broadcast.commandSequence, "1");
 
     // projeção de leitura reflete o AST
     const lights = (await editorB.request("blueprint/query", { projection: "lights" })) as {
@@ -258,7 +319,7 @@ test("dispatch offline: AST aceita, projeção deferred, broadcast acontece", as
     const editor = await h.connectEditor();
     const events: string[] = [];
     editor.registerMethod("blueprint/event", (params) => {
-      events.push((params as BlueprintEvent).kind);
+      events.push((params as SessionEventEnvelope).kind);
     });
 
     const result = (await editor.request("blueprint/dispatch", {
@@ -309,7 +370,7 @@ test("project/templates lista o Plataforma 2D e project/new o reproduz no AST", 
   }
 });
 
-test("project/new recusa template desconhecido e exige blueprint vazio", async () => {
+test("project/new recusa template desconhecido e substitui a sessão sem exigir blueprint vazio", async () => {
   const h = await makeHarness();
   try {
     const editor = await h.connectEditor();
@@ -320,13 +381,46 @@ test("project/new recusa template desconhecido e exige blueprint vazio", async (
     );
 
     await editor.request("project/new", { templateId: "platformer-2d" });
-    // segundo new falha: o blueprint já não está vazio
-    await assert.rejects(
-      editor.request("project/new", { templateId: "platformer-2d" }),
-      (err: unknown) => err instanceof JsonRpcError && err.code === RpcErrorCode.InvalidParams,
-    );
+    const first = (await editor.request("project/status", {})) as {
+      projectSessionId: string;
+    };
+    await editor.request("project/new", { templateId: "platformer-2d" });
+    const second = (await editor.request("project/status", {})) as {
+      projectSessionId: string;
+    };
+    assert.notEqual(second.projectSessionId, first.projectSessionId);
 
     editor.close();
+  } finally {
+    await h.close();
+  }
+});
+
+test("sessão de projeto: dois clientes observam a troca atômica pela mesma partição de eventos", async () => {
+  const h = await makeHarness();
+  try {
+    const editorA = await h.connectEditor("session-owner");
+    const editorB = await h.connectEditor("session-observer");
+    const observed = new Promise<SessionEventEnvelope>((resolve) => {
+      editorB.registerMethod("blueprint/event", (params) =>
+        resolve(params as SessionEventEnvelope));
+    });
+
+    const activation = (await editorA.request("project/create", {
+      projectId: "project-b",
+    })) as {
+      status: { projectSessionId: string; projectId: string };
+    };
+    const event = await observed;
+
+    assert.equal(activation.status.projectId, "project-b");
+    assert.equal(event.kind, "project/sessionChanged");
+    assert.equal(event.projectId, "project-b");
+    assert.equal(event.projectSessionId, activation.status.projectSessionId);
+    assert.equal((event.payload as ProjectSessionChangedEvent).action, "activated");
+
+    editorA.close();
+    editorB.close();
   } finally {
     await h.close();
   }

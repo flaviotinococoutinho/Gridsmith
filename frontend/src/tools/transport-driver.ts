@@ -48,6 +48,9 @@ async function main(): Promise<void> {
       `active transport is "${client.technicalDiagnostics.activeTransport}" (expected "${expectedDiagnostic}")`,
     );
 
+    const project = await client.createProject();
+    assert(project.status.active, `project session ${project.status.projectSessionId} activated`);
+
     const received: string[] = [];
     client.onBlueprintEvent((event) => received.push(event.kind));
 

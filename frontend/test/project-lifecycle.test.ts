@@ -34,7 +34,9 @@ test("fluxo feliz: novo → editar → salvar → fechar", () => {
   assert.equal(lifecycle.currentState, "open-clean");
   assert.equal(lifecycle.project?.filePath, "/projetos/meu-jogo.p7m.json");
 
-  assert.equal(lifecycle.requestClose(), "close"); // limpo fecha direto
+  assert.equal(lifecycle.requestClose(), "close");
+  assert.equal(lifecycle.currentState, "closing");
+  lifecycle.confirmClose();
   assert.equal(lifecycle.currentState, "no-project");
 });
 
@@ -55,15 +57,41 @@ test("fechar sujo exige confirmação; cancelar volta ao estado sujo", () => {
   assert.equal(lifecycle.currentState, "no-project");
 });
 
-test("abrir exige blueprint vazio: abrir por cima de projeto aberto é rejeitado", () => {
+test("falha remota ao fechar projeto limpo restaura a sessão local", () => {
   const { lifecycle } = makeLifecycle();
   lifecycle.beginOpen();
-  lifecycle.opened({ name: "A" });
-  assert.throws(() => lifecycle.beginOpen(), ProjectLifecycleError);
-  assert.throws(() => lifecycle.beginOpen(), /close the current project first/);
+  lifecycle.opened({
+    name: "A",
+    projectSessionId: "session-a",
+    projectId: "project-a",
+  });
+
+  assert.equal(lifecycle.requestClose(), "close");
+  assert.equal(lifecycle.currentState, "closing");
+  lifecycle.cancelClose();
+
+  assert.equal(lifecycle.currentState, "open-clean");
+  assert.equal(lifecycle.project?.projectSessionId, "session-a");
 });
 
-test("falha de abertura e de save preservam o estado correto", () => {
+test("substituição transacional aceita abrir por cima e só troca no commit", () => {
+  const { lifecycle } = makeLifecycle();
+  lifecycle.beginOpen();
+  lifecycle.opened({ name: "A", projectSessionId: "session-a", projectId: "a" });
+  lifecycle.commandApplied();
+
+  lifecycle.beginOpen();
+  assert.equal(lifecycle.currentState, "opening");
+  assert.equal(lifecycle.project?.name, "A");
+  assert.equal(lifecycle.isDirty, true);
+
+  lifecycle.opened({ name: "B", projectSessionId: "session-b", projectId: "b" });
+  assert.equal(lifecycle.currentState, "open-clean");
+  assert.equal(lifecycle.project?.name, "B");
+  assert.equal(lifecycle.isDirty, false);
+});
+
+test("falha de abertura preserva descritor e dirty state anteriores", () => {
   const { lifecycle } = makeLifecycle();
   lifecycle.beginOpen();
   lifecycle.openFailed();
@@ -72,6 +100,11 @@ test("falha de abertura e de save preservam o estado correto", () => {
   lifecycle.beginOpen();
   lifecycle.opened({ name: "B" });
   lifecycle.commandApplied();
+  lifecycle.beginOpen();
+  lifecycle.openFailed();
+  assert.equal(lifecycle.currentState, "open-dirty");
+  assert.equal(lifecycle.project?.name, "B");
+
   lifecycle.beginSave();
   lifecycle.saveFailed();
   assert.equal(lifecycle.currentState, "open-dirty"); // documento continua sujo
@@ -120,6 +153,7 @@ test("recentes: mais novo primeiro, sem duplicatas, máximo de 10", () => {
     lifecycle.beginOpen();
     lifecycle.opened({ filePath: `/p/jogo-${i % 11}.p7m.json`, name: `Jogo ${i % 11}` });
     lifecycle.requestClose();
+    lifecycle.confirmClose();
     tick(1_000);
   }
 

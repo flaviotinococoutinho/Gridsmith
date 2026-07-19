@@ -144,7 +144,8 @@ sequenceDiagram
     M-->>E: {sessionId uuid v4, serverName p7m-middleware, acceptedCapabilities}
     Note over M: emite evento session
     M->>E: welcome ping
-    M->>M: adapter.rehydrateFrom(store)
+    M->>E: engine/reset_session {}
+    M->>M: sessions.rehydrateCurrent()
   end
   loop canal simetrico full-duplex
     M->>E: engine/ping, skeleton/initialize, camera/*, entity/*
@@ -163,11 +164,14 @@ sequenceDiagram
    versão de protocolo e capacidades.
 3. O middleware valida a versão de protocolo (major deve coincidir) e responde com a
    identidade da sessão e as capacidades habilitadas.
-4. A partir daí o canal é simétrico:
+4. O `ProjectSessionManager` executa `engine/reset_session` e reidrata somente a
+   sessão de projeto que ainda estiver ativa; sem projeto, o reset deixa a engine
+   vazia.
+5. A partir daí o canal é simétrico:
    - middleware → engine: `engine/ping`, `skeleton/initialize`, `mesh/bind_shared_memory`, …
    - engine → middleware: `engine/log` (notification), heartbeat periódico via
      `engine/ping` com payload `"heartbeat"`, respostas aos requests recebidos.
-5. Desconexões são detectadas por EOF/erro de socket; requests pendentes são rejeitados
+6. Desconexões são detectadas por EOF/erro de socket; requests pendentes são rejeitados
    imediatamente com erro de transporte. A engine reconecta com backoff exponencial.
 
 ## Convenções JSON-RPC
@@ -185,14 +189,15 @@ sequenceDiagram
 
 O plano de controle JSON-RPC acima é a borda **middleware ↔ engine**. A borda
 **app (Electron) ↔ middleware** usa dois transports próprios, decididos em
-[ADR-016/017/018/019](adr/README.md):
+[ADR-016/017/018/019/020](adr/README.md):
 
 - **GraphQL** ([`../contracts/graphql/editor.schema.graphql`](../contracts/graphql/editor.schema.graphql)):
   superfície **baseline completa** — toda operação do editor existe aqui — e
   também o destino do **fallback**.
 - **gRPC** ([`../contracts/grpc/p7m_editor.proto`](../contracts/grpc/p7m_editor.proto),
   package `p7m.editor.v1`): **caminho quente prioritário medido** — `Dispatch`,
-  `Query`, `StreamEventsV2` (server streaming com status de cursor) e `Health`;
+  `Query`, `StreamEventsV2` (server streaming com status de cursor) e `Health` —
+  mais a paridade de sessão `ProjectCreate/OpenDocument/Close/Status`;
   `StreamEvents` permanece apenas para compatibilidade.
 
 O default gRPC está congelado pelo resultado medido da ADR-019, não por uma
@@ -202,10 +207,10 @@ Queries gRPC regrediram nos quatro cenários e permanecem risco explícito.
 GraphQL continua baseline completo; o JSON-RPC legado continua apenas por
 compatibilidade enquanto houver dependentes.
 
-As três bordas do middleware (gateway JSON-RPC do editor, GraphQL e gRPC)
-delegam na mesma superfície `EditorSurface`
+As quatro bordas do middleware (gateway JSON-RPC do editor, GraphQL, gRPC e
+MCP) delegam na mesma superfície `EditorSurface` e na mesma sessão ativa
 (`middleware/src/canonical/EditorSurface.ts`): o caminho canônico de mutação
-continua **único** — as regras arquiteturais R10–R12 e F5
+continua **único** — as regras arquiteturais R10–R13 e F5
 ([`GOVERNANCE.md`](GOVERNANCE.md)) impedem que as bordas ganhem domínio ou que
 SDKs de transporte vazem para fora delas.
 
@@ -218,7 +223,7 @@ stateDiagram-v2
   graphql --> graphql : sonda ruim (backoff 2s 4s 8s 16s 30s)
   graphql --> grpc : 2 sondas Health boas consecutivas (histerese)
   note right of graphql
-    eventBatch(instanceId, afterSeq)
+    eventBatch(instanceId, projectSessionId, afterSeq)
     resync explicito
   end note
   note right of grpc
@@ -246,13 +251,39 @@ em execução externa, por arquivo privado). GraphQL valida Bearer, gRPC valida
 metadata e o gateway legado valida o handshake. Autenticação não é classificada
 como indisponibilidade, portanto nunca provoca fallback.
 
-**Continuidade explícita:** o `EventJournal` mantém janela 512 e cursor composto
-por identidade do processo + sequência decimal. `StreamEventsV2` e
+**Continuidade explícita:** o `EventJournal` mantém uma partição por sessão de
+projeto e cursor composto `(middlewareInstanceId, projectSessionId, seq)`.
+`StreamEventsV2` e
 `eventBatch` informam `firstAvailableSeq`, `lastEventSeq` e `resyncRequired`.
-Restart, cursor futuro ou consumidor além da janela retornam zero eventos
+Restart, troca de projeto, cursor futuro ou consumidor além da janela retornam zero eventos
 parciais; o `EditorClient` busca `snapshot` de todas as projeções, substitui o
 estado local e só então reinicia stream/polling. Um `requestId` compartilhado
-impede reaplicação de dispatch durante retry cross-transport.
+impede reaplicação de dispatch durante retry cross-transport; a identidade da
+sessão de origem faz um retry tardio após A → B falhar explicitamente, sem
+contaminar B.
+
+## Sessão de projeto
+
+`ProjectSessionManager` é a única autoridade sobre a referência ativa. Cada
+sessão possui `sessionId`, `projectId`, `BlueprintStore`,
+`CanonicalOrchestrator`, `CommandHistory` e `createdAt`; `EditorSurface` e as
+quatro bordas (JSON-RPC, GraphQL, gRPC e MCP) consultam essa porta em cada
+operação.
+
+`project/create`, `project/openDocument`, `project/close` e `project/status`
+formam a API de aplicação. Open faz parse → migração → validação → replay em
+sessão temporária → validação semântica → reset/reidratação → commit. Create e
+open aceitam `expectedProjectSessionId`, validado no commit como
+compare-and-swap; um candidato obsoleto nunca sobrescreve uma sessão ativada por
+outro cliente. Falha antes do commit preserva sessão, journal, dirty state e
+runtime anteriores.
+
+O status de runtime é `synchronized`, `deferred` ou `failed`. `deferred` indica
+engine ausente e permite que a sessão canônica siga ativa; `failed` indica que a
+compensação/reidratação não restaurou coerência e bloqueia mutações até recovery
+integral. Antes de reidratar outro projeto, o adapter executa
+`engine/reset_session`, que limpa atores, níveis, luzes, câmera, esqueletos e
+readers de shared memory sob um único lock.
 
 **Verbosidade:** `P7M_VERBOSITY=silent|error|warn|info|debug|trace` controla os
 loggers estruturados dos dois lados (stdout do middleware pertence ao MCP; logs
@@ -262,13 +293,14 @@ vão para stderr). E2E das duas fases (gRPC quente + fallback GraphQL):
 ## Papel do MCP
 
 O middleware expõe as capacidades do ecossistema a agentes de IA via **Model Context
-Protocol** (transporte stdio). As ferramentas MCP são fachadas finas sobre o mesmo
-barramento de comandos interno usado pelo canal JSON-RPC da engine — nenhuma lógica de
+Protocol** (transporte stdio). As ferramentas MCP são fachadas finas sobre a mesma
+`EditorSurface` e a mesma sessão usadas pelas demais bordas — nenhuma lógica de
 domínio vive na camada MCP.
 
 ## Estado declarativo (AST)
 
-O middleware mantém o estado do projeto como uma árvore declarativa (Blueprint). Toda
+Cada sessão ativa mantém o estado do projeto como uma árvore declarativa
+(Blueprint). Toda
 mutação entra pelo barramento de comandos (CQRS): comandos imutáveis são validados,
 aplicados ao AST e propagados como eventos para os assinantes (UI e engine). A engine é
 tratada como uma *projeção materializada* do AST — reconectar significa reidratar.

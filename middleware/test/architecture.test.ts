@@ -196,3 +196,18 @@ test("R12: as bordas de transporte do app (graphql/, grpc/) não importam domín
   );
   assert.deepEqual(offenders, []);
 });
+
+test("R13: EditorSurface e as quatro bordas resolvem a sessão por uma única porta substituível", () => {
+  const surface = fs.readFileSync(path.join(SRC, "canonical/EditorSurface.ts"), "utf8");
+  const index = fs.readFileSync(path.join(SRC, "index.ts"), "utf8");
+  const legacy = fs.readFileSync(path.join(SRC, "ipc/EditorGateway.ts"), "utf8");
+  const mcp = fs.readFileSync(path.join(SRC, "mcp/McpFacade.ts"), "utf8");
+
+  assert.doesNotMatch(surface, /interface EditorSurfaceOptions\s*{[^}]*\bstore\s*:/);
+  assert.doesNotMatch(surface, /interface EditorSurfaceOptions\s*{[^}]*\borchestrator\s*:/);
+  assert.equal((index.match(/new EditorSurface\(/g) ?? []).length, 1, "composition owns one surface");
+  assert.match(legacy, /surface:\s*EditorSurface/);
+  assert.doesNotMatch(legacy, /new EditorSurface\(/);
+  assert.doesNotMatch(mcp, /canonical\.orchestrator/);
+  assert.match(mcp, /canonical\.surface\.dispatchByKind/);
+});

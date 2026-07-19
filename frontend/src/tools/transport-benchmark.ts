@@ -315,6 +315,9 @@ class GrpcBenchmarkClient implements BenchmarkClient {
     const cancel = this.transport.streamEvents(
       {
         middlewareInstanceId: health.middlewareInstanceId,
+        projectSessionId: health.projectSessionId,
+        projectId: health.projectId,
+        commandSequence: health.commandSequence,
         lastEventSeq: health.lastEventSeq,
       },
       (status) => {
@@ -335,10 +338,14 @@ const GRAPHQL_DISPATCH = `mutation BenchmarkDispatch($payload: JSON!, $requestId
 }`;
 const GRAPHQL_PROJECTION = `query BenchmarkProjection($name: String!) { projection(name: $name) }`;
 const GRAPHQL_HEALTH = `query BenchmarkHealth {
-  health { middlewareInstanceId firstAvailableSeq lastEventSeq }
+  health { middlewareInstanceId projectSessionId firstAvailableSeq lastEventSeq }
 }`;
-const GRAPHQL_EVENTS = `query BenchmarkEvents($instance: String!, $after: String!) {
-  eventBatch(middlewareInstanceId: $instance, afterSeq: $after) {
+const GRAPHQL_EVENTS = `query BenchmarkEvents($instance: String!, $projectSessionId: String!, $after: String!) {
+  eventBatch(
+    middlewareInstanceId: $instance
+    projectSessionId: $projectSessionId
+    afterSeq: $after
+  ) {
     middlewareInstanceId firstAvailableSeq lastEventSeq resyncRequired resyncReason
     events { seq kind payload }
   }
@@ -381,19 +388,20 @@ class GraphQlBenchmarkClient implements BenchmarkClient {
 
   async observeLevelUpdates(): Promise<EventObserver> {
     const health = await this.transport.execute<{
-      health: { middlewareInstanceId: string; lastEventSeq: string };
+      health: { middlewareInstanceId: string; projectSessionId: string; lastEventSeq: string };
     }>(GRAPHQL_HEALTH, undefined, "BenchmarkHealth");
     const observer = new EventObserver(true);
     let active = true;
     let cursor = health.health.lastEventSeq;
     const instance = health.health.middlewareInstanceId;
+    const projectSessionId = health.health.projectSessionId;
 
     const pump = (async (): Promise<void> => {
       while (active) {
         try {
           const result = await this.transport.execute<{ eventBatch: GraphQlEventBatch }>(
             GRAPHQL_EVENTS,
-            { instance, after: cursor },
+            { instance, projectSessionId, after: cursor },
             "BenchmarkEvents",
           );
           const batch = result.eventBatch;
@@ -663,6 +671,7 @@ async function runFork(
   try {
     await waitForGateways(grpcTransport, graphQlTransport, middleware, config.requestTimeoutMs);
     legacyPeer = await connectLegacy(pipeName, authToken, config.requestTimeoutMs);
+    await legacyPeer.request("project/create", {});
     const clients: Readonly<Record<TransportName, BenchmarkClient>> = {
       grpc: new GrpcBenchmarkClient(grpcTransport),
       graphql: new GraphQlBenchmarkClient(graphQlTransport, config.graphqlPollIntervalMs),

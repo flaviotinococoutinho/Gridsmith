@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/engine.reset_session",
+  "title": "engine/reset_session",
+  "description": "Remove atomicamente da engine todo estado materializado pela sessão de projeto anterior antes da reidratação da seguinte.",
+  "type": "object",
+  "properties": {
+    "params": {
+      "type": "object",
+      "maxProperties": 0,
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "status": { "const": "reset" },
+        "skeletons": { "const": 0 },
+        "meshes": { "const": 0 },
+        "lights": { "const": 0 },
+        "tilemaps": { "const": 0 },
+        "actors": { "const": 0 }
+      },
+      "required": ["status", "skeletons", "meshes", "lights", "tilemaps", "actors"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["params", "result"],
+  "additionalProperties": false
+}

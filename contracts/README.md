@@ -34,6 +34,7 @@ graph TD
 |---|---|---|---|
 | `engine/handshake` | engine → middleware | request | [`schemas/engine.handshake.schema.json`](schemas/engine.handshake.schema.json) |
 | `engine/ping` | ambas | request | [`schemas/engine.ping.schema.json`](schemas/engine.ping.schema.json) |
+| `engine/reset_session` | middleware → engine | request | [`schemas/engine.reset_session.schema.json`](schemas/engine.reset_session.schema.json) |
 | `engine/log` | engine → middleware | notification | [`schemas/engine.log.schema.json`](schemas/engine.log.schema.json) |
 | `skeleton/initialize` | middleware → engine | request | [`schemas/skeleton.initialize.schema.json`](schemas/skeleton.initialize.schema.json) |
 | `mesh/bind_shared_memory` | middleware → engine | request | [`schemas/mesh.bind_shared_memory.schema.json`](schemas/mesh.bind_shared_memory.schema.json) |
@@ -91,7 +92,7 @@ graph LR
     S9["modelo canonico / governanca"]
   end
   subgraph SCH["Esquemas (contracts/schemas)"]
-    c1["engine.handshake · engine.ping · engine.log"]
+    c1["engine.handshake · engine.ping<br/>engine.reset_session · engine.log"]
     c2["skeleton.initialize"]
     c3["mesh.bind_shared_memory · mesh.inspect"]
     c4["engine.describe"]
@@ -119,12 +120,12 @@ graph LR
 A borda app ↔ middleware **não** usa o plano JSON-RPC acima: usa GraphQL
 (superfície baseline completa + destino do fallback) e gRPC (caminho quente
 prioritário) — decisões em [`../docs/adr/`](../docs/adr/README.md)
-(ADR-016/017/018/019).
+(ADR-016/017/018/019/020).
 
 | Contrato | Arquivo | Papel | Operações |
 |---|---|---|---|
-| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | queries `health`, `projection`, `snapshot`, `eventBatch`, `experience`, `templates` (`eventsSince` legado) · mutations `dispatch`, `loadDocument`, `newProjectFromTemplate` |
-| gRPC proto | [`grpc/p7m_editor.proto`](grpc/p7m_editor.proto) — `p7m.editor.v1.EditorHotPath` | caminho quente condicionado pela ADR-019 | `Dispatch`, `Query`, `Snapshot`, `StreamEventsV2`, `Health` (`StreamEvents` legado) |
+| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | queries de projeto/projeção/snapshot/eventos · mutations `projectCreate`, `projectOpenDocument`, `projectClose`, `dispatch` + aliases legados |
+| gRPC proto | [`grpc/p7m_editor.proto`](grpc/p7m_editor.proto) — `p7m.editor.v1.EditorHotPath` | caminho quente condicionado pela ADR-019 | `ProjectCreate`, `ProjectOpenDocument`, `ProjectClose`, `ProjectStatus`, dispatch/query/snapshot + `StreamEventsV2` |
 
 Regras de evolução:
 
@@ -137,9 +138,14 @@ Regras de evolução:
   `payload_json` no proto) e são validados na **mesma fonte única**
   (`BlueprintStore` + [`schemas/`](schemas/)) — os transports não introduzem
   segunda fonte de validação.
-- Clientes novos usam cursor composto `(middlewareInstanceId, seq)` e strings
+- Clientes novos usam cursor composto `(middlewareInstanceId, projectSessionId, seq)` e strings
   decimais para `uint64`. `resyncRequired` obriga snapshot completo; APIs
-  legadas sem epoch permanecem somente para compatibilidade.
+  legadas sem identidade de sessão falham explicitamente em vez de misturar projetos.
+- Create/open/close aceitam `expectedProjectSessionId` para compare-and-swap;
+  candidato preparado sobre uma sessão antiga falha com
+  `PROJECT_SESSION_CONFLICT` em vez de sobrescrever o projeto mais novo.
+- `ProjectStatus.runtimeState` é `synchronized`, `deferred` ou `failed`.
+  `failed` bloqueia mutações até uma reidratação integral restaurar o runtime.
 - GraphQL exige `Authorization: Bearer`; gRPC exige a mesma credencial em
   metadata. Autenticação não participa da política de fallback.
 - Compatibilidade e breaking changes destes eixos:
@@ -163,7 +169,8 @@ Versão atual: **1.0** (constante `PROTOCOL_VERSION` em ambas as implementaçõe
 
 A negociação acontece no ciclo de vida da conexão: a engine conecta e faz o
 handshake, o middleware valida **só o MAJOR**, responde com `sessionId` (uuid v4) e
-emite a sessão. A cada sessão nova o middleware faz welcome ping e reidrata o adapter.
+emite a sessão. A cada sessão nova o middleware faz welcome ping e pede ao
+`ProjectSessionManager` que resete a engine e reidrate somente o projeto ativo.
 
 ```mermaid
 sequenceDiagram
@@ -177,7 +184,8 @@ sequenceDiagram
     M-->>E: {sessionId uuid v4, serverName p7m-middleware, acceptedCapabilities}
     Note over M: emite evento session
     M->>E: welcome ping
-    M->>M: adapter.rehydrateFrom(store)
+    M->>E: engine/reset_session {}
+    M->>M: sessions.rehydrateCurrent()
   end
   loop canal simetrico full-duplex
     M->>E: skeleton/initialize, camera/*, entity/*, engine/describe

@@ -74,6 +74,23 @@ public sealed class EngineService : IDisposable
             });
         });
 
+        connection.RegisterMethod("engine/reset_session", (_, _) =>
+        {
+            lock (_gate)
+            {
+                ResetSessionUnderLock();
+                return ValueTask.FromResult<object?>(new
+                {
+                    status = "reset",
+                    skeletons = Skeletons.LiveCount,
+                    meshes = _meshBindings.Count,
+                    lights = Lights.LiveCount,
+                    tilemaps = Tilemaps.LiveCount,
+                    actors = Actors.LiveCount,
+                });
+            }
+        });
+
         connection.RegisterMethod("skeleton/initialize", (params_, _) =>
         {
             var p = Deserialize<SkeletonInitializeParams>(params_);
@@ -189,13 +206,42 @@ public sealed class EngineService : IDisposable
     {
         lock (_gate)
         {
-            foreach (var reader in _meshReaders.Values)
-            {
-                reader.Dispose();
-            }
-
-            _meshReaders.Clear();
+            ResetMeshesUnderLock();
         }
+    }
+
+    /// <summary>
+    /// Limpa, sob um único lock, todo estado materializado da sessão de
+    /// projeto. Os stores SoA preservam suas alocações e expõem Reset dedicado;
+    /// leitores de shared memory são liberados antes dos esqueletos.
+    /// </summary>
+    public void ResetSession()
+    {
+        lock (_gate)
+        {
+            ResetSessionUnderLock();
+        }
+    }
+
+    private void ResetSessionUnderLock()
+    {
+        ResetMeshesUnderLock();
+        Skeletons.Reset();
+        Camera.Reset();
+        Lights.Reset();
+        Tilemaps.Reset();
+        Actors.Reset();
+    }
+
+    private void ResetMeshesUnderLock()
+    {
+        foreach (var reader in _meshReaders.Values)
+        {
+            reader.Dispose();
+        }
+
+        _meshReaders.Clear();
+        _meshBindings.Clear();
     }
 
     private void RegisterCameraHandlers(JsonRpcConnection connection)

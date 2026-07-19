@@ -19,11 +19,27 @@ export interface HandshakeParams {
 
 export interface EngineSession {
   sessionId: string;
+  /** Geração monotônica do destino de runtime corrente. */
+  readonly runtimeSessionEpoch: number;
   clientName: string;
   clientVersion: string;
   capabilities: string[];
   peer: JsonRpcPeer;
   connectedAtUnixMs: number;
+}
+
+export type EngineSessionChangeReason = "connected" | "superseded" | "disconnected";
+
+/**
+ * Troca efetiva do runtime que recebe projeções. Diferente de `sessionClosed`,
+ * o fechamento de uma conexão já supersedida não produz este evento.
+ */
+export interface CurrentEngineSessionChangedEvent {
+  readonly reason: EngineSessionChangeReason;
+  /** Epoch corrente depois da troca (também muda ao entrar em disconnected). */
+  readonly runtimeSessionEpoch: number;
+  readonly current?: EngineSession;
+  readonly previous?: EngineSession;
 }
 
 export interface EngineLogEntry {
@@ -50,11 +66,14 @@ const SERVER_NAME = "p7m-middleware";
  * Eventos:
  * - "session"      (session: EngineSession)  — handshake concluído
  * - "sessionClosed"(session: EngineSession, reason: Error)
+ * - "currentSessionChanged" (change: CurrentEngineSessionChangedEvent)
+ *                    — somente quando muda a engine que recebe projeções
  * - "engineLog"    (session: EngineSession, entry: EngineLogEntry)
  */
 export class EnginePipeServer extends EventEmitter {
   private readonly server: net.Server;
-  private readonly sessions = new Map<string, EngineSession>();
+  private activeSession: EngineSession | undefined;
+  private sessionEpoch = 0;
   private readonly options: EnginePipeServerOptions;
   readonly pipePath: string;
 
@@ -78,19 +97,26 @@ export class EnginePipeServer extends EventEmitter {
   }
 
   async close(): Promise<void> {
-    for (const session of this.sessions.values()) session.peer.close();
-    this.sessions.clear();
+    this.activeSession?.peer.close();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     if (process.platform !== "win32") removeOwnedUnixSocketPath(this.pipePath);
   }
 
   get activeSessions(): readonly EngineSession[] {
-    return [...this.sessions.values()];
+    return this.activeSession ? [this.activeSession] : [];
   }
 
-  /** Sessão ativa mais recente — a projeção materializada corrente da engine. */
+  /** Única engine autorizada a receber a projeção materializada corrente. */
   get currentSession(): EngineSession | undefined {
-    return this.activeSessions.at(-1);
+    return this.activeSession;
+  }
+
+  /**
+   * Geração do destino efetivo. Diferentemente de `sessionId`, existe também
+   * quando nenhuma engine está conectada e muda ao desconectar a corrente.
+   */
+  get currentRuntimeSessionEpoch(): number {
+    return this.sessionEpoch;
   }
 
   private onConnection(socket: net.Socket): void {
@@ -104,6 +130,12 @@ export class EnginePipeServer extends EventEmitter {
     let session: EngineSession | undefined;
 
     peer.registerMethod("engine/handshake", (params) => {
+      if (session) {
+        throw new JsonRpcError(
+          RpcErrorCode.InvalidRequest,
+          "engine/handshake already completed for this connection",
+        );
+      }
       const p = validateHandshake(params);
       const [major] = p.protocolVersion.split(".");
       const [serverMajor] = PROTOCOL_VERSION.split(".");
@@ -115,18 +147,31 @@ export class EnginePipeServer extends EventEmitter {
       }
       const supported = new Set(this.options.supportedCapabilities ?? []);
       const accepted = (p.capabilities ?? []).filter((c) => supported.has(c));
-      session = {
+      const runtimeSessionEpoch = this.advanceRuntimeSessionEpoch();
+      const nextSession: EngineSession = {
         sessionId: randomUUID(),
+        runtimeSessionEpoch,
         clientName: p.clientName,
         clientVersion: p.clientVersion,
         capabilities: accepted,
         peer,
         connectedAtUnixMs: Date.now(),
       };
-      this.sessions.set(session.sessionId, session);
-      this.emit("session", session);
+      const previous = this.activeSession;
+      session = nextSession;
+      // Publica a nova referência antes de encerrar A: o callback de close de
+      // A jamais pode fazê-la voltar a ser current nem disparar reidratação.
+      this.activeSession = nextSession;
+      previous?.peer.close();
+      this.emit("session", nextSession);
+      this.emitCurrentSessionChanged({
+        reason: previous ? "superseded" : "connected",
+        runtimeSessionEpoch,
+        current: nextSession,
+        ...(previous ? { previous } : {}),
+      });
       return {
-        sessionId: session.sessionId,
+        sessionId: nextSession.sessionId,
         serverName: SERVER_NAME,
         protocolVersion: PROTOCOL_VERSION,
         acceptedCapabilities: accepted,
@@ -151,10 +196,32 @@ export class EnginePipeServer extends EventEmitter {
 
     peer.on("close", (reason: Error) => {
       if (session) {
-        this.sessions.delete(session.sessionId);
+        const wasCurrent = this.activeSession === session;
+        if (wasCurrent) {
+          this.activeSession = undefined;
+          this.advanceRuntimeSessionEpoch();
+        }
         this.emit("sessionClosed", session, reason);
+        if (wasCurrent) {
+          this.emitCurrentSessionChanged({
+            reason: "disconnected",
+            runtimeSessionEpoch: this.sessionEpoch,
+            previous: session,
+          });
+        }
       }
     });
+  }
+
+  private emitCurrentSessionChanged(change: CurrentEngineSessionChangedEvent): void {
+    this.emit("currentSessionChanged", Object.freeze(change));
+  }
+
+  private advanceRuntimeSessionEpoch(): number {
+    if (this.sessionEpoch >= Number.MAX_SAFE_INTEGER) {
+      throw new RangeError("Engine runtime session epoch exhausted the safe integer range");
+    }
+    return ++this.sessionEpoch;
   }
 }
 

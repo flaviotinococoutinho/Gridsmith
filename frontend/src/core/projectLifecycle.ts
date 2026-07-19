@@ -8,8 +8,9 @@
  * persistência de recentes entram por parâmetro), testável sem Electron.
  *
  * A escrita em disco e os diálogos nativos vivem no processo main; aqui vive
- * a VERDADE sobre o estado do documento, incluindo a regra "carregar exige
- * blueprint vazio" (novo projeto é estado explícito, nunca um merge).
+ * a VERDADE sobre o estado do documento. Abertura e substituição são
+ * transações: enquanto o middleware prepara a nova sessão, o descritor e o
+ * dirty state anteriores ficam preservados para rollback local.
  */
 
 export type ProjectState =
@@ -24,6 +25,9 @@ export interface ProjectDescriptor {
   /** Caminho do arquivo .p7m (ou undefined para projeto novo não salvo). */
   readonly filePath?: string;
   readonly name: string;
+  /** Identidade imutável da sessão ativa no middleware. */
+  readonly projectSessionId?: string;
+  readonly projectId?: string;
 }
 
 export interface RecentProject {
@@ -62,6 +66,14 @@ export class ProjectLifecycle {
   private descriptor: ProjectDescriptor | undefined;
   private dirtyCommands = 0;
   private lastSaveAtMs: number;
+  private pendingOpen:
+    | {
+        readonly previousState: "no-project" | "open-clean" | "open-dirty";
+        readonly descriptor?: ProjectDescriptor;
+        readonly dirtyCommands: number;
+        readonly lastSaveAtMs: number;
+      }
+    | undefined;
   private recents: RecentProject[] = [];
   private readonly listeners = new Set<(event: LifecycleEvent) => void>();
   private readonly intervalMs: number;
@@ -85,7 +97,10 @@ export class ProjectLifecycle {
   }
 
   get isDirty(): boolean {
-    return this.state === "open-dirty";
+    return (
+      this.state === "open-dirty" ||
+      (this.state === "opening" && this.pendingOpen?.previousState === "open-dirty")
+    );
   }
 
   get project(): ProjectDescriptor | undefined {
@@ -109,13 +124,27 @@ export class ProjectLifecycle {
 
   // ---- transições ----
 
-  /** Início de New/Open. O caller executa o replay e então chama `opened`. */
+  /**
+   * Início de New/Open. Pode substituir um projeto aberto: o estado anterior
+   * fica guardado até `opened` confirmar a troca atômica ou `openFailed`
+   * restaurá-lo sem alterar dirty state, recents ou descritor.
+   */
   beginOpen(): void {
-    if (this.state !== "no-project") {
+    if (
+      this.state !== "no-project" &&
+      this.state !== "open-clean" &&
+      this.state !== "open-dirty"
+    ) {
       throw new ProjectLifecycleError(
-        `Cannot open a project while state is "${this.state}" — close the current project first (blueprint must be empty)`,
+        `Cannot open a project while state is "${this.state}"`,
       );
     }
+    this.pendingOpen = {
+      previousState: this.state,
+      ...(this.descriptor ? { descriptor: this.descriptor } : {}),
+      dirtyCommands: this.dirtyCommands,
+      lastSaveAtMs: this.lastSaveAtMs,
+    };
     this.transition("opening");
   }
 
@@ -125,15 +154,23 @@ export class ProjectLifecycle {
     this.descriptor = descriptor;
     this.dirtyCommands = 0;
     this.lastSaveAtMs = this.now();
+    this.pendingOpen = undefined;
     if (descriptor.filePath) this.touchRecent(descriptor.filePath, descriptor.name);
     this.transition("open-clean");
   }
 
-  /** Abertura falhou: volta ao estado inicial (o blueprint deve ter sido descartado). */
+  /** Abertura falhou: restaura exatamente a sessão local anterior. */
   openFailed(): void {
     this.assertState("opening", "openFailed");
-    this.descriptor = undefined;
-    this.transition("no-project");
+    const previous = this.pendingOpen;
+    if (!previous) {
+      throw new ProjectLifecycleError("openFailed requires a pending open transaction");
+    }
+    this.descriptor = previous.descriptor;
+    this.dirtyCommands = previous.dirtyCommands;
+    this.lastSaveAtMs = previous.lastSaveAtMs;
+    this.pendingOpen = undefined;
+    this.transition(previous.previousState);
   }
 
   /**
@@ -197,12 +234,12 @@ export class ProjectLifecycle {
    */
   requestClose(): "close" | "confirm-discard" {
     if (this.state === "no-project") return "close";
-    if (this.state === "open-dirty" || this.state === "saving") {
-      this.transition("closing");
-      return "confirm-discard";
+    if (this.state !== "open-clean" && this.state !== "open-dirty") {
+      throw new ProjectLifecycleError(`Cannot close while state is "${this.state}"`);
     }
-    this.finishClose();
-    return "close";
+    const decision = this.state === "open-dirty" ? "confirm-discard" : "close";
+    this.transition("closing");
+    return decision;
   }
 
   /** Usuário confirmou descartar (ou o save prévio completou). */
@@ -222,6 +259,7 @@ export class ProjectLifecycle {
   private finishClose(): void {
     this.descriptor = undefined;
     this.dirtyCommands = 0;
+    this.pendingOpen = undefined;
     this.transition("no-project");
   }
 

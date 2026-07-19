@@ -84,9 +84,10 @@ graph TD
 
 *Mostra a cadeia unica de mutacao dispatch -> filters -> store.apply -> actions -> projection, com filters em fail-fast (um throw aborta a cadeia e o kind deve ser preservado) e actions isoladas (throw capturado nao derruba os demais).*
 
-A projeção retorna `{ status: "projected" | "skipped" | "deferred", reason }` —
-eventos que o runtime não suporta são **pulados com razão registrada**, nunca
-erros silenciosos.
+A projeção retorna uma união discriminada: `projected` pode carregar `detail`,
+enquanto `skipped` e `deferred` **exigem** `reason` e não carregam `detail`.
+Eventos que o runtime não suporta são, portanto, pulados com razão registrada,
+nunca erros silenciosos.
 
 ### Pipelines e Artefatos (`canonical/ArtifactStore.ts`, `canonical/Pipeline.ts`)
 
@@ -164,11 +165,15 @@ graph LR
 *Mostra o mapeamento evento canonico -> metodo RPC do MonoGameAdapter, com os casos condicionais (entity precisa de archetypeId/spawn previo; levelUpdated vira remove+define) e os eventos editoriais que terminam em ProjectionResult skipped.*
 
 Adapters declaram `family` (grupo tecnológico) e obtêm a versão concreta do
-handshake/describe do runtime vivo. O adapter também é o **único dono da
-reidratação**: em cada sessão nova, `rehydrateFrom(store)` projeta o Blueprint
-inteiro na ordem de dependência (esqueletos → malhas → câmera → luzes →
-níveis → entidades). O `EngineBridge` ficou restrito a diagnósticos (ping, inspeções,
-simulação de câmera) — toda mutação passa pelo orquestrador.
+handshake/describe do runtime vivo. A interface exige `resetSession()` e
+`rehydrateFrom(store)`: toda troca limpa primeiro atores, níveis, luzes e os
+demais dados do projeto anterior, e só então reprojeta o Blueprint inteiro na
+ordem de dependência (esqueletos → malhas → câmera → luzes → níveis →
+entidades). Sem engine, o reset/replay retorna `deferred`; uma falha de
+ativação/compensação deixa a sessão publicada intacta e o status `failed`
+impede novos dispatches até uma reidratação completa. O `EngineBridge` ficou
+restrito a diagnósticos (ping, inspeções, simulação de câmera) — toda mutação e
+todo ciclo de sessão passam pelo adapter e pelo `ProjectSessionManager`.
 
 ## 3. Perfis versionados e governança da experiência
 
@@ -261,12 +266,32 @@ matriz via MCP (`runtime_experience`).
 
 O Blueprint é salvável como **documento declarativo versionado**
 (`BlueprintSerializer`): `exportBlueprint` produz um snapshot completo
-(`schemaVersion` + todos os domínios) e o load **reproduz o documento como
-comandos** pelo orquestrador, em ordem de dependência — mesma validação,
-mesmos hooks, mesma projeção de uma edição manual. Carregar exige Blueprint
-vazio ("novo projeto" é estado explícito), e o roundtrip é sem perdas
-(testado por igualdade profunda do reexport). No gateway:
-`blueprint/query {projection: "document"}` e `blueprint/load {document}`.
+(`schemaVersion`, `projectId` + todos os domínios). O `ProjectSessionManager`
+faz parse, migração, validação e replay em store temporário, sem publicar
+actions/eventos nem tocar o runtime. Só depois das validações semânticas ele
+reseta/reidrata o runtime e troca a referência ativa. O roundtrip é sem perdas;
+não existe pré-condição de Blueprint vazio para substituir A por B.
+
+Cada unidade transacional é explícita:
+
+```ts
+interface ProjectSession {
+  readonly sessionId: string;
+  readonly projectId: string;
+  readonly store: BlueprintStore;
+  readonly orchestrator: CanonicalOrchestrator;
+  readonly history: CommandHistory;
+  readonly createdAt: number;
+}
+```
+
+`EditorSurface` consulta essa sessão pela porta `ProjectSessionPort`; não retém
+store/orquestrador próprios. JSON-RPC, GraphQL, gRPC e MCP chamam a mesma
+superfície. As operações `project/create`, `project/openDocument`,
+`project/close` e `project/status` expõem o ciclo de vida; create/open/close
+aceitam `expectedProjectSessionId` para compare-and-swap. O identificador é
+verificado no commit, não apenas no início da preparação, evitando que um
+candidato atrasado substitua uma sessão mais nova.
 
 ```mermaid
 graph TD
@@ -276,21 +301,25 @@ graph TD
     RAW --> MIG["migrateBlueprintDocument(raw)<br/>(sem schemaVersion = 0)"]
     MIG --> V{"versao > suportada?"}
     V -->|"sim"| REJ(["REJEITA"])
-    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1)"]
-    CHAIN --> CMD["documentToCommands<br/>(ordem de dependencia)"]
-    CMD --> CHK{"store vazio?"}
-    CHK -->|"nao"| ERR(["replayDocument exige store vazio"])
-    CHK -->|"sim"| REP["replayDocument: despacha cada comando pelo orquestrador"]
-    REP --> SUM(["ReplaySummary {applied, projected, deferred, skipped}"])
+    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2)"]
+    CHAIN --> TMP["cria ProjectSession temporaria"]
+    TMP --> REP["replay prepare: filters + store + history<br/>sem actions, journal ou runtime"]
+    REP --> SEM["validacoes semanticas + preparar projecao"]
+    SEM --> SWAP["reset + rehydrate com compensacao<br/>commit por CAS da sessao"]
+    SWAP --> SUM(["ProjectActivationResult + snapshot"])
   end
 ```
 
-*Mostra o ciclo de persistencia: exportBlueprint produz o BlueprintDocument e o LOAD faz deteccao de versao, migracao encadeada, conversao em ordem de dependencia e replayDocument em store vazio pelo orquestrador, terminando no ReplaySummary. O mesmo caminho serve a templates (project/new).*
+*Mostra o ciclo transacional: toda preparação ocorre numa sessão privada;
+journal, clientes e referência ativa só mudam após a reidratação bem-sucedida
+ou explicitamente adiada. Erro restaura o runtime anterior antes de retornar;
+falha também na compensação mantém a referência anterior em estado fail-closed.*
 
 ## 5. Migração e regras de evolução
 
-- `EngineBridge` permanece como transporte MonoGame (sessões, reidratação);
-  o `MonoGameAdapter` é a face canônica dele. Na Fase 4, as ferramentas MCP
+- `EngineBridge` permanece como transporte MonoGame para diagnóstico; reset e
+  reidratação pertencem à porta `RuntimeAdapter`, coordenada pelo
+  `ProjectSessionManager`. Na Fase 4, as ferramentas MCP
   de domínio migram para `CanonicalOrchestrator.dispatch` (hoje: `blueprint_command`
   já usa o orquestrador).
 - Perfis novos entram como arquivos versionados; alterar um perfil publicado

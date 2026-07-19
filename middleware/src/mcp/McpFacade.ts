@@ -11,7 +11,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import type { AssetPipelineService } from "../assets/AssetPipelineService.js";
 import type { ArtifactStore } from "../canonical/ArtifactStore.js";
-import type { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
+import type { EditorSurface } from "../canonical/EditorSurface.js";
 import type { HookBus } from "../canonical/HookBus.js";
 import { COMMAND_KINDS, reshapeCommand } from "../canonical/commandShape.js";
 import type { CapabilityRegistry } from "../domain/CapabilityRegistry.js";
@@ -23,7 +23,8 @@ import type { RuntimeProfileRegistry } from "../runtime/RuntimeProfile.js";
 
 /** Camada canônica opcional exposta às ferramentas MCP. */
 export interface CanonicalServices {
-  orchestrator: CanonicalOrchestrator;
+  /** Mesma porta de aplicação usada pelos gateways JSON-RPC/GraphQL/gRPC. */
+  surface: EditorSurface;
   artifacts: ArtifactStore;
   hooks: HookBus;
   profiles: RuntimeProfileRegistry;
@@ -67,6 +68,23 @@ export function createMcpServer(
     },
     async () => {
       const session = pipeServer.currentSession;
+      const project = canonical?.surface.projectStatus();
+      let skeletons: unknown[] = [];
+      let meshes: unknown[] = [];
+      if (project?.active) {
+        skeletons = (canonical!.surface.query("skeletons").skeletons as Array<{ skeletonId: string; bones: unknown[] }>).map((s) => ({
+          skeletonId: s.skeletonId,
+          boneCount: s.bones.length,
+        }));
+        meshes = canonical!.surface.query("meshes").meshes as unknown[];
+      } else if (!canonical) {
+        // Compatibilidade para drivers isolados que ainda constroem apenas o bridge.
+        skeletons = bridge.store.listSkeletons().map((s) => ({
+          skeletonId: s.skeletonId,
+          boneCount: s.bones.length,
+        }));
+        meshes = [...bridge.store.listMeshes()];
+      }
       const status = {
         engineConnected: session !== undefined,
         session: session
@@ -77,11 +95,9 @@ export function createMcpServer(
               connectedAtUnixMs: session.connectedAtUnixMs,
             }
           : null,
-        skeletons: bridge.store.listSkeletons().map((s) => ({
-          skeletonId: s.skeletonId,
-          boneCount: s.bones.length,
-        })),
-        meshes: bridge.store.listMeshes(),
+        project: project ?? null,
+        skeletons,
+        meshes,
       };
       return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
     },
@@ -219,9 +235,9 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
     inputSchema: Record<string, z.ZodTypeAny>,
   ): void => {
     server.registerTool(name, { description, inputSchema }, async (payload) => {
-      const command = reshapeCommand(kind, stripUndefined(payload as Record<string, unknown>));
-      const result = await canonical.orchestrator.dispatch(command);
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      const normalized = stripUndefined(payload as Record<string, unknown>);
+      const result = await canonical.surface.dispatchByKind(kind, normalized);
+      return { content: [{ type: "text", text: jsonText(result) }] };
     });
   };
 
@@ -236,10 +252,76 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
       },
     },
     async ({ kind, payload }) => {
-      const command = reshapeCommand(kind as Parameters<typeof reshapeCommand>[0], payload);
-      const result = await canonical.orchestrator.dispatch(command);
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      const result = await canonical.surface.dispatchByKind(kind, payload);
+      return { content: [{ type: "text", text: jsonText(result) }] };
     },
+  );
+
+  server.registerTool(
+    "project_status",
+    {
+      description: "Retorna a identidade, sequência e estado de runtime da sessão de projeto ativa.",
+      inputSchema: {},
+    },
+    async () => ({
+      content: [{ type: "text", text: jsonText(canonical.surface.projectStatus()) }],
+    }),
+  );
+
+  server.registerTool(
+    "project_create",
+    {
+      description: "Cria e ativa atomicamente uma sessão vazia ou baseada em template.",
+      inputSchema: {
+        projectId: z.string().min(1).optional(),
+        templateId: z.string().min(1).optional(),
+        expectedProjectSessionId: z.string().min(1).optional(),
+      },
+    },
+    async ({ projectId, templateId, expectedProjectSessionId }) => ({
+      content: [{
+        type: "text",
+        text: jsonText(await canonical.surface.projectCreate(
+          projectId,
+          templateId,
+          expectedProjectSessionId,
+        )),
+      }],
+    }),
+  );
+
+  server.registerTool(
+    "project_open_document",
+    {
+      description: "Valida e prepara um BlueprintDocument fora da sessão ativa antes da troca atômica.",
+      inputSchema: {
+        document: z.record(z.unknown()),
+        expectedProjectSessionId: z.string().min(1).optional(),
+      },
+    },
+    async ({ document, expectedProjectSessionId }) => ({
+      content: [{
+        type: "text",
+        text: jsonText(await canonical.surface.projectOpenDocument(
+          document,
+          expectedProjectSessionId,
+        )),
+      }],
+    }),
+  );
+
+  server.registerTool(
+    "project_close",
+    {
+      description: "Fecha a sessão ativa, opcionalmente protegida por identidade esperada.",
+      inputSchema: { expectedProjectSessionId: z.string().min(1).optional() },
+    },
+    async ({ expectedProjectSessionId }) => ({
+      content: [{
+        type: "text",
+        text: jsonText(await canonical.surface.projectClose(expectedProjectSessionId)),
+      }],
+    }),
   );
 
   dispatchTool(
@@ -531,6 +613,12 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
     async () => ({
       content: [{ type: "text", text: JSON.stringify(canonical.hooks.listHooks(), null, 2) }],
     }),
+  );
+}
+
+function jsonText(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) =>
+    typeof item === "bigint" ? item.toString() : item,
   );
 }
 

@@ -8,6 +8,8 @@
  * hooks, mesma projeção no runtime de qualquer edição manual.
  */
 
+import { createHash } from "node:crypto";
+
 import type {
   BlueprintCommand,
   BlueprintStore,
@@ -22,10 +24,11 @@ import type {
 } from "../domain/BlueprintStore.js";
 import type { CanonicalOrchestrator, DispatchResult } from "./CanonicalOrchestrator.js";
 
-export const BLUEPRINT_DOCUMENT_VERSION = 1;
+export const BLUEPRINT_DOCUMENT_VERSION = 2;
 
 export interface BlueprintDocument {
   readonly schemaVersion: number;
+  readonly projectId: string;
   readonly skeletons: readonly SkeletonBlueprint[];
   readonly meshes: readonly MeshBinding[];
   readonly camera: CameraSettings;
@@ -44,8 +47,8 @@ export class BlueprintDocumentError extends Error {
 }
 
 /** Snapshot declarativo completo do estado corrente do Blueprint. */
-export function exportBlueprint(store: BlueprintStore): BlueprintDocument {
-  return {
+export function exportBlueprint(store: BlueprintStore, projectId?: string): BlueprintDocument {
+  const content = {
     schemaVersion: BLUEPRINT_DOCUMENT_VERSION,
     skeletons: store.listSkeletons(),
     meshes: store.listMeshes(),
@@ -55,6 +58,10 @@ export function exportBlueprint(store: BlueprintStore): BlueprintDocument {
     entities: store.listEntities(),
     levels: store.listLevels(),
     placements: store.listPlacements(),
+  };
+  return {
+    ...content,
+    projectId: projectId ?? deriveLegacyProjectId(content),
   };
 }
 
@@ -83,7 +90,33 @@ const MIGRATIONS = new Map<number, BlueprintMigration>([
       schemaVersion: 1,
     }),
   ],
+  // 1 → 2: introduz identidade persistente do projeto. Para documentos
+  // legados o id é derivado deterministicamente do conteúdo; ao salvar, ele
+  // passa a fazer parte do documento e permanece estável.
+  [
+    1,
+    (document) => ({
+      ...document,
+      projectId:
+        typeof document["projectId"] === "string" && document["projectId"].length > 0
+          ? document["projectId"]
+          : deriveLegacyProjectId(document),
+      schemaVersion: 2,
+    }),
+  ],
 ]);
+
+/** Etapa explícita de parse; objetos já desserializados atravessam sem cópia. */
+export function parseBlueprintDocument(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new BlueprintDocumentError(
+      `Blueprint document is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
 
 /**
  * Normaliza um documento (possivelmente de uma versão anterior) para a versão
@@ -117,7 +150,32 @@ export function migrateBlueprintDocument(raw: unknown): BlueprintDocument {
     version += 1;
   }
 
+  validateBlueprintDocumentShape(document);
   return document as unknown as BlueprintDocument;
+}
+
+/** Validação estrutural anterior ao replay; regras semânticas ficam no store. */
+export function validateBlueprintDocumentShape(document: Record<string, unknown>): void {
+  if (typeof document["projectId"] !== "string" || document["projectId"].trim().length === 0) {
+    throw new BlueprintDocumentError('Blueprint document requires a non-empty "projectId"');
+  }
+  for (const field of [
+    "skeletons",
+    "meshes",
+    "lights",
+    "entityDefs",
+    "entities",
+    "levels",
+    "placements",
+  ] as const) {
+    if (!Array.isArray(document[field])) {
+      throw new BlueprintDocumentError(`Blueprint document field "${field}" must be an array`);
+    }
+  }
+  const camera = document["camera"];
+  if (camera === null || typeof camera !== "object" || Array.isArray(camera)) {
+    throw new BlueprintDocumentError('Blueprint document field "camera" must be an object');
+  }
 }
 
 /**
@@ -149,22 +207,18 @@ export interface ReplaySummary {
 }
 
 /**
- * Reproduz um documento pelo caminho canônico. O Blueprint alvo deve estar
- * VAZIO — carregar sobre um projeto aberto produziria colisões de id
- * silenciosas; "novo projeto" é um estado explícito.
+ * Reproduz um documento pelo caminho canônico no store fornecido. A garantia
+ * de substituição vem do ProjectSessionManager: o caller prepara um store
+ * temporário e nunca usa o store da sessão ativa como alvo.
  */
 export async function replayDocument(
   document: BlueprintDocument,
   store: BlueprintStore,
   orchestrator: CanonicalOrchestrator,
 ): Promise<ReplaySummary> {
-  if (!store.isEmpty) {
-    throw new BlueprintDocumentError("Blueprint must be empty before loading a document");
-  }
-
   const results: DispatchResult[] = [];
   for (const command of documentToCommands(document)) {
-    results.push(await orchestrator.dispatch(command));
+    results.push(await orchestrator.dispatch(command, { mode: "prepare" }));
   }
 
   const byStatus = (status: string): number =>
@@ -175,4 +229,20 @@ export async function replayDocument(
     deferred: byStatus("deferred"),
     skipped: byStatus("skipped"),
   };
+}
+
+function deriveLegacyProjectId(document: unknown): string {
+  const digest = createHash("sha256").update(stableJson(document)).digest("hex").slice(0, 24);
+  return `legacy-${digest}`;
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object)
+    .filter((key) => key !== "projectId")
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`)
+    .join(",")}}`;
 }

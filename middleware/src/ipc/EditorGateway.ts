@@ -15,11 +15,8 @@
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import { randomUUID } from "node:crypto";
-import { EditorSurface } from "../canonical/EditorSurface.js";
-import { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
-import type { BlueprintEvent, BlueprintStore } from "../domain/BlueprintStore.js";
-import type { ExperienceGovernor } from "../runtime/ExperienceGovernor.js";
-import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
+import type { EditorSurface } from "../canonical/EditorSurface.js";
+import type { EventEnvelope, EventJournal } from "../transport/EventJournal.js";
 import { JsonRpcPeer } from "./JsonRpcPeer.js";
 import { resolvePipePath } from "./PipeEndpoint.js";
 import { JsonRpcError, PROTOCOL_VERSION, RpcErrorCode } from "../protocol/jsonrpc.js";
@@ -39,10 +36,10 @@ export interface EditorSession {
 export interface EditorGatewayOptions {
   /** Nome base do canal; o gateway escuta em `<pipeName>-editor`. */
   pipeName: string;
-  orchestrator: CanonicalOrchestrator;
-  store: BlueprintStore;
-  governor: ExperienceGovernor;
-  adapter: RuntimeAdapter;
+  /** A mesma superfície usada por GraphQL, gRPC e MCP. */
+  surface: EditorSurface;
+  /** Diário session-aware compartilhado por todas as bordas. */
+  journal: EventJournal;
   /** Segredo efêmero compartilhado apenas entre o Electron e este processo. */
   authToken: string;
   requestTimeoutMs?: number;
@@ -60,22 +57,25 @@ export class EditorGateway extends EventEmitter {
   private readonly sessions = new Map<string, EditorSession>();
   private readonly options: EditorGatewayOptions;
   private readonly surface: EditorSurface;
+  private readonly broadcastEvent: (event: EventEnvelope) => void;
   readonly pipePath: string;
 
   constructor(options: EditorGatewayOptions) {
     super();
     this.options = { ...options, authToken: validateTransportAuthToken(options.authToken) };
-    this.surface = new EditorSurface(options);
+    this.surface = options.surface;
     this.pipePath = resolvePipePath(`${options.pipeName}-editor`);
     this.server = net.createServer((socket) => this.onConnection(socket));
 
-    // Broadcast: qualquer evento do AST (deste ou de outro cliente, MCP ou
-    // reidratação) chega a todos os editores — coerência multi-janela.
-    options.store.on("event", (event: BlueprintEvent) => {
+    // Broadcast do envelope session-aware: eventos de uma sessão temporária
+    // nunca entram no journal e, portanto, nunca vazam para os clientes.
+    this.broadcastEvent = (event: EventEnvelope): void => {
+      const serialized = serializeEvent(event);
       for (const session of this.sessions.values()) {
-        session.peer.notify("blueprint/event", event);
+        session.peer.notify("blueprint/event", serialized);
       }
-    });
+    };
+    options.journal.on("event", this.broadcastEvent);
   }
 
   async listen(): Promise<void> {
@@ -91,6 +91,7 @@ export class EditorGateway extends EventEmitter {
   }
 
   async close(): Promise<void> {
+    this.options.journal.removeListener("event", this.broadcastEvent);
     for (const session of this.sessions.values()) session.peer.close();
     this.sessions.clear();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
@@ -140,13 +141,18 @@ export class EditorGateway extends EventEmitter {
         sessionId: session.sessionId,
         serverName: "p7m-middleware",
         protocolVersion: PROTOCOL_VERSION,
+        project: this.surface.projectStatus(),
       };
     });
 
     peer.registerMethod("blueprint/dispatch", async (params) => {
       this.requireHandshake(session);
-      const p = params as { kind?: unknown; payload?: unknown };
-      return this.surface.dispatchByKind(p?.kind as string, p?.payload);
+      const p = params as { kind?: unknown; payload?: unknown; requestId?: unknown };
+      return this.surface.dispatchByKind(
+        p?.kind as string,
+        p?.payload,
+        p?.requestId as string | undefined,
+      );
     });
 
     peer.registerMethod("blueprint/query", (params) => {
@@ -157,8 +163,11 @@ export class EditorGateway extends EventEmitter {
 
     peer.registerMethod("blueprint/load", async (params) => {
       this.requireHandshake(session);
-      const p = params as { document?: unknown };
-      return this.surface.loadDocument(p?.document);
+      const p = params as { document?: unknown; expectedProjectSessionId?: unknown };
+      return (await this.surface.projectOpenDocument(
+        p?.document,
+        p?.expectedProjectSessionId,
+      )).summary;
     });
 
     peer.registerMethod("project/templates", () => {
@@ -168,8 +177,56 @@ export class EditorGateway extends EventEmitter {
 
     peer.registerMethod("project/new", async (params) => {
       this.requireHandshake(session);
-      const p = (params ?? {}) as { templateId?: unknown };
-      return this.surface.newProjectFromTemplate(p?.templateId);
+      const p = (params ?? {}) as {
+        templateId?: unknown;
+        expectedProjectSessionId?: unknown;
+      };
+      const templateId = p.templateId as string;
+      const result = await this.surface.projectCreate(
+        undefined,
+        templateId,
+        p.expectedProjectSessionId,
+      );
+      const template = this.surface.listTemplates().find((item) => item.id === templateId);
+      return {
+        templateId,
+        name: template?.label ?? templateId,
+        ...result.summary,
+      };
+    });
+
+    peer.registerMethod("project/create", async (params) => {
+      this.requireHandshake(session);
+      const p = (params ?? {}) as {
+        projectId?: unknown;
+        templateId?: unknown;
+        expectedProjectSessionId?: unknown;
+      };
+      return this.surface.projectCreate(
+        p.projectId as string | undefined,
+        p.templateId as string | undefined,
+        p.expectedProjectSessionId,
+      );
+    });
+
+    peer.registerMethod("project/openDocument", async (params) => {
+      this.requireHandshake(session);
+      const p = (params ?? {}) as {
+        document?: unknown;
+        expectedProjectSessionId?: unknown;
+      };
+      return this.surface.projectOpenDocument(p.document, p.expectedProjectSessionId);
+    });
+
+    peer.registerMethod("project/close", async (params) => {
+      this.requireHandshake(session);
+      const p = (params ?? {}) as { expectedProjectSessionId?: unknown };
+      return this.surface.projectClose(p.expectedProjectSessionId as string | undefined);
+    });
+
+    peer.registerMethod("project/status", () => {
+      this.requireHandshake(session);
+      return this.surface.projectStatus();
     });
 
     peer.registerMethod("experience/resolve", (params) => {
@@ -194,4 +251,15 @@ export class EditorGateway extends EventEmitter {
       );
     }
   }
+}
+
+function serializeEvent(event: EventEnvelope): Record<string, unknown> {
+  return {
+    seq: event.seq.toString(),
+    projectSessionId: event.projectSessionId,
+    projectId: event.projectId,
+    commandSequence: event.commandSequence.toString(),
+    kind: event.kind,
+    payload: event.payload,
+  };
 }

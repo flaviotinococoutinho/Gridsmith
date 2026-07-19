@@ -6,7 +6,7 @@ Camada de orquestração do ecossistema P7M EaaS (Node.js ≥ 22, TypeScript).
 
 O grafo de módulos abaixo mostra a **regra de dependência**: as fronteiras
 (entrada/saída) dependem para **dentro**, em direção ao núcleo (`canonical` +
-`domain`), que não conhece nenhum adaptador. As fitness functions **R1–R12**
+`domain`), que não conhece nenhum adaptador. As fitness functions **R1–R13**
 (import-graph) impõem exatamente essas setas e proíbem ciclos ou dependências de
 saída do núcleo.
 
@@ -24,7 +24,7 @@ graph TD
   TRANS["transport (EventJournal, endpoints)"]
   subgraph CORE["Nucleo (canonical + domain)"]
     DOM["domain (BlueprintStore, EngineBridge, CapabilityRegistry)"]
-    CANON["canonical (Orchestrator, EditorSurface, HookBus, ArtifactStore)"]
+    CANON["canonical (ProjectSessionManager, EditorSurface, Orchestrator, HookBus)"]
   end
   RT["runtime (RuntimeAdapter, MonoGameAdapter, profiles, ExperienceGovernor)"]
   LD["leveldesign (AutoTiler puro)"]
@@ -45,9 +45,10 @@ graph TD
 ```
 
 *Mostra o grafo de dependência dos módulos: todas as setas apontam para dentro
-(fronteiras → núcleo), a invariante que as fitness functions R1–R12 verificam.*
+(fronteiras → núcleo), a invariante que as fitness functions R1–R13 verificam.*
 
-- **Modelo canônico** (`src/canonical/`): `CanonicalOrchestrator` (o único caminho de
+- **Modelo canônico** (`src/canonical/`): `ProjectSessionManager` (sessão
+  substituível por commit atômico), `CanonicalOrchestrator` (o único caminho de
   mutação: filters → AST → actions → projeção), `HookBus` (actions/filters com
   prioridade, inspecionável), `ArtifactStore` (artefatos versionáveis com hash estável
   e proveniência) e `PipelineRunner` (estágios como cadeias de filters).
@@ -78,7 +79,8 @@ graph TD
   *Mostra a cadeia única dispatch→filters→store.apply→actions→projection e as
   políticas fail-fast (filters) x isolada (actions) do HookBus.*
 
-- **Runtimes** (`src/runtime/`): `RuntimeAdapter` (contrato de projeção),
+- **Runtimes** (`src/runtime/`): `RuntimeAdapter` (contrato de projeção,
+  `resetSession` e `rehydrateFrom` obrigatórios),
   `MonoGameAdapter`, `RuntimeProfileRegistry` (perfis versionados por família em
   `profiles/`) e `ExperienceGovernor` (matriz de decisões perfil × manifesto vivo).
   Ver [`../docs/CANONICAL-MODEL.md`](../docs/CANONICAL-MODEL.md).
@@ -90,8 +92,9 @@ graph TD
   O middleware faz `listen` no pipe/UDS; a engine conecta e envia
   `engine/handshake`. O middleware valida **apenas o MAJOR** de
   `PROTOCOL_VERSION` (`1.0`), responde com um `sessionId` (uuid v4), emite o
-  evento `session` e, a cada nova sessão, executa um welcome ping e chama
-  `adapter.rehydrateFrom(store)`. O canal é full-duplex e simétrico; requests têm
+  evento `session` e, a cada nova sessão, executa um welcome ping e pede ao
+  `ProjectSessionManager` que limpe o runtime e reidrate **somente a sessão de
+  projeto ativa**. O canal é full-duplex e simétrico; requests têm
   timeout de 10 s e um EOF rejeita as pendências.
 
   ```mermaid
@@ -106,7 +109,8 @@ graph TD
       M-->>E: {sessionId uuid v4, serverName p7m-middleware, acceptedCapabilities}
       Note over M: emite evento session
       M->>E: welcome ping
-      M->>M: adapter.rehydrateFrom(store)
+      M->>E: engine/reset_session {}
+      M->>M: sessions.rehydrateCurrent()
     end
     loop canal simetrico full-duplex
       M->>E: engine/ping, skeleton/initialize, camera/*, entity/*
@@ -123,26 +127,37 @@ graph TD
 - **Gateway do editor** (`src/ipc/EditorGateway.ts`): endpoint `<pipe>-editor` para o
   Electron e clientes de edição — `blueprint/dispatch` (caminho canônico),
   `blueprint/query` (inclui `document`, o snapshot completo do projeto),
-  `blueprint/load` (replay canônico de um documento salvo), `experience/resolve` e
+  aliases legados `blueprint/load`/`project/new`, operações transacionais
+  `project/create`, `project/openDocument`, `project/close`, `project/status`,
+  `experience/resolve` e
   broadcast `blueprint/event` para todos os editores (coerência multi-janela).
   Todos os handlers delegam na `EditorSurface` (abaixo).
 - **Superfície do editor** (`src/canonical/EditorSurface.ts`): a superfície de
-  aplicação **única** que as três bordas do editor (gateway JSON-RPC, GraphQL e
-  gRPC) delegam — dispatch por kind, queries de projeção, load/templates e
-  resolução de experiência. Erros saem como `JsonRpcError` e cada borda os
-  traduz para sua convenção. Regras R10–R12 garantem que nenhuma borda ganhe
-  domínio próprio.
+  aplicação **única** que as quatro bordas (gateway JSON-RPC, GraphQL, gRPC e
+  MCP) delegam. Ela consulta `ProjectSessionManager` a cada operação, sem reter
+  store ou orquestrador fixos. Create/open preparam uma sessão privada e fazem
+  commit por CAS (`expectedProjectSessionId`); erro preserva sessão, journal e
+  runtime anteriores. `ProjectStatus.runtimeState` distingue `synchronized`,
+  `deferred` e `failed`. Erros saem como `JsonRpcError` e cada borda os traduz
+  para sua convenção. Regras R10–R13 garantem que nenhuma borda ganhe domínio
+  próprio.
 - **Transports do app** (`src/graphql/GraphQlGateway.ts`, `src/grpc/GrpcGateway.ts`,
   `src/transport/`): GraphQL é a superfície baseline completa (e o destino do
-  fallback); gRPC serve o caminho quente (`Dispatch`, `Query`, `StreamEvents`,
-  `Health`). O `EventJournal` (seq monotônico, janela 512) dá continuidade de
-  eventos entre stream gRPC e polling GraphQL; `endpoints.ts` resolve UDS/porta
+  fallback); gRPC serve o caminho quente (`Dispatch`, `Query`, `StreamEventsV2`,
+  `Health`) e mantém paridade das operações `Project*`. O `EventJournal`
+  particiona a janela por `projectSessionId`; o cursor
+  `(middlewareInstanceId, projectSessionId, seq)` dá continuidade entre stream
+  gRPC e polling GraphQL, e restart/gap/troca exigem ressincronização explícita.
+  `endpoints.ts` resolve UDS/porta
   derivada nas duas pontas. Contratos em `contracts/graphql/` e
-  `contracts/grpc/` (ADR-016/017/018 em `../docs/adr/`).
-- **Estado declarativo / AST** (`src/domain/BlueprintStore.ts`): CQRS — comandos
-  imutáveis validados e aplicados ao blueprint; leituras são projeções congeladas.
-- **Ponte da engine** (`src/domain/EngineBridge.ts`): propaga comandos do AST para a
-  sessão ativa e **reidrata** a engine inteira a cada reconexão.
+  `contracts/grpc/` (ADR-016/017/018/019/020 em `../docs/adr/`).
+- **Estado declarativo / AST** (`src/domain/BlueprintStore.ts`): CQRS — cada
+  `ProjectSession` possui store, orquestrador e histórico próprios; comandos
+  imutáveis são validados e aplicados ao Blueprint ativo, e leituras são
+  projeções congeladas.
+- **Ponte da engine** (`src/domain/EngineBridge.ts`): diagnósticos da sessão viva
+  (ping/inspeções); mutações, reset e reidratação passam pelo adapter e pelo
+  `ProjectSessionManager`.
 - **Registro de capacidades** (`src/domain/CapabilityRegistry.ts`): pede
   `engine/describe` a cada sessão e projeta o manifesto como conceitos de edição
   visual (`editorConcepts()`) — o proxy entre as possibilidades da engine e a UI.
@@ -162,6 +177,8 @@ graph TD
   `COMMAND_KINDS` — inclusive `level/update` e `entity/move`) + ferramentas
   curadas por domínio (`camera_*`, `light_*`, `level_define/update/remove`,
   `entitydef_define`, `entity_place/move/remove`, `world_*`), diagnóstico
+  operações da mesma sessão (`project_create`, `project_open_document`,
+  `project_close`, `project_status`), diagnóstico
   (`engine_status`, `engine_ping`, `mesh_inspect`, `engine_capabilities`,
   `editor_concepts`, `runtime_*`, `hooks_list`, `artifact_get`) e assets
   (`asset_*`, com `--assets <dir>`).
@@ -176,11 +193,12 @@ por injeção a partir daqui.
 ```mermaid
 graph TD
   IDX["index.ts (composition root)"]
-  IDX --> STORE[("BlueprintStore")]
   IDX --> HOOKS["HookBus"]
   IDX --> ARTS[("ArtifactStore")]
   IDX --> ADPT["MonoGameAdapter"]
-  IDX --> ORCH["CanonicalOrchestrator"]
+  IDX --> SESS["ProjectSessionManager"]
+  SESS --> STORE[("BlueprintStore por sessao")]
+  SESS --> ORCH["CanonicalOrchestrator por sessao"]
   IDX --> IPC["IpcServer + EditorGateway"]
   IDX --> MCP["McpFacade (stdio)"]
   IDX --> ASSETS["AssetPipelineService"]
@@ -188,13 +206,14 @@ graph TD
   ORCH --> STORE
   ORCH --> HOOKS
   ORCH --> ADPT
-  IPC --> ORCH
-  MCP --> ORCH
+  IPC --> SESS
+  MCP --> SESS
   ASSETS --> ARTS
 ```
 
-*Mostra a raiz de composição `index.ts` montando os colaboradores e injetando
-store, HookBus e adapter no orquestrador, que é então servido por IPC e MCP.*
+*Mostra a raiz de composição `index.ts` montando um único manager; cada sessão
+preparada recebe store, histórico e orquestrador próprios, e todas as bordas
+consultam a mesma referência ativa.*
 
 ## Comandos
 

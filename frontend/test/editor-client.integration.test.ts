@@ -15,9 +15,13 @@ import { test } from "node:test";
 import { EnginePipeServer } from "@p7m/middleware/dist/ipc/EnginePipeServer.js";
 import { BlueprintStore } from "@p7m/middleware/dist/domain/BlueprintStore.js";
 import { CapabilityRegistry } from "@p7m/middleware/dist/domain/CapabilityRegistry.js";
-import { CanonicalOrchestrator } from "@p7m/middleware/dist/canonical/CanonicalOrchestrator.js";
 import { EditorSurface } from "@p7m/middleware/dist/canonical/EditorSurface.js";
 import { HookBus } from "@p7m/middleware/dist/canonical/HookBus.js";
+import {
+  ProjectSessionManager,
+  type ProjectSessionChangedEvent,
+  type SessionBlueprintEvent,
+} from "@p7m/middleware/dist/canonical/ProjectSessionManager.js";
 import { GraphQlGateway } from "@p7m/middleware/dist/graphql/GraphQlGateway.js";
 import { GrpcGateway } from "@p7m/middleware/dist/grpc/GrpcGateway.js";
 import { EventJournal } from "@p7m/middleware/dist/transport/EventJournal.js";
@@ -46,6 +50,7 @@ interface Rig {
   surface: EditorSurface;
   store: BlueprintStore;
   journal: EventJournal;
+  sessions: ProjectSessionManager;
   authToken: string;
   close(): Promise<void>;
 }
@@ -61,18 +66,48 @@ async function makeRig(tag: string, options: RigOptions = {}): Promise<Rig> {
   const engineServer = new EnginePipeServer({ pipeName, requestTimeoutMs: 2000 });
   const capabilities = new CapabilityRegistry(engineServer);
   const adapter = new MonoGameAdapter(engineServer, capabilities);
-  const store = new BlueprintStore();
+  const hooks = new HookBus();
+  const sessions = new ProjectSessionManager({ hooks, adapter });
   const profiles = new RuntimeProfileRegistry();
   for (const profile of MONOGAME_PROFILES) profiles.register(profile);
   const surface = new EditorSurface({
-    orchestrator: new CanonicalOrchestrator(store, new HookBus(), adapter),
-    store,
+    sessions,
     governor: new ExperienceGovernor(profiles, capabilities),
     adapter,
   });
   const journal = new EventJournal(options.journalCapacity);
   const authToken = generateTransportAuthToken();
-  store.on("event", (event: { kind: string }) => journal.append(event.kind, event));
+  await sessions.activate(sessions.createEmptySession(`frontend-${tag}`));
+  const initialStatus = sessions.status;
+  journal.activateSession(
+    initialStatus.projectSessionId!,
+    initialStatus.projectId!,
+    initialStatus.commandSequence,
+  );
+  sessions.on("event", (event: SessionBlueprintEvent) => {
+    journal.appendForSession(
+      event.projectSessionId,
+      event.projectId,
+      event.commandSequence,
+      event.kind,
+      event,
+    );
+  });
+  sessions.on("sessionChanged", (event: ProjectSessionChangedEvent) => {
+    if (event.action === "activated") {
+      journal.activateSession(event.projectSessionId!, event.projectId!, event.commandSequence);
+      journal.appendForSession(
+        event.projectSessionId!,
+        event.projectId!,
+        event.commandSequence,
+        event.kind,
+        event,
+      );
+    } else {
+      journal.deactivateSession();
+    }
+  });
+  const store = sessions.current!.store as BlueprintStore;
 
   const graphql = new GraphQlGateway({
     pipeName,
@@ -99,6 +134,7 @@ async function makeRig(tag: string, options: RigOptions = {}): Promise<Rig> {
     surface,
     store,
     journal,
+    sessions,
     authToken,
     close: async () => {
       grpc.forceShutdown();
@@ -171,6 +207,97 @@ test("EditorClient v2: template Plataforma 2D pela superfície GraphQL", async (
     assert.equal(levels.levels[0]?.levelId, "level-1");
   } finally {
     client.close();
+    await rig.close();
+  }
+});
+
+test("sessão de projeto: open inválido preserva sessão, projeções e cursor de A", async () => {
+  const rig = await makeRig("invalid-open");
+  const client = new EditorClient(rig.pipeName, {
+    requestTimeoutMs: 2000,
+    authToken: rig.authToken,
+    log: silentFe,
+  });
+  try {
+    await client.connect();
+    await client.dispatch("entitydef/define", {
+      entityDefId: "from-a",
+      fields: [],
+    });
+    const before = client.latestProjectionSnapshot;
+    const beforeSessionId = before?.status.projectSessionId;
+    assert.ok(beforeSessionId);
+
+    await assert.rejects(
+      () => client.openProjectDocument({ schemaVersion: 999, projectId: "invalid" }),
+      /schema|document|version|required|invalid/i,
+    );
+
+    const status = await client.projectStatus();
+    assert.equal(status.projectSessionId, beforeSessionId);
+    assert.equal(client.latestProjectionSnapshot?.status.projectSessionId, beforeSessionId);
+    const definitions = await client.query<{ entityDefs: Array<{ entityDefId: string }> }>(
+      "entityDefs",
+    );
+    assert.deepEqual(definitions.entityDefs.map((item) => item.entityDefId), ["from-a"]);
+  } finally {
+    client.close();
+    await rig.close();
+  }
+});
+
+test("sessão de projeto: dois clientes observam a troca e só recebem eventos da nova sessão", async () => {
+  const rig = await makeRig("two-clients");
+  const first = new EditorClient(rig.pipeName, {
+    requestTimeoutMs: 2000,
+    authToken: rig.authToken,
+    log: silentFe,
+  });
+  const second = new EditorClient(rig.pipeName, {
+    requestTimeoutMs: 2000,
+    eventPollMs: 25,
+    authToken: rig.authToken,
+    log: silentFe,
+  });
+  try {
+    await Promise.all([first.connect(), second.connect()]);
+    const previousSessionId = second.activeProjectSessionId;
+    assert.ok(previousSessionId);
+    const observedSessions: string[] = [];
+    const observedEvents: string[] = [];
+    second.onResynchronized((snapshot, record) => {
+      if (record.reason === "project_session_changed") {
+        observedSessions.push(snapshot.status.projectSessionId ?? "");
+      }
+    });
+    second.onBlueprintEvent((event) => {
+      observedEvents.push(`${event.projectSessionId}:${event.kind}`);
+    });
+
+    const replacement = await first.createProject();
+    const nextSessionId = replacement.status.projectSessionId;
+    assert.ok(nextSessionId);
+    assert.notEqual(nextSessionId, previousSessionId);
+    await waitUntil(
+      () => observedSessions.includes(nextSessionId),
+      5000,
+      "segundo cliente não ressincronizou ao trocar a sessão",
+    );
+    assert.equal(second.activeProjectSessionId, nextSessionId);
+
+    await first.dispatch("entitydef/define", {
+      entityDefId: "only-b",
+      fields: [],
+    });
+    await waitUntil(
+      () => observedEvents.some((entry) => entry.endsWith(":entityDefDefined")),
+      5000,
+      "segundo cliente não recebeu evento da nova sessão",
+    );
+    assert.deepEqual(observedEvents, [`${nextSessionId}:entityDefDefined`]);
+  } finally {
+    first.close();
+    second.close();
     await rig.close();
   }
 });
@@ -324,7 +451,7 @@ test("resiliência: gap maior que EventJournal faz resync completo sem cauda par
     // Tudo ocorre no mesmo turno: o ring de capacidade 2 perde seq 1–2 antes
     // que o cliente possa iniciar o polling de fallback.
     for (let response = 1; response <= 4; response++) {
-      rig.store.apply({ kind: "camera/configure", settings: { response } });
+      await rig.sessions.dispatch({ kind: "camera/configure", settings: { response } });
     }
 
     await client.query("camera");
@@ -345,7 +472,7 @@ test("resiliência: gap maior que EventJournal faz resync completo sem cauda par
     assert.equal(deliveredResponses.length, 0, "seq 3–4 não podem vazar como cauda parcial");
 
     // Depois do snapshot, a entrega incremental retoma exatamente em seq 5.
-    rig.store.apply({ kind: "camera/configure", settings: { response: 5 } });
+    await rig.sessions.dispatch({ kind: "camera/configure", settings: { response: 5 } });
     await waitUntil(
       () => deliveredResponses.includes(5),
       5000,
@@ -385,6 +512,7 @@ test(
         () => `primeiro middleware não ficou pronto: ${middleware.stderr()}`,
       );
       await client.connect();
+      await client.createProject();
       const previousInstanceId = client.technicalDiagnostics.cursor?.middlewareInstanceId;
       assert.ok(previousInstanceId);
 
@@ -397,7 +525,7 @@ test(
         fields: [],
       });
       await waitUntil(
-        () => client.technicalDiagnostics.cursor?.lastEventSeq === "2",
+        () => client.technicalDiagnostics.cursor?.lastEventSeq === "3",
         5000,
         "cliente não consumiu os eventos do processo antigo",
       );
@@ -438,6 +566,7 @@ test(
 
       const deliveredAfterRestart: string[] = [];
       client.onBlueprintEvent((event) => deliveredAfterRestart.push(String(event["kind"] ?? "")));
+      await client.createProject();
       await client.dispatch("entitydef/define", {
         entityDefId: "after-restart",
         fields: [],
@@ -449,7 +578,7 @@ test(
       );
       assert.deepEqual(deliveredAfterRestart, ["entityDefDefined"]);
       assert.equal(client.technicalDiagnostics.cursor?.middlewareInstanceId, restarted.record.middlewareInstanceId);
-      assert.equal(client.technicalDiagnostics.cursor?.lastEventSeq, "1");
+      assert.equal(client.technicalDiagnostics.cursor?.lastEventSeq, "2");
     } finally {
       client.close();
       await stopMiddlewareProcess(middleware.child);

@@ -167,9 +167,16 @@ O editor começa pelo projeto, não pela conexão a um pipe.
   é cola Electron **sem cobertura de teste automatizado nem e2e** (issue #2 marca este
   critério; a prova de produto virá com o e2e da jornada — P0.9)
 - [x] Migração de `schemaVersion`: `migrateBlueprintDocument` + registro `MIGRATIONS`
-  encadeado (0→1) com rejeição de versão futura, aplicada de forma transparente na
-  carga (`blueprint/load`) — `middleware/src/canonical/BlueprintSerializer.ts`,
-  testada em `middleware/test/blueprint-migration.test.ts`
+  encadeado (0→1→2) com rejeição de versão futura; v2 torna `projectId`
+  obrigatório e documentos v1 recebem identidade legada determinística —
+  `middleware/src/canonical/BlueprintSerializer.ts`, testada em
+  `middleware/test/blueprint-migration.test.ts`
+- [x] Sessão explícita e substituição transacional: `ProjectSessionManager`
+  prepara parse/migração/validação/replay fora da sessão ativa, limpa e
+  reidrata o runtime e só então publica o commit. Falha preserva sessão, dirty
+  state e journal; `project/create`, `project/openDocument`, `project/close` e
+  `project/status` têm paridade JSON-RPC/GraphQL/gRPC/MCP e CAS por
+  `expectedProjectSessionId` — ADR-020 e testes de sessão/transports
 - [x] Template canônico "Plataforma 2D" (`platformer-2d`) no middleware/gateway/cliente:
   `ProjectTemplates.ts`, gateway `project/new` / `project/templates`,
   `EditorClient.newProjectFromTemplate` / `listProjectTemplates` — testado
@@ -188,8 +195,11 @@ O editor começa pelo projeto, não pela conexão a um pipe.
 stateDiagram-v2
   [*] --> no_project
   no_project --> opening : open
-  opening --> open_clean : ok
-  opening --> no_project : openFailed
+  open_clean --> opening : substituir
+  open_dirty --> opening : substituir confirmado
+  opening --> open_clean : ok / restaura A limpo
+  opening --> open_dirty : falha, restaura A sujo
+  opening --> no_project : falha sem sessao anterior
   open_clean --> open_dirty : editar
   open_dirty --> open_clean : salvar
   open_clean --> saving : save

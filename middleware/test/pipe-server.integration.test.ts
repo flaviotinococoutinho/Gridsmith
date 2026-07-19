@@ -1,13 +1,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import net from "node:net";
-import { EnginePipeServer, type EngineLogEntry, type EngineSession } from "../src/ipc/EnginePipeServer.js";
+import {
+  EnginePipeServer,
+  type CurrentEngineSessionChangedEvent,
+  type EngineLogEntry,
+  type EngineSession,
+} from "../src/ipc/EnginePipeServer.js";
 import { EngineBridge } from "../src/domain/EngineBridge.js";
 import { BlueprintStore } from "../src/domain/BlueprintStore.js";
 import { CanonicalOrchestrator } from "../src/canonical/CanonicalOrchestrator.js";
 import { HookBus } from "../src/canonical/HookBus.js";
+import { ProjectSessionManager } from "../src/canonical/ProjectSessionManager.js";
 import { CapabilityRegistry } from "../src/domain/CapabilityRegistry.js";
 import { MonoGameAdapter } from "../src/runtime/MonoGameAdapter.js";
+import { bindEngineProjectSessionLifecycle } from "../src/runtime/EngineProjectSessionLifecycle.js";
+import type {
+  ProjectionResult,
+  RuntimeAdapter,
+  RuntimeIdentity,
+  RuntimeSessionResetResult,
+} from "../src/runtime/RuntimeAdapter.js";
 import { JsonRpcPeer } from "../src/ipc/JsonRpcPeer.js";
 import { JsonRpcError, PROTOCOL_VERSION, RpcErrorCode } from "../src/protocol/jsonrpc.js";
 
@@ -90,6 +103,190 @@ test("handshake válido estabelece sessão e devolve identidade", async () => {
     assert.deepEqual(result.acceptedCapabilities, ["skeleton"]);
     assert.equal(server.currentSession?.clientName, "P7m.Engine.Runtime");
     engine.close();
+  });
+});
+
+test("handshake repetido é recusado sem criar sessão órfã nem trocar a engine corrente", async () => {
+  await withServer(async ({ server }) => {
+    const changes: CurrentEngineSessionChangedEvent[] = [];
+    server.on("currentSessionChanged", (change: CurrentEngineSessionChangedEvent) => {
+      changes.push(change);
+    });
+    const engine = await connectFakeEngine(server);
+    const first = await engine.request<{ sessionId: string }>("engine/handshake", {
+      clientName: "engine-once",
+      clientVersion: "0.1.0",
+      protocolVersion: PROTOCOL_VERSION,
+    });
+
+    await assert.rejects(
+      engine.request("engine/handshake", {
+        clientName: "engine-twice",
+        clientVersion: "0.2.0",
+        protocolVersion: PROTOCOL_VERSION,
+      }),
+      (error: unknown) =>
+        error instanceof JsonRpcError &&
+        error.code === RpcErrorCode.InvalidRequest &&
+        /already completed/.test(error.message),
+    );
+
+    assert.equal(server.currentSession?.sessionId, first.sessionId);
+    assert.equal(server.currentSession?.clientName, "engine-once");
+    assert.equal(server.activeSessions.length, 1);
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0]?.reason, "connected");
+    assert.equal(changes[0]?.runtimeSessionEpoch, 1);
+    assert.equal(server.currentSession?.runtimeSessionEpoch, 1);
+    engine.close();
+  });
+});
+
+test("engine nova supersede a anterior e seu fechamento nunca faz fallback para a obsoleta", async () => {
+  await withServer(async ({ server }) => {
+    const changes: CurrentEngineSessionChangedEvent[] = [];
+    server.on("currentSessionChanged", (change: CurrentEngineSessionChangedEvent) => {
+      changes.push(change);
+    });
+
+    const engineA = await connectFakeEngine(server);
+    const a = await engineA.request<{ sessionId: string }>("engine/handshake", {
+      clientName: "engine-a",
+      clientVersion: "0.1.0",
+      protocolVersion: PROTOCOL_VERSION,
+    });
+    const engineAClosed = new Promise<void>((resolve) => engineA.once("close", () => resolve()));
+
+    const engineB = await connectFakeEngine(server);
+    const b = await engineB.request<{ sessionId: string }>("engine/handshake", {
+      clientName: "engine-b",
+      clientVersion: "0.2.0",
+      protocolVersion: PROTOCOL_VERSION,
+    });
+    await engineAClosed;
+
+    assert.notEqual(b.sessionId, a.sessionId);
+    assert.equal(engineA.isClosed, true);
+    assert.equal(server.currentSession?.sessionId, b.sessionId);
+    assert.deepEqual(server.activeSessions.map((session) => session.sessionId), [b.sessionId]);
+    assert.deepEqual(changes.map((change) => change.reason), ["connected", "superseded"]);
+    assert.deepEqual(changes.map((change) => change.runtimeSessionEpoch), [1, 2]);
+    assert.equal(server.currentRuntimeSessionEpoch, 2);
+    assert.equal(server.currentSession?.runtimeSessionEpoch, 2);
+    assert.equal(changes[1]?.previous?.sessionId, a.sessionId);
+    assert.equal(changes[1]?.current?.sessionId, b.sessionId);
+
+    const disconnected = new Promise<void>((resolve) => {
+      const observe = (change: CurrentEngineSessionChangedEvent): void => {
+        if (change.reason !== "disconnected") return;
+        server.removeListener("currentSessionChanged", observe);
+        resolve();
+      };
+      server.on("currentSessionChanged", observe);
+    });
+    engineB.close();
+    await disconnected;
+
+    assert.equal(server.currentSession, undefined);
+    assert.deepEqual(server.activeSessions, []);
+    assert.deepEqual(changes.map((change) => change.reason), [
+      "connected",
+      "superseded",
+      "disconnected",
+    ]);
+    assert.deepEqual(changes.map((change) => change.runtimeSessionEpoch), [1, 2, 3]);
+    assert.equal(server.currentRuntimeSessionEpoch, 3);
+    assert.equal(changes[2]?.previous?.sessionId, b.sessionId);
+  });
+});
+
+test("troca efetiva da engine reseta e reidrata somente a sessão de projeto ativa", async () => {
+  await withServer(async ({ server }) => {
+    const cycles: Array<{
+      phase: "reset" | "rehydrate";
+      engineSessionId?: string;
+      store?: BlueprintStore;
+    }> = [];
+    const runtime: RuntimeAdapter = {
+      family: "test",
+      get isConnected() {
+        return server.currentSession !== undefined;
+      },
+      identify(): RuntimeIdentity | undefined {
+        return undefined;
+      },
+      async project(event): Promise<ProjectionResult> {
+        return { event: event.kind, status: "projected" };
+      },
+      async resetSession(): Promise<RuntimeSessionResetResult> {
+        const engineSessionId = server.currentSession?.sessionId;
+        const runtimeSessionEpoch = server.currentRuntimeSessionEpoch;
+        cycles.push({ phase: "reset", ...(engineSessionId ? { engineSessionId } : {}) });
+        return engineSessionId
+          ? { status: "reset", runtimeSessionEpoch }
+          : { status: "deferred", runtimeSessionEpoch, reason: "engine disconnected" };
+      },
+      async rehydrateFrom(store, expectedRuntimeSessionEpoch): Promise<readonly ProjectionResult[]> {
+        assert.equal(expectedRuntimeSessionEpoch, server.currentRuntimeSessionEpoch);
+        const engineSessionId = server.currentSession?.sessionId;
+        cycles.push({
+          phase: "rehydrate",
+          ...(engineSessionId ? { engineSessionId } : {}),
+          store,
+        });
+        return [];
+      },
+    };
+    const sessions = new ProjectSessionManager({ hooks: new HookBus(), adapter: runtime });
+    await sessions.replaceAtomically(sessions.createEmptySession("project-a"));
+    const obsoleteStore = sessions.current!.store;
+    await sessions.replaceAtomically(sessions.createEmptySession("project-b"));
+    const activeSession = sessions.current!;
+    cycles.length = 0;
+
+    const unbind = bindEngineProjectSessionLifecycle(server, sessions);
+    try {
+      const engineA = await connectFakeEngine(server);
+      const a = await engineA.request<{ sessionId: string }>("engine/handshake", {
+        clientName: "engine-a",
+        clientVersion: "0.1.0",
+        protocolVersion: PROTOCOL_VERSION,
+      });
+      await waitUntil(() => cycles.length === 2);
+
+      const engineB = await connectFakeEngine(server);
+      const b = await engineB.request<{ sessionId: string }>("engine/handshake", {
+        clientName: "engine-b",
+        clientVersion: "0.2.0",
+        protocolVersion: PROTOCOL_VERSION,
+      });
+      await waitUntil(() => cycles.length === 4);
+
+      engineB.close();
+      await waitUntil(() => cycles.length === 6);
+
+      assert.deepEqual(
+        cycles.map(({ phase, engineSessionId }) => ({ phase, engineSessionId })),
+        [
+          { phase: "reset", engineSessionId: a.sessionId },
+          { phase: "rehydrate", engineSessionId: a.sessionId },
+          { phase: "reset", engineSessionId: b.sessionId },
+          { phase: "rehydrate", engineSessionId: b.sessionId },
+          { phase: "reset", engineSessionId: undefined },
+          { phase: "rehydrate", engineSessionId: undefined },
+        ],
+      );
+      assert.equal(server.currentSession, undefined, "engine A não pode voltar após B fechar");
+      assert.equal(sessions.current, activeSession);
+      assert.ok(
+        cycles.filter((cycle) => cycle.phase === "rehydrate").every(
+          (cycle) => cycle.store === activeSession.store && cycle.store !== obsoleteStore,
+        ),
+      );
+      engineA.close();
+    } finally {
+      unbind();
+    }
   });
 });
 
@@ -253,3 +450,12 @@ test("comandos inválidos são rejeitados pelo AST antes de chegar à engine", a
     );
   });
 });
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail("condition was not satisfied before timeout");
+}

@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
     "benchmark:transports": "../scripts/benchmark-transports.sh",
     "test": "node --import tsx --test test/*.test.ts",
+    "test:project-session": "node --import tsx --test --test-name-pattern=\"^sessão de projeto:\" test/editor-client.integration.test.ts",
     "test:transport-fallback": "node --import tsx --test --test-name-pattern=\"^resiliência: fallback gRPC → GraphQL mantém chamadas e eventos$\" test/editor-client.integration.test.ts",
     "test:transport-repromotion": "node --import tsx --test --test-name-pattern=\"^resiliência: repromoção GraphQL → gRPC exige sondas saudáveis consecutivas$\" test/editor-client.integration.test.ts",
     "test:transport-auth": "node --import tsx --test --test-name-pattern=\"^resiliência: autenticação gRPC inválida não faz fallback para GraphQL$\" test/editor-client.integration.test.ts",

@@ -1,12 +1,11 @@
 /**
  * Estado declarativo (AST/Blueprint) do projeto, mantido no middleware.
  *
- * CQRS: toda mutação entra como um Comando imutável, é validada, aplicada
- * ao estado e emitida como evento para os assinantes (UI, ponte da engine).
+ * CQRS: toda mutação entra como um Comando imutável, é validada e aplicada
+ * ao estado; o evento retornado sobe ao orquestrador para commit/publicação.
  * Leituras são projeções somente-leitura — nunca expõem referências mutáveis.
  */
 
-import { EventEmitter } from "node:events";
 import {
   validateGrid,
   validateRules,
@@ -169,9 +168,11 @@ export type BlueprintEvent =
   | { readonly kind: "worldLevelUnplaced"; readonly levelId: string };
 
 /**
- * Eventos: "event" (BlueprintEvent) após cada comando aplicado com sucesso.
+ * Estado canônico sem publicação própria. `apply` devolve o evento ao
+ * orquestrador; somente o ProjectSessionManager publica depois que store e
+ * CommandHistory foram confirmados como um único commit.
  */
-export class BlueprintStore extends EventEmitter {
+export class BlueprintStore {
   private readonly skeletons = new Map<string, SkeletonBlueprint>();
   private readonly meshes = new Map<string, MeshBinding>();
   private readonly lights = new Map<string, LightSpec>();
@@ -187,7 +188,6 @@ export class BlueprintStore extends EventEmitter {
         validateCameraSettings(command.settings);
         this.camera = Object.freeze({ ...this.camera, ...command.settings });
         const event: BlueprintEvent = { kind: "cameraConfigured", settings: this.camera };
-        this.emit("event", event);
         return event;
       }
       case "light/add": {
@@ -198,7 +198,6 @@ export class BlueprintStore extends EventEmitter {
         }
         this.lights.set(light.lightId, Object.freeze({ ...light }));
         const event: BlueprintEvent = { kind: "lightAdded", light };
-        this.emit("event", event);
         return event;
       }
       case "light/remove": {
@@ -206,7 +205,6 @@ export class BlueprintStore extends EventEmitter {
           throw new JsonRpcError(RpcErrorCode.InvalidParams, `Light "${command.lightId}" does not exist`);
         }
         const event: BlueprintEvent = { kind: "lightRemoved", lightId: command.lightId };
-        this.emit("event", event);
         return event;
       }
       case "entitydef/define": {
@@ -220,7 +218,6 @@ export class BlueprintStore extends EventEmitter {
         }
         this.entityDefs.set(definition.entityDefId, Object.freeze({ ...definition }));
         const event: BlueprintEvent = { kind: "entityDefDefined", definition };
-        this.emit("event", event);
         return event;
       }
       case "entity/place": {
@@ -244,7 +241,6 @@ export class BlueprintStore extends EventEmitter {
           entity,
           ...(definition.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
         };
-        this.emit("event", event);
         return event;
       }
       case "entity/move": {
@@ -265,7 +261,6 @@ export class BlueprintStore extends EventEmitter {
           entity,
           ...(definition?.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
         };
-        this.emit("event", event);
         return event;
       }
       case "entity/remove": {
@@ -273,7 +268,6 @@ export class BlueprintStore extends EventEmitter {
           throw new JsonRpcError(RpcErrorCode.InvalidParams, `Entity "${command.entityId}" does not exist`);
         }
         const event: BlueprintEvent = { kind: "entityRemoved", entityId: command.entityId };
-        this.emit("event", event);
         return event;
       }
       case "level/define": {
@@ -284,7 +278,6 @@ export class BlueprintStore extends EventEmitter {
         }
         this.levels.set(level.levelId, Object.freeze({ ...level }));
         const event: BlueprintEvent = { kind: "levelDefined", level };
-        this.emit("event", event);
         return event;
       }
       case "level/update": {
@@ -298,7 +291,6 @@ export class BlueprintStore extends EventEmitter {
         }
         this.levels.set(level.levelId, Object.freeze({ ...level }));
         const event: BlueprintEvent = { kind: "levelUpdated", level };
-        this.emit("event", event);
         return event;
       }
       case "level/remove": {
@@ -307,7 +299,6 @@ export class BlueprintStore extends EventEmitter {
         }
         this.placements.delete(command.levelId); // sai também do world map
         const event: BlueprintEvent = { kind: "levelRemoved", levelId: command.levelId };
-        this.emit("event", event);
         return event;
       }
       case "world/place": {
@@ -336,7 +327,6 @@ export class BlueprintStore extends EventEmitter {
         // re-posicionar é permitido (drag-n-drop): substitui a colocação
         this.placements.set(placement.levelId, Object.freeze({ ...placement }));
         const event: BlueprintEvent = { kind: "worldLevelPlaced", placement };
-        this.emit("event", event);
         return event;
       }
       case "world/unplace": {
@@ -347,7 +337,6 @@ export class BlueprintStore extends EventEmitter {
           );
         }
         const event: BlueprintEvent = { kind: "worldLevelUnplaced", levelId: command.levelId };
-        this.emit("event", event);
         return event;
       }
       case "skeleton/define": {
@@ -358,7 +347,6 @@ export class BlueprintStore extends EventEmitter {
         }
         this.skeletons.set(s.skeletonId, deepFreezeSkeleton(s));
         const event: BlueprintEvent = { kind: "skeletonDefined", skeleton: s };
-        this.emit("event", event);
         return event;
       }
       case "mesh/bind": {
@@ -372,7 +360,6 @@ export class BlueprintStore extends EventEmitter {
         }
         this.meshes.set(b.meshId, Object.freeze({ ...b }));
         const event: BlueprintEvent = { kind: "meshBound", binding: b };
-        this.emit("event", event);
         return event;
       }
     }

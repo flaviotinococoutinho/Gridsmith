@@ -88,6 +88,19 @@ public sealed class ActorStore
         _liveCount--;
     }
 
+    /// <summary>
+    /// Remove todos os atores da sessão de projeto, preservando os buffers
+    /// pré-alocados para a sessão seguinte.
+    /// </summary>
+    public void Reset()
+    {
+        Array.Clear(_entityIds, 0, _entityIds.Length);
+        Array.Clear(_archetypeIds, 0, _archetypeIds.Length);
+        Array.Clear(_positionsX, 0, _positionsX.Length);
+        Array.Clear(_positionsY, 0, _positionsY.Length);
+        _liveCount = 0;
+    }
+
     public ActorHandle Find(string entityId)
     {
         for (var slot = 0; slot < _maxActors; slot++)
