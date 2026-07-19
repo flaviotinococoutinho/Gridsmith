@@ -1,14 +1,27 @@
 /**
- * Cliente do gateway do editor: conecta o processo main do Electron ao
- * endpoint `<pipe>-editor` do middleware, reutilizando o peer JSON-RPC e o
- * resolvedor de pipe do próprio pacote do middleware (mesmo framing, mesma
- * semântica — nenhuma reimplementação de protocolo no frontend).
+ * Cliente do editor (v2 — ADR-016/017): fala com o middleware pelos
+ * TRANSPORTS DO APP, com política explícita e testável:
+ *
+ *  - caminho QUENTE (dispatch, query, eventos): gRPC prioritário; em falha
+ *    DE TRANSPORTE, fallback imediato para GraphQL (polling incremental de
+ *    eventos) e recovery por sondas com histerese — política pura em
+ *    `core/transportRouter.ts`;
+ *  - superfície COMPLETA (load, templates, experiência): GraphQL (baseline).
+ *
+ * A API pública é a mesma da v1 (main.ts e renderer não mudam). Sem Electron
+ * aqui (portável a drivers headless — o e2e verify-transports usa esta
+ * classe de verdade). Verbosidade via P7M_VERBOSITY (core/logging).
  */
 
-import net from "node:net";
-import { JsonRpcPeer } from "@p7m/middleware/dist/ipc/JsonRpcPeer.js";
-import { resolvePipePath } from "@p7m/middleware/dist/ipc/PipeEndpoint.js";
-import { PROTOCOL_VERSION } from "@p7m/middleware/dist/protocol/jsonrpc.js";
+import { randomUUID } from "node:crypto";
+import {
+  TransportRouter,
+  classifyTransportError,
+  type TransportName,
+} from "../core/transportRouter.js";
+import { createLogger, type Logger } from "../core/logging.js";
+import { GraphQlTransport, GraphQlDomainError } from "./transport/GraphQlTransport.js";
+import { GrpcTransport, type HotEvent } from "./transport/GrpcTransport.js";
 import type { ResolvedExperienceLike } from "../core/experienceGate.js";
 
 export interface BlueprintEventPayload {
@@ -21,40 +34,79 @@ export interface DispatchOutcome {
   readonly projection?: { status: string; reason?: string };
 }
 
-export class EditorClient {
-  private peer: JsonRpcPeer | undefined;
-  private readonly eventListeners = new Set<(event: BlueprintEventPayload) => void>();
+const EXPERIENCE_QUERY = `query ($family: String, $version: String) {
+  experience(family: $family, version: $version) {
+    family requestedVersion profileVersion displayName capabilities constraints
+    decisions { feature enabled source reason }
+    liveManifestConsidered
+  }
+}`;
 
-  constructor(
-    private readonly pipeName: string,
-    private readonly clientName = "p7m-electron-editor",
-  ) {}
+export interface EditorClientOptions {
+  readonly requestTimeoutMs?: number;
+  /** Intervalo do polling de eventos no fallback GraphQL. */
+  readonly eventPollMs?: number;
+  /** Intervalo de checagem das sondas de recovery. */
+  readonly probeTickMs?: number;
+  readonly log?: Logger;
+}
+
+export class EditorClient {
+  private readonly router = new TransportRouter();
+  private readonly log: Logger;
+  private readonly grpc: GrpcTransport;
+  private readonly graphql: GraphQlTransport;
+  private readonly eventListeners = new Set<(event: BlueprintEventPayload) => void>();
+  private readonly eventPollMs: number;
+  private readonly probeTickMs: number;
+
+  private sessionId: string | undefined;
+  private lastEventSeq = 0;
+  private cancelStream: (() => void) | undefined;
+  private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private probeTimer: ReturnType<typeof setInterval> | undefined;
+  private closed = false;
+
+  constructor(pipeName: string, options: EditorClientOptions = {}) {
+    this.log = options.log ?? createLogger("editor-client");
+    const timeout = options.requestTimeoutMs ?? 10_000;
+    this.grpc = new GrpcTransport(pipeName, this.log.child("grpc"), timeout);
+    this.graphql = new GraphQlTransport(pipeName, this.log.child("graphql"), timeout);
+    this.eventPollMs = options.eventPollMs ?? 500;
+    this.probeTickMs = options.probeTickMs ?? 1_000;
+  }
 
   get isConnected(): boolean {
-    return this.peer !== undefined && !this.peer.isClosed;
+    return this.sessionId !== undefined && !this.closed;
+  }
+
+  /** Transporte ativo do caminho quente (diagnóstico/status bar). */
+  get activeTransport(): TransportName {
+    return this.router.active;
   }
 
   async connect(): Promise<{ sessionId: string }> {
-    const path = resolvePipePath(`${this.pipeName}-editor`);
-    const socket = await new Promise<net.Socket>((resolve, reject) => {
-      const s = net.connect(path);
-      s.once("connect", () => resolve(s));
-      s.once("error", reject);
-    });
-
-    const peer = new JsonRpcPeer(socket, { label: this.clientName });
-    // O peer descarta notifications sem handler: registra o receptor do broadcast.
-    peer.registerMethod("blueprint/event", (params) => {
-      for (const listener of this.eventListeners) {
-        listener(params as BlueprintEventPayload);
-      }
-    });
-    this.peer = peer;
-
-    return peer.request<{ sessionId: string }>("editor/handshake", {
-      clientName: this.clientName,
-      protocolVersion: PROTOCOL_VERSION,
-    });
+    // prioriza o gRPC; indisponível → fallback imediato (política do router)
+    try {
+      const health = await this.grpc.health();
+      this.lastEventSeq = health.lastEventSeq;
+      this.log.info("connected via grpc", { engineConnected: health.engineConnected });
+    } catch (err) {
+      const classified = classifyTransportError(err);
+      if (!classified.transport) throw this.normalizeError(err);
+      this.router.onTransportFailure("grpc", Date.now(), classified.reason);
+      this.log.warn("grpc unavailable at connect; using graphql fallback", {
+        reason: classified.reason,
+      });
+      const data = await this.graphql.execute<{ health: { lastEventSeq: number } }>(
+        "{ health { ok engineConnected lastEventSeq } }",
+      );
+      this.lastEventSeq = data.health.lastEventSeq;
+    }
+    this.sessionId = randomUUID();
+    this.startEventPump();
+    this.startProbeLoop();
+    return { sessionId: this.sessionId };
   }
 
   /** Assina o broadcast de eventos do Blueprint. Retorna a função de remoção. */
@@ -63,26 +115,56 @@ export class EditorClient {
     return () => this.eventListeners.delete(listener);
   }
 
+  // ---------------- caminho quente (gRPC → fallback GraphQL) ----------------
+
   dispatch(kind: string, payload: Record<string, unknown>): Promise<DispatchOutcome> {
-    return this.request<DispatchOutcome>("blueprint/dispatch", { kind, payload });
+    return this.hotCall(
+      async () => (await this.grpc.dispatch(kind, payload)) as DispatchOutcome,
+      async () => {
+        const data = await this.graphql.execute<{
+          dispatch: { event: BlueprintEventPayload; projection: { status: string } | null };
+        }>(
+          `mutation ($kind: CommandKind!, $payload: JSON!) {
+            dispatch(kind: $kind, payload: $payload) { event projection { status reason detail } }
+          }`,
+          { kind: kind.replace("/", "_"), payload },
+        );
+        return {
+          event: data.dispatch.event,
+          ...(data.dispatch.projection ? { projection: data.dispatch.projection } : {}),
+        } as DispatchOutcome;
+      },
+    );
   }
 
   query<T = unknown>(projection: string): Promise<T> {
-    return this.request<T>("blueprint/query", { projection });
+    return this.hotCall(
+      async () => (await this.grpc.query(projection)) as T,
+      async () => {
+        const data = await this.graphql.execute<{ projection: T }>(
+          `query ($name: String!) { projection(name: $name) }`,
+          { name: projection },
+        );
+        return data.projection;
+      },
+    );
   }
 
+  // ------------- superfície completa (GraphQL — baseline do app) -------------
+
   resolveExperience(family?: string, version?: string): Promise<ResolvedExperienceLike> {
-    return this.request<ResolvedExperienceLike>("experience/resolve", {
-      ...(family !== undefined ? { family } : {}),
-      ...(version !== undefined ? { version } : {}),
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ experience: ResolvedExperienceLike }>(
+        EXPERIENCE_QUERY,
+        { family: family ?? null, version: version ?? null },
+      );
+      return data.experience;
     });
   }
 
   /** Snapshot completo do projeto (Save/Save As escrevem isto em disco). */
   async saveDocument(): Promise<unknown> {
-    const { document } = await this.request<{ document: unknown }>("blueprint/query", {
-      projection: "document",
-    });
+    const { document } = await this.query<{ document: unknown }>("document");
     return document;
   }
 
@@ -96,14 +178,27 @@ export class EditorClient {
     deferred: number;
     skipped: number;
   }> {
-    return this.request("blueprint/load", { document });
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{
+        loadDocument: { applied: number; projected: number; deferred: number; skipped: number };
+      }>(
+        `mutation ($doc: JSON!) { loadDocument(document: $doc) { applied projected deferred skipped } }`,
+        { doc: document },
+      );
+      return data.loadDocument;
+    });
   }
 
   /** Templates disponíveis para o fluxo "Novo projeto". */
   listProjectTemplates(): Promise<{
     templates: Array<{ id: string; label: string; description: string }>;
   }> {
-    return this.request("project/templates", {});
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{
+        templates: Array<{ id: string; label: string; description: string }>;
+      }>("{ templates { id label description } }");
+      return { templates: data.templates };
+    });
   }
 
   /**
@@ -119,18 +214,157 @@ export class EditorClient {
     deferred: number;
     skipped: number;
   }> {
-    return this.request("project/new", { templateId });
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{
+        newProjectFromTemplate: {
+          templateId: string;
+          name: string;
+          applied: number;
+          projected: number;
+          deferred: number;
+          skipped: number;
+        };
+      }>(
+        `mutation ($id: String!) {
+          newProjectFromTemplate(templateId: $id) { templateId name applied projected deferred skipped }
+        }`,
+        { id: templateId },
+      );
+      return data.newProjectFromTemplate;
+    });
   }
 
   close(): void {
-    this.peer?.close();
-    this.peer = undefined;
+    this.closed = true;
+    this.sessionId = undefined;
+    this.stopEventPump();
+    if (this.probeTimer) clearInterval(this.probeTimer);
+    this.probeTimer = undefined;
+    this.grpc.close();
   }
 
-  private request<T>(method: string, params: unknown): Promise<T> {
-    if (!this.peer || this.peer.isClosed) {
-      return Promise.reject(new Error("EditorClient is not connected"));
+  // ------------------------------ internos ------------------------------
+
+  /** Caminho quente: transporte ativo; falha DE TRANSPORTE no gRPC → fallback + retry. */
+  private async hotCall<T>(viaGrpc: () => Promise<T>, viaGraphql: () => Promise<T>): Promise<T> {
+    if (this.router.active === "grpc") {
+      try {
+        const result = await viaGrpc();
+        this.router.onCallSuccess("grpc");
+        return result;
+      } catch (err) {
+        const classified = classifyTransportError(err);
+        if (!classified.transport) throw this.normalizeError(err);
+        const decision = this.router.onTransportFailure("grpc", Date.now(), classified.reason);
+        this.log.warn("grpc call failed; routing to graphql", {
+          reason: classified.reason,
+          fellBack: decision === "fellBack",
+        });
+        if (decision === "fellBack") this.onFellBack();
+      }
     }
-    return this.peer.request<T>(method, params);
+    try {
+      return await viaGraphql();
+    } catch (err) {
+      throw this.normalizeError(err);
+    }
+  }
+
+  private async coldCall<T>(viaGraphql: () => Promise<T>): Promise<T> {
+    try {
+      return await viaGraphql();
+    } catch (err) {
+      throw this.normalizeError(err);
+    }
+  }
+
+  private normalizeError(err: unknown): Error {
+    if (err instanceof GraphQlDomainError) {
+      return new Error(err.code !== undefined ? `${err.message} (code ${err.code})` : err.message);
+    }
+    const e = err as { details?: string; message?: string };
+    if (typeof e?.details === "string" && e.details.length > 0) return new Error(e.details);
+    return err instanceof Error ? err : new Error(String(err));
+  }
+
+  // eventos: stream gRPC no primário; polling GraphQL incremental no fallback
+  private startEventPump(): void {
+    if (this.closed) return;
+    if (this.router.active === "grpc") this.openStream();
+    else this.startPolling();
+  }
+
+  private stopEventPump(): void {
+    this.cancelStream?.();
+    this.cancelStream = undefined;
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = undefined;
+  }
+
+  private openStream(): void {
+    this.cancelStream = this.grpc.streamEvents(
+      this.lastEventSeq,
+      (event) => this.deliver(event),
+      (err) => {
+        const classified = classifyTransportError(err);
+        const decision = this.router.onTransportFailure(
+          "grpc",
+          Date.now(),
+          `event stream: ${classified.reason}`,
+        );
+        this.log.warn("event stream lost", { reason: classified.reason });
+        if (decision === "fellBack") this.onFellBack();
+      },
+    );
+  }
+
+  private startPolling(): void {
+    if (this.pollTimer) return;
+    this.pollTimer = setInterval(() => {
+      void this.graphql
+        .execute<{ eventsSince: Array<{ seq: number; kind: string; payload: unknown }> }>(
+          `query ($after: Int!) { eventsSince(afterSeq: $after) { seq kind payload } }`,
+          { after: this.lastEventSeq },
+        )
+        .then((data) => {
+          for (const e of data.eventsSince) {
+            this.deliver({ seq: e.seq, kind: e.kind, payload: e.payload });
+          }
+        })
+        .catch((err: Error) => this.log.debug("event poll failed", { message: err.message }));
+    }, this.eventPollMs);
+    this.pollTimer.unref?.();
+  }
+
+  private deliver(event: HotEvent): void {
+    if (event.seq <= this.lastEventSeq && event.seq !== 0) return; // dedup stream/polling
+    if (event.seq > 0) this.lastEventSeq = event.seq;
+    for (const listener of this.eventListeners) {
+      listener(event.payload as BlueprintEventPayload);
+    }
+  }
+
+  private onFellBack(): void {
+    this.stopEventPump();
+    this.startPolling();
+  }
+
+  private startProbeLoop(): void {
+    if (this.probeTimer) return;
+    this.probeTimer = setInterval(() => {
+      const now = Date.now();
+      if (!this.router.shouldProbe(now)) return;
+      void this.grpc
+        .health()
+        .then(() => {
+          if (this.router.onProbeResult(true, Date.now()) === "promoted") {
+            this.log.info("grpc recovered; promoting back", { lastEventSeq: this.lastEventSeq });
+            this.stopEventPump();
+            this.openStream();
+          }
+        })
+        .catch(() => this.router.onProbeResult(false, Date.now()));
+    }, this.probeTickMs);
+    this.probeTimer.unref?.();
   }
 }

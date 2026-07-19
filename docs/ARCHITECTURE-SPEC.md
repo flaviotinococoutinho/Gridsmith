@@ -54,7 +54,7 @@ O P7M é um **ecossistema Engine-as-a-Service local** de três processos
 desacoplados — editor Electron/TypeScript, middleware Node.js/TypeScript e engine
 .NET 8/MonoGame — mediados por um **modelo canônico** independente de runtime e por
 **contratos versionados** (JSON Schema, layouts binários, perfis de runtime). A
-arquitetura já é **madura na plataforma** e **executável em suas regras**: 18 regras
+arquitetura já é **madura na plataforma** e **executável em suas regras**: 22 regras
 arquiteturais são testes que quebram o CI (`GOVERNANCE.md`), a compatibilidade
 binária entre TS e C# é provada por checksums cruzados em e2e, e o hot path da engine
 é verificado como Zero-GC por asserções de alocação. **CONFIRMADO.**
@@ -127,7 +127,7 @@ vertical `Projeto → Asset → Entidade → Nível → Preview → Live edit �
 
 ## 3. Pontos fortes (a preservar)
 
-1. **Governança executável, não documental** — 18 regras (R1–R9, F1–F4, E1–E5) são
+1. **Governança executável, não documental** — 22 regras (R1–R12, F1–F5, E1–E5) são
    testes que quebram o CI com o arquivo infrator no erro
    (`middleware/test/architecture.test.ts`, `frontend/test/architecture.test.ts`,
    `engine/tests/.../ArchitectureTests.cs`). **CONFIRMADO.**
@@ -225,7 +225,7 @@ graph TD
     FEmain["main (supervisor, ciclo de projeto)"]
     FEpre["preload (window.p7m, contextIsolation)"]
     FErnd["renderer (UI pura)"]
-    FEcore["core/ (12 nucleos puros)"]
+    FEcore["core/ (nucleos puros)"]
     FEmain --> FEpre --> FErnd --> FEcore
   end
   subgraph MW["Middleware (Node/TS)"]
@@ -267,7 +267,7 @@ middleware e engine; *modelo canônico* (verdade), *projeções de runtime* (ada
 
 A regra geral é a **Clean/Hexagonal**: dependências apontam **para dentro**; o
 interno (algoritmos puros → domínio canônico → orquestração → portas) nunca conhece o
-externo (adapters/IPC/MCP/filesystem/tools/composição). **CONFIRMADO** por R1–R9.
+externo (adapters/IPC/MCP/filesystem/tools/composição). **CONFIRMADO** por R1–R12.
 
 ```mermaid
 graph TD
@@ -282,7 +282,7 @@ graph TD
   DOM -.->|"R5: zero imports"| ALGO
 ```
 
-*Mostra a regra de dependencia do middleware: toda seta aponta para dentro (composition root -> externo -> portas -> orquestracao -> dominio -> algoritmos puros); o interno nunca conhece o externo. Nenhuma reescrita relaxa a regra — a correcao e mover a dependencia (R1-R9).*
+*Mostra a regra de dependencia do middleware: toda seta aponta para dentro (composition root -> externo -> portas -> orquestracao -> dominio -> algoritmos puros); o interno nunca conhece o externo. Nenhuma reescrita relaxa a regra — a correcao e mover a dependencia (R1-R12).*
 
 **Middleware — grafo permitido (imposto por import-graph scanning,
 `architecture.test.ts:25-66`):**
@@ -620,6 +620,20 @@ vértices. **É protocolo distinto** do JSON-RPC — não confundir os dois plan
 **Regra normativa:** o frontend **NÃO DEVE** reimplementar framing (F4); qualquer peer
 vem de `@p7m/middleware`.
 
+**Transports do app — GraphQL + gRPC (CONFIRMADO — ADR-016/017/018,
+`docs/adr/`):** a borda app (Electron) ↔ middleware **não** usa o plano JSON-RPC
+acima. GraphQL (`contracts/graphql/editor.schema.graphql`) é a superfície
+baseline completa e o destino do fallback; gRPC
+(`contracts/grpc/p7m_editor.proto`, package `p7m.editor.v1`) serve o caminho
+quente (`Dispatch`/`Query`/`StreamEvents`/`Health`) com **prioridade** — falha
+DE TRANSPORTE cai imediatamente para GraphQL e a repromoção exige histerese de
+sondas Health (`frontend/src/core/transportRouter.ts`). Ambas as bordas delegam
+na mesma `EditorSurface` (R10–R12/F5); a continuidade de eventos entre stream e
+polling é garantida por `seq` (`EventJournal`). Payloads de comando viajam como
+JSON validado na fonte única (`BlueprintStore` + `contracts/schemas/`) — os
+transports **NÃO DEVEM** introduzir segunda fonte de validação. Verbosidade dos
+processos: `P7M_VERBOSITY` (§24).
+
 ## 17. RFCs aplicáveis
 
 | RFC | Escopo | Aplicabilidade | Conformidade observada | Decisão |
@@ -855,6 +869,11 @@ risco conhecido e aceito.
 - **Captura de stdout/stderr por serviço** — `main.ts` (ring das últimas 50 linhas; 5
   no status) com diagnóstico acionável (P0.1).
 - **`engine/log`** notification (níveis/categoria) e ping de heartbeat.
+- **Verbosidade controlada** — `P7M_VERBOSITY` (`silent|error|warn|info|debug|trace`,
+  default `info`) governa os loggers estruturados puros (`middleware/src/util/log.ts`,
+  `frontend/src/core/logging.ts`): escopo hierárquico, sink injetável (testado),
+  stderr apenas — stdout do middleware pertence ao MCP (ADR-018). Transições de
+  transporte logam a razão (`history` do TransportRouter).
 - **Inspeção de domínio** — `listHooks()`, histórico de artefatos, matriz do governor,
   `editorConcepts()`.
 
@@ -908,7 +927,7 @@ adversariais).
 
 | Nível | Estado | Evidência |
 |---|---|---|
-| 1. Unidade (lógica pura, invariantes, algoritmos) | ✅ forte | 12 núcleos `core/`, canonical, engine `Core` |
+| 1. Unidade (lógica pura, invariantes, algoritmos) | ✅ forte | núcleos `core/`, canonical, engine `Core` |
 | 2. Componentes (inspector, toolbar, paleta, canvas) | ❌ ausente | `renderer.ts` sem teste |
 | 3. Integração da app (renderer↔preload↔main↔gateway) | 🔶 fino | só `editor-client.integration.test.ts` |
 | 4. E2E visual (Playwright + Electron da jornada) | ❌ ausente | — |
@@ -982,9 +1001,9 @@ mediante requisito concreto (§38).
 
 ## 29. Arquitetura do frontend
 
-**Separação (CONFIRMADO — F1-F4):** `main` (Node privilegiado: supervisor, ciclo de
+**Separação (CONFIRMADO — F1-F5):** `main` (Node privilegiado: supervisor, ciclo de
 projeto, diálogos) → `preload` (contrato `window.p7m` com contextIsolation) →
-`renderer` (UI) → `core/` (12 núcleos puros, executáveis fora do Electron e aptos a
+`renderer` (UI) → `core/` (núcleos puros, executáveis fora do Electron e aptos a
 workers). O renderer **NÃO importa** Electron/Node (F2/F3); `main` só entra como *type*.
 
 **Padrões observados:** máquinas de estado (`ProjectLifecycle`, `StateMachine`),
@@ -1013,7 +1032,7 @@ graph BT
 
 *Mostra a pilha de dependencia do middleware de baixo para cima (seguindo as setas ascendentes do original): a composition root conhece tudo, cada camada externa depende da interna, e os algoritmos puros no topo nao importam nada (R5). Nenhuma seta aponta de dentro para fora.*
 
-Nenhuma seta aponta de dentro para fora. **CONFIRMADO** por R1–R9.
+Nenhuma seta aponta de dentro para fora. **CONFIRMADO** por R1–R12.
 
 ## 31. Arquitetura da engine
 
@@ -1035,9 +1054,11 @@ for hot loop). `Graphics` depende de `Core`, nunca o contrário.
 
 ## 32. ADRs recomendados
 
-Não há diretório de ADRs hoje. **Recomendação R-08 (Média):** criar `docs/adr/` e
-registrar retroativamente as decisões estruturais **já tomadas** (status "Accepted"),
-para dar rastreabilidade a quem chega. ADRs mínimos:
+O diretório [`docs/adr/`](adr/README.md) existe e registra as decisões novas a
+partir do ADR-016 (transports do app). **Recomendação R-08 (Média), ainda
+aberta para 001–015:** registrar retroativamente as decisões estruturais **já
+tomadas** (status "Accepted"), para dar rastreabilidade a quem chega. ADRs
+mínimos:
 
 | ADR | Decisão | Evidência de que já foi tomada |
 |---|---|---|
@@ -1057,23 +1078,36 @@ para dar rastreabilidade a quem chega. ADRs mínimos:
 | ADR-014 | JSON Schema 2020-12 como fonte de verdade | `contracts/` |
 | ADR-015 | Fitness functions como governança | `GOVERNANCE.md` |
 
+Já registrados em [`docs/adr/`](adr/README.md) (status Accepted):
+
+| ADR | Decisão |
+|---|---|
+| [ADR-016](adr/ADR-016-graphql-baseline-do-app.md) | GraphQL como superfície baseline do app (e destino do fallback) |
+| [ADR-017](adr/ADR-017-grpc-caminho-quente-com-fallback.md) | gRPC no caminho quente, prioritário, com fallback para GraphQL |
+| [ADR-018](adr/ADR-018-endpoints-e-verbosidade-dos-transports.md) | Endpoints locais dos transports e controle de verbosidade |
+
 Cada ADR **DEVE** conter contexto, decisão, alternativas, consequências, riscos,
 critério de revisão, status, data e links para código e teste.
 
 ## 33. Fitness functions (regras arquiteturais executáveis)
 
-**Existentes (CONFIRMADO — 18 + regras semânticas):**
+**Existentes (CONFIRMADO — 22 + regras semânticas):**
 
-- **Middleware R1–R9** (`architecture.test.ts`) por **import-graph scanning** (regex de
+- **Middleware R1–R12** (`architecture.test.ts`) por **import-graph scanning** (regex de
   imports + resolução relativa): R1 (SDK MCP/`zod` só em `mcp/`), R2 (canônico sem
-  transporte/MCP/adapter/dados), R3 (`BlueprintStore` allowlist de 3 imports), R4
+  transporte/MCP/adapter/dados — inclui `graphql/`, `grpc/`, `transport/`), R3
+  (`BlueprintStore` allowlist de 3 imports), R4
   (profiles só importam o contrato), R5 (AutoTiler/AsepriteImporter/fnv1a **zero**
   imports), R6 (`node:net` só em `ipc/`/`tools/`/`index`), R7 (`MonoGameAdapter` só na
   composição), **R8** (kinds minerados do source de `BlueprintStore` filtrados por `/` =
-  `COMMAND_KINDS`), **R9** (`HEADER_BYTES=4`, `MAX_FRAME_BYTES=16MiB`, `MAX_LEVEL_CELLS=256²`).
-- **Frontend F1–F4** (`architecture.test.ts`): F1 (`core/` puro), F2 (renderer sem
+  `COMMAND_KINDS`), **R9** (`HEADER_BYTES=4`, `MAX_FRAME_BYTES=16MiB`, `MAX_LEVEL_CELLS=256²`),
+  **R10** (lib `graphql` só em `graphql/`), **R11** (`@grpc/*` só em `grpc/`),
+  **R12** (bordas GraphQL/gRPC importam apenas `EditorSurface` + `transport/` +
+  `protocol/jsonrpc` + `util/log` — nunca domínio direto).
+- **Frontend F1–F5** (`architecture.test.ts`): F1 (`core/` puro), F2 (renderer sem
   Electron/Node; `main` só type), F3 (Electron só em `main/`), F4 (proibido
-  `writeUInt32LE`/`readUInt32LE` no source).
+  `writeUInt32LE`/`readUInt32LE` no source), F5 (SDKs de transporte — `@grpc/*`,
+  `node:http` — só em `main/transport/`).
 - **Engine E1–E5** (`ArchitectureTests.cs`) por **reflexão de assembly**: layering
   Core/Ipc/Graphics/Runtime + Core sem MonoGame.
 - **Semânticas:** testes `*_is_allocation_free` (um por hot loop), determinismo por seed,
@@ -1102,9 +1136,9 @@ executável, estável, relevante e difícil de validar manualmente.
 
 | Gate | Job | Conteúdo | Bloqueante |
 |---|---|---|---|
-| G1 | middleware | build + suíte middleware (inclui R1–R9) | sim |
+| G1 | middleware | build + suíte middleware (inclui R1–R12) | sim |
 | G2 | engine | build + suíte engine (inclui E1–E5, Zero-GC) | sim |
-| G3 | frontend | build + suíte frontend (inclui F1–F4) | sim |
+| G3 | frontend | build + suíte frontend (inclui F1–F5) | sim |
 | G4 | e2e | `verify-phase1..4` com processos reais | sim |
 
 **Recomendados (separar por velocidade):**

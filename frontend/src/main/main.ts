@@ -27,6 +27,13 @@ import {
   type ServiceStatus,
 } from "./ProcessSupervisor.js";
 import { EditorClient } from "./EditorClient.js";
+import {
+  ensureSingleInstance,
+  hardenNavigation,
+  hardenedWindowOptions,
+  loadWindowState,
+  trackWindowState,
+} from "./appConfig.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_FILTER = [{ name: "Projeto P7M", extensions: ["p7m.json"] }];
@@ -184,7 +191,12 @@ function statusOf(lifecycle: ProjectLifecycle): ProjectStatusPayload {
   };
 }
 
+let mainWindow: BrowserWindow | undefined;
+
 void app.whenReady().then(async () => {
+  // instância única: a segunda sai; a primeira ganha foco (appConfig.ts)
+  if (!ensureSingleInstance(() => mainWindow)) return;
+
   const pipeName = pipeNameFromArgs();
   const client = new EditorClient(pipeName);
   const lifecycle = new ProjectLifecycle(Date.now, {}, loadRecents());
@@ -367,16 +379,13 @@ void app.whenReady().then(async () => {
   );
   ipcMain.handle("p7m:project-status", () => statusOf(lifecycle));
 
-  window = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    title: "P7M",
-    webPreferences: {
-      preload: path.join(dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
+  // Configuração refinada do Electron (appConfig.ts): janela endurecida
+  // (sandbox, navegação bloqueada), estado persistido entre sessões
+  window = new BrowserWindow(hardenedWindowOptions(path.join(dirname, "preload.js")));
+  mainWindow = window;
+  if (loadWindowState().maximized) window.maximize();
+  trackWindowState(window);
+  hardenNavigation(window);
 
   // Menu nativo com atalhos (ALPHA-0.1 P0.3): projeto no main, edição no renderer
   const sendMenuAction = (action: "undo" | "redo") => (): void => {

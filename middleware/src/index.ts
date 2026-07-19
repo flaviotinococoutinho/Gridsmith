@@ -7,10 +7,18 @@
  * stderr — stdout pertence exclusivamente ao transporte MCP.
  *
  * Uso: p7m-middleware [--pipe <nome>] [--no-mcp] [--assets <dir>]
+ *                     [--no-grpc] [--no-graphql]
+ *
+ * Verbosidade: P7M_VERBOSITY = silent|error|warn|info|debug|trace (default info).
  */
 
 import path from "node:path";
 import { AssetPipelineService, ExecToolRunner } from "./assets/AssetPipelineService.js";
+import { EditorSurface } from "./canonical/EditorSurface.js";
+import { GraphQlGateway } from "./graphql/GraphQlGateway.js";
+import { GrpcGateway } from "./grpc/GrpcGateway.js";
+import { EventJournal } from "./transport/EventJournal.js";
+import { createLogger } from "./util/log.js";
 import { EditorGateway } from "./ipc/EditorGateway.js";
 import { EnginePipeServer, type EngineLogEntry, type EngineSession } from "./ipc/EnginePipeServer.js";
 import { ArtifactStore } from "./canonical/ArtifactStore.js";
@@ -27,24 +35,37 @@ import { MonoGameAdapter } from "./runtime/MonoGameAdapter.js";
 import { RuntimeProfileRegistry } from "./runtime/RuntimeProfile.js";
 import { MONOGAME_PROFILES } from "./runtime/profiles/monogame.js";
 
-function parseArgs(argv: string[]): { pipeName?: string; mcp: boolean; assetsRoot?: string } {
+function parseArgs(argv: string[]): {
+  pipeName?: string;
+  mcp: boolean;
+  assetsRoot?: string;
+  grpc: boolean;
+  graphql: boolean;
+} {
   let pipeName: string | undefined;
   let assetsRoot: string | undefined;
   let mcp = true;
+  let grpc = true;
+  let graphql = true;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--pipe") pipeName = argv[++i];
     else if (argv[i] === "--assets") assetsRoot = argv[++i];
     else if (argv[i] === "--no-mcp") mcp = false;
+    else if (argv[i] === "--no-grpc") grpc = false;
+    else if (argv[i] === "--no-graphql") graphql = false;
   }
   return {
     ...(pipeName !== undefined ? { pipeName } : {}),
     ...(assetsRoot !== undefined ? { assetsRoot } : {}),
     mcp,
+    grpc,
+    graphql,
   };
 }
 
 async function main(): Promise<void> {
-  const { pipeName, mcp, assetsRoot } = parseArgs(process.argv.slice(2));
+  const { pipeName, mcp, assetsRoot, grpc, graphql } = parseArgs(process.argv.slice(2));
+  const log = createLogger("p7m");
 
   const pipeServer = new EnginePipeServer({
     ...(pipeName !== undefined ? { pipeName } : {}),
@@ -144,10 +165,37 @@ async function main(): Promise<void> {
     console.error(`[engine:${entry.level}]${entry.category ? ` (${entry.category})` : ""} ${entry.message}`);
   });
 
+  // ---- Transports do app (ADR-016/017): gRPC prioritário + GraphQL fallback ----
+  // Ambos são fachadas finas sobre a MESMA EditorSurface do gateway JSON-RPC;
+  // o EventJournal dá seq monotônico aos eventos (stream no gRPC, polling no
+  // GraphQL) para o fallback não perder eventos.
+  const surface = new EditorSurface({ orchestrator, store, governor, adapter });
+  const journal = new EventJournal();
+  store.on("event", (event: { kind: string }) => journal.append(event.kind, event));
+
+  const graphqlGateway = graphql
+    ? new GraphQlGateway({
+        pipeName: pipeName ?? "p7m-engine",
+        surface,
+        journal,
+        log: log.child("graphql"),
+      })
+    : undefined;
+  const grpcGateway = grpc
+    ? new GrpcGateway({
+        pipeName: pipeName ?? "p7m-engine",
+        surface,
+        journal,
+        log: log.child("grpc"),
+      })
+    : undefined;
+
   await pipeServer.listen();
   console.error(`[p7m] control-plane endpoint listening at ${pipeServer.pipePath}`);
   await editorGateway.listen();
   console.error(`[p7m] editor gateway listening at ${editorGateway.pipePath}`);
+  if (graphqlGateway) await graphqlGateway.listen();
+  if (grpcGateway) await grpcGateway.listen();
 
   if (mcp) {
     await startMcpStdio(bridge, pipeServer, capabilities, {
@@ -165,6 +213,8 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     console.error("[p7m] shutting down");
     assetService?.close();
+    await grpcGateway?.close();
+    await graphqlGateway?.close();
     await editorGateway.close();
     await pipeServer.close();
     process.exit(0);

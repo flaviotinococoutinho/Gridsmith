@@ -6,7 +6,7 @@ Camada de orquestração do ecossistema P7M EaaS (Node.js ≥ 22, TypeScript).
 
 O grafo de módulos abaixo mostra a **regra de dependência**: as fronteiras
 (entrada/saída) dependem para **dentro**, em direção ao núcleo (`canonical` +
-`domain`), que não conhece nenhum adaptador. As fitness functions **R1–R9**
+`domain`), que não conhece nenhum adaptador. As fitness functions **R1–R12**
 (import-graph) impõem exatamente essas setas e proíbem ciclos ou dependências de
 saída do núcleo.
 
@@ -15,13 +15,16 @@ graph TD
   subgraph OUT["Fronteiras (adaptadores de entrada/saida)"]
     MCP["mcp (McpFacade)"]
     IPC["ipc / EditorGateway"]
+    GQL["graphql (GraphQlGateway)"]
+    GRPC["grpc (GrpcGateway)"]
     ASSETS["assets (AssetPipelineService)"]
     SHM["sharedmem (MeshSharedMemoryWriter)"]
   end
   PROTO["protocol (framing uint32 LE + JSON-RPC 2.0)"]
+  TRANS["transport (EventJournal, endpoints)"]
   subgraph CORE["Nucleo (canonical + domain)"]
     DOM["domain (BlueprintStore, EngineBridge, CapabilityRegistry)"]
-    CANON["canonical (Orchestrator, HookBus, ArtifactStore, PipelineRunner)"]
+    CANON["canonical (Orchestrator, EditorSurface, HookBus, ArtifactStore)"]
   end
   RT["runtime (RuntimeAdapter, MonoGameAdapter, profiles, ExperienceGovernor)"]
   LD["leveldesign (AutoTiler puro)"]
@@ -29,6 +32,10 @@ graph TD
   MCP --> DOM
   IPC --> PROTO
   IPC --> DOM
+  GQL --> CANON
+  GQL --> TRANS
+  GRPC --> CANON
+  GRPC --> TRANS
   ASSETS --> CANON
   SHM --> PROTO
   DOM --> CANON
@@ -38,7 +45,7 @@ graph TD
 ```
 
 *Mostra o grafo de dependência dos módulos: todas as setas apontam para dentro
-(fronteiras → núcleo), a invariante que as fitness functions R1–R9 verificam.*
+(fronteiras → núcleo), a invariante que as fitness functions R1–R12 verificam.*
 
 - **Modelo canônico** (`src/canonical/`): `CanonicalOrchestrator` (o único caminho de
   mutação: filters → AST → actions → projeção), `HookBus` (actions/filters com
@@ -118,6 +125,20 @@ graph TD
   `blueprint/query` (inclui `document`, o snapshot completo do projeto),
   `blueprint/load` (replay canônico de um documento salvo), `experience/resolve` e
   broadcast `blueprint/event` para todos os editores (coerência multi-janela).
+  Todos os handlers delegam na `EditorSurface` (abaixo).
+- **Superfície do editor** (`src/canonical/EditorSurface.ts`): a superfície de
+  aplicação **única** que as três bordas do editor (gateway JSON-RPC, GraphQL e
+  gRPC) delegam — dispatch por kind, queries de projeção, load/templates e
+  resolução de experiência. Erros saem como `JsonRpcError` e cada borda os
+  traduz para sua convenção. Regras R10–R12 garantem que nenhuma borda ganhe
+  domínio próprio.
+- **Transports do app** (`src/graphql/GraphQlGateway.ts`, `src/grpc/GrpcGateway.ts`,
+  `src/transport/`): GraphQL é a superfície baseline completa (e o destino do
+  fallback); gRPC serve o caminho quente (`Dispatch`, `Query`, `StreamEvents`,
+  `Health`). O `EventJournal` (seq monotônico, janela 512) dá continuidade de
+  eventos entre stream gRPC e polling GraphQL; `endpoints.ts` resolve UDS/porta
+  derivada nas duas pontas. Contratos em `contracts/graphql/` e
+  `contracts/grpc/` (ADR-016/017/018 em `../docs/adr/`).
 - **Estado declarativo / AST** (`src/domain/BlueprintStore.ts`): CQRS — comandos
   imutáveis validados e aplicados ao blueprint; leituras são projeções congeladas.
 - **Ponte da engine** (`src/domain/EngineBridge.ts`): propaga comandos do AST para a
@@ -183,11 +204,18 @@ npm run build     # tsc → dist/
 npm test          # node:test — framing, peer, integração via socket real
 npm start         # pipe server + MCP em stdio
 npm run dev -- --pipe p7m-engine --no-mcp   # apenas o plano de controle
+npm run dev -- --pipe p7m-engine --no-grpc  # desliga o gateway gRPC (fica só GraphQL)
 ```
+
+Flags dos transports do app: `--no-grpc` e `--no-graphql` desligam os gateways
+individualmente (ambos sobem por padrão).
 
 ## Convenções
 
-- stdout pertence ao transporte MCP; logs operacionais vão para **stderr**.
+- stdout pertence ao transporte MCP; logs operacionais vão para **stderr**,
+  com verbosidade controlada por `P7M_VERBOSITY`
+  (`silent|error|warn|info|debug|trace`, default `info`) — logger puro em
+  `src/util/log.ts` com sink injetável para testes.
 - Nenhuma lógica de domínio na camada MCP — apenas fachadas sobre o barramento
   de comandos.
 - Contratos de fio em [`../contracts/schemas/`](../contracts/schemas/).

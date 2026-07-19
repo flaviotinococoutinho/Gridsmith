@@ -4,8 +4,9 @@
  *
  * Reduz o drift entre docs e repositório validando, sem julgamento humano:
  *  - links Markdown internos e arquivos relativos citados existem;
- *  - documentos e scripts obrigatórios existem (inclui verify-phase1..4 e
- *    docs/COMPATIBILITY.md);
+ *  - documentos e scripts obrigatórios existem (inclui verify-phase1..4,
+ *    verify-transports.sh, docs/COMPATIBILITY.md, ADRs e os contratos
+ *    GraphQL/gRPC do app);
  *  - referências a schemas `contracts/schemas/*.json` existem;
  *  - NÃO há referências transitórias a branches/sessões de geração;
  *  - todo comando `npm run <x>` documentado existe em algum package.json;
@@ -42,13 +43,17 @@ const REQUIRED = [
   "docs/OPPORTUNITIES.md",
   "docs/PRODUCT.md",
   "docs/RESEARCH-EDITOR-LANDSCAPE.md",
+  "docs/adr/README.md",
   "contracts/README.md",
   "contracts/shared-memory-layout.md",
   "contracts/schemas/error-codes.md",
+  "contracts/graphql/editor.schema.graphql",
+  "contracts/grpc/p7m_editor.proto",
   "scripts/verify-phase1.sh",
   "scripts/verify-phase2.sh",
   "scripts/verify-phase3.sh",
   "scripts/verify-phase4.sh",
+  "scripts/verify-transports.sh",
 ];
 
 function packageScripts() {

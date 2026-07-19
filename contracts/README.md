@@ -1,11 +1,15 @@
-# Contratos JSON-RPC 2.0
+# Contratos de fio do ecossistema
 
-Fonte única de verdade dos métodos trafegados entre Middleware (Node.js) e Engine
-(MonoGame) sobre Named Pipes / Unix Domain Sockets.
+Fonte única de verdade dos contratos trafegados entre os processos do P7M, em
+três famílias:
 
-Estes contratos vivem no **plano de controle** (JSON-RPC 2.0 sobre pipes/UDS). O
-**plano de dados** — vértices publicados via memory-mapped file com seqlock — é
-separado e trafega fora do JSON-RPC.
+1. **Plano de controle middleware ↔ engine** — JSON-RPC 2.0 sobre Named Pipes /
+   Unix Domain Sockets ([`schemas/`](schemas/), este documento).
+2. **Plano de dados middleware ↔ engine** — vértices via memory-mapped file com
+   seqlock ([`shared-memory-layout.md`](shared-memory-layout.md)).
+3. **Transports do app (Electron) ↔ middleware** — GraphQL baseline/fallback
+   ([`graphql/`](graphql/)) + gRPC no caminho quente ([`grpc/`](grpc/)); ver a
+   seção [Contratos do app](#contratos-do-app-electron--middleware).
 
 ```mermaid
 graph TD
@@ -109,6 +113,32 @@ graph LR
 ```
 
 *Mostra o mapa contratos->schemas por subsistema: cada subsistema aponta para os arquivos .schema.json que definem seus métodos e artefatos.*
+
+## Contratos do app (Electron ↔ middleware)
+
+A borda app ↔ middleware **não** usa o plano JSON-RPC acima: usa GraphQL
+(superfície baseline completa + destino do fallback) e gRPC (caminho quente
+prioritário) — decisões em [`../docs/adr/`](../docs/adr/README.md)
+(ADR-016/017/018).
+
+| Contrato | Arquivo | Papel | Operações |
+|---|---|---|---|
+| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | queries `health`, `projection`, `experience`, `templates`, `eventsSince` · mutations `dispatch`, `loadDocument`, `newProjectFromTemplate` |
+| gRPC proto | [`grpc/p7m_editor.proto`](grpc/p7m_editor.proto) — `p7m.editor.v1.EditorHotPath` | caminho quente prioritário | `Dispatch`, `Query`, `StreamEvents` (server streaming com catch-up por `after_seq`), `Health` |
+
+Regras de evolução:
+
+- Edite **sempre** os arquivos daqui — nunca as cópias em
+  `middleware/dist/contracts/` (o build as regenera e um teste de paridade
+  exige byte-igualdade).
+- O enum `CommandKind` do SDL espelha `COMMAND_KINDS` do modelo canônico, com
+  `_` no lugar da primeira `/` (GraphQL não aceita `/` em valores de enum).
+- Os payloads de comando viajam como JSON (`payload` no GraphQL,
+  `payload_json` no proto) e são validados na **mesma fonte única**
+  (`BlueprintStore` + [`schemas/`](schemas/)) — os transports não introduzem
+  segunda fonte de validação.
+- Compatibilidade e breaking changes destes eixos:
+  [`../docs/COMPATIBILITY.md`](../docs/COMPATIBILITY.md).
 
 ## Plano de dados
 

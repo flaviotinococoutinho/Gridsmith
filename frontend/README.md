@@ -13,9 +13,14 @@ governança de runtime.
 | `src/core/fabrik.ts` | Solver FABRIK 2D para edição interativa de rigs (comprimentos preservados, alvo inalcançável estica a cadeia, determinístico) |
 | `src/core/stateMachine.ts` | Máquina de estados visuais com semântica Gum: estado = conjunto nomeado de atribuições; numéricos interpolam com easing (interrupt-safe), discretos aplicam no início |
 | `src/core/experienceGate.ts` | Gate da UI sobre a matriz de decisões da governança — painéis desabilitados carregam a RAZÃO do perfil/manifesto |
-| `src/main/EditorClient.ts` | Cliente do gateway do editor (`<pipe>-editor`), reutilizando o peer JSON-RPC do middleware |
+| `src/core/transportRouter.ts` | Política **pura** de transporte: gRPC prioritário, fallback imediato para GraphQL em falha DE TRANSPORTE, sondas com backoff e histerese — falha de domínio nunca troca transporte (ADR-017) |
+| `src/core/levelEditorTools.ts` | Ferramentas puras do editor de níveis (brush/rect/line/picker, drag de células, hit-test de marcadores) |
+| `src/core/logging.ts` | Logger puro com escopo hierárquico e sink injetável (`P7M_VERBOSITY`) |
+| `src/main/transport/` | Clientes dos transports (`GrpcTransport`, `GraphQlTransport`) — os **únicos** módulos com SDKs de transporte (regra F5) |
+| `src/main/EditorClient.ts` | Cliente do middleware: quente por gRPC com fallback GraphQL (TransportRouter), eventos contínuos por `seq` (stream ⇄ polling), erros normalizados |
+| `src/main/appConfig.ts` | Configuração refinada do Electron: instância única, estado de janela persistido, `sandbox` + navegação/popups bloqueados |
 | `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation, API `window.p7m` (connect/dispatch/query/experience/eventos) |
-| `src/renderer/` | Shell da UI: régua de painéis materializada do ExperienceGate + log de eventos do Blueprint |
+| `src/renderer/` | Shell da UI: régua de painéis do ExperienceGate + log de eventos; editor de níveis montado por contexto em `levelEditorView.ts` |
 
 ### Modelo de processos
 
@@ -26,17 +31,18 @@ graph TD
     FEmain["main (Node privilegiado)<br/>supervisor + ciclo de projeto + dialogos"]
     FEpre["preload (window.p7m, contextIsolation)"]
     FErnd["renderer (UI)"]
-    FEcore["core/ (12 nucleos puros)"]
+    FEcore["core/ (nucleos puros)"]
     FEmain --> FEpre
     FEpre --> FErnd
     FErnd --> FEcore
   end
-  GW(["EditorGateway (middleware)<br/>pipe -editor"])
-  FEmain == "controle: JSON-RPC 2.0 (peer)" ==> GW
-  F["F1-F4 (fitness import-graph)"] -. "impoem as fronteiras deste grafo" .-> FE
+  GW(["Gateways do app (middleware)<br/>gRPC + GraphQL"])
+  FEmain == "quente: gRPC (prioritario)" ==> GW
+  FEmain -. "baseline/fallback: GraphQL" .-> GW
+  F["F1-F5 (fitness import-graph)"] -. "impoem as fronteiras deste grafo" .-> FE
 ```
 
-*Mostra o modelo de processos do frontend — main -> preload -> renderer -> core/ — com a única ponte de controle (JSON-RPC ao EditorGateway) e as fitness functions F1-F4 que fixam essas fronteiras de importação.*
+*Mostra o modelo de processos do frontend — main -> preload -> renderer -> core/ — com os transports do app no main (gRPC prioritario, GraphQL fallback) e as fitness functions F1-F5 que fixam essas fronteiras de importação.*
 
 ## Comandos
 
@@ -51,7 +57,15 @@ npm test           # núcleos + integração real com o EditorGateway
 # execução (requer o binário do Electron e um middleware rodando):
 node ../middleware/dist/index.js --pipe p7m-engine --no-mcp &
 npm run app -- --pipe p7m-engine
+
+# e2e dos transports (gRPC quente + fallback GraphQL), da raiz do repo:
+../scripts/verify-transports.sh
 ```
+
+O app fala com o middleware por gRPC no caminho quente e cai para GraphQL em
+falha de transporte (ADR-016/017/018 em [`../docs/adr/`](../docs/adr/README.md)).
+Verbosidade dos dois lados: `P7M_VERBOSITY=silent|error|warn|info|debug|trace`
+(default `info`).
 
 ## Regras da casa
 
@@ -61,8 +75,8 @@ npm run app -- --pipe p7m-engine
 ```mermaid
 graph LR
   R["renderer (UI)"] -->|"dispatch(command)"| P["preload (window.p7m)"]
-  P == "controle: JSON-RPC 2.0" ==> M["main (EditorClient)"]
-  M ==> GW(["EditorGateway (caminho canonico)"])
+  P == "IPC do Electron (contextBridge)" ==> M["main (EditorClient)"]
+  M == "quente: gRPC / fallback: GraphQL" ==> GW(["EditorSurface (caminho canonico)"])
   GW -->|"store.apply + projecao"| EV(["evento / projecao"])
   EV -.-> M
   M -.-> P

@@ -17,7 +17,7 @@ graph TD
     FEmain["main (Node privilegiado)"]
     FEpre["preload (window.p7m)"]
     FErnd["renderer (UI)"]
-    FEcore["core/ (12 nucleos puros)"]
+    FEcore["core/ (nucleos puros)"]
     FEmain --> FEpre --> FErnd --> FEcore
   end
   subgraph MW["Middleware (Node/TS)"]
@@ -40,13 +40,14 @@ graph TD
     ENgfx --> ENcore
   end
   MMF[("MMF: plano de dados<br/>header 64B, seqlock, FNV-1a")]
-  FEmain == "controle: JSON-RPC 2.0" ==> MWproto
+  FEmain == "quente: gRPC (prioritario)" ==> MWproto
+  FEmain -. "baseline/fallback: GraphQL" .-> MWproto
   MWipc == "controle: pipes / UDS" ==> ENipc
   MWrt -. "dados: escreve frame" .-> MMF
   MMF -. "le snapshot" .-> ENrt
 ```
 
-*Mostra as três camadas locais e os dois planos: controle (JSON-RPC 2.0 sobre pipes/UDS, aresta grossa) e dados (MMF com seqlock, aresta pontilhada). Repare na regra de dependência de assembly da engine: Graphics referencia só Core; Runtime referencia Core + Ipc, nunca Graphics.*
+*Mostra as três camadas locais e os dois planos: app ↔ middleware via gRPC prioritário (caminho quente) com GraphQL como baseline/fallback (ADR-016/017); middleware ↔ engine via JSON-RPC 2.0 sobre pipes/UDS; dados em massa via MMF com seqlock. Regra de assembly da engine: Graphics referencia só Core; Runtime referencia Core + Ipc, nunca Graphics.*
 
 ## Princípios arquiteturais
 
@@ -196,7 +197,10 @@ npm run typecheck  # tsc --noEmit
 ```
 
 O Electron é o **supervisor do ecossistema**: por padrão o processo `main` sobe o
-middleware (via `ELECTRON_RUN_AS_NODE`) e a engine (`dotnet <dll>`).
+middleware (via `ELECTRON_RUN_AS_NODE`) e a engine (`dotnet <dll>`). O app fala com o
+middleware por **gRPC no caminho quente** (fallback automático para **GraphQL** —
+contratos em `contracts/grpc/` e `contracts/graphql/`; política em
+[`docs/adr/`](docs/adr/)). Verbosidade: `P7M_VERBOSITY=silent|error|warn|info|debug|trace`.
 
 ```bash
 # supervisão local (padrão): o main spawna middleware e engine e reidrata a sessão
@@ -213,6 +217,7 @@ npm run app -- --external-services --pipe p7m-engine
 ./scripts/verify-phase2.sh   # plano de dados: MMF + seqlock + checksum entre runtimes
 ./scripts/verify-phase3.sh   # câmera (física + determinismo) e equação de luz do shader
 ./scripts/verify-phase4.sh   # fundação do editor: gateway + dispatch canônico + projeção + broadcast
+./scripts/verify-transports.sh  # transports do app: gRPC quente + fallback GraphQL (2 fases, engine real)
 ```
 
 `verify-phase1` sobe o pipe server do middleware, conecta o host headless da engine e
@@ -236,7 +241,8 @@ habilitação/desabilitação com razão).
 | [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) | Requisitos funcionais, não funcionais e técnicos com status e verificação |
 | [`docs/ALPHA-0.1.md`](docs/ALPHA-0.1.md) | Milestone Alpha 0.1, jornada de aceite e backlog P0 (status por evidência) |
 | [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Matriz de versionamento e compatibilidade (protocolo, documentos, artefatos, perfis, shared memory) |
-| [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) | Governança arquitetural (18 regras executáveis), Definition of Done, quality gates e fontes de verdade |
+| [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) | Governança arquitetural (22 regras executáveis), Definition of Done, quality gates e fontes de verdade |
+| [`docs/adr/`](docs/adr/) | Architecture Decision Records (ADR-016..018: transports do app — GraphQL baseline, gRPC quente com fallback, endpoints/verbosidade) |
 | [`docs/ARCHITECTURE-SPEC.md`](docs/ARCHITECTURE-SPEC.md) | **Especificação técnica normativa (constituição de engenharia):** princípios invioláveis, regras de dependência, paradigmas, padrões, contratos, RFCs/ISO, versionamento, erros, testes e plano de evolução — construída a partir do código com evidência classificada |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Camadas, protocolo de framing e ciclo de vida da conexão |
 | [`docs/CANONICAL-MODEL.md`](docs/CANONICAL-MODEL.md) | Modelo canônico (comandos/eventos/hooks/pipelines/artefatos), adapters e perfis de runtime |

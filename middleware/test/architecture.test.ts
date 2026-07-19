@@ -80,6 +80,9 @@ test("R2: o modelo canônico não conhece transporte, MCP, adapters concretos ne
       target !== undefined &&
       (target.startsWith("ipc/") ||
         target.startsWith("mcp/") ||
+        target.startsWith("graphql/") ||
+        target.startsWith("grpc/") ||
+        target.startsWith("transport/") ||
         target.startsWith("sharedmem/") ||
         target.startsWith("assets/") ||
         target.startsWith("tools/") ||
@@ -159,4 +162,37 @@ test("R9: constantes de framing casam com o contrato publicado", async () => {
   assert.equal(framing.MAX_FRAME_BYTES, 16 * 1024 * 1024);
   const { MAX_LEVEL_CELLS } = await import("../src/domain/BlueprintStore.js");
   assert.equal(MAX_LEVEL_CELLS, 256 * 256, "must match engine TilemapStore.MaxCells");
+});
+
+test("R10: a lib graphql é exclusiva da borda graphql/ (fachada fina, zero domínio)", () => {
+  const offenders = violations(
+    (file) => !file.startsWith("graphql/"),
+    (_target, raw) => raw === "graphql" || raw.startsWith("graphql/"),
+  );
+  assert.deepEqual(offenders, []);
+});
+
+test("R11: as libs gRPC são exclusivas da borda grpc/ (fachada fina, zero domínio)", () => {
+  const offenders = violations(
+    (file) => !file.startsWith("grpc/"),
+    (_target, raw) => raw.startsWith("@grpc/"),
+  );
+  assert.deepEqual(offenders, []);
+});
+
+test("R12: as bordas de transporte do app (graphql/, grpc/) não importam domínio interno além da superfície", () => {
+  // fachadas finas: só EditorSurface, EventJournal/endpoints, protocolo de
+  // erros e o logger — nunca BlueprintStore/orquestrador/adapters diretos
+  const allowedPrefixes = [
+    "canonical/EditorSurface.ts",
+    "transport/",
+    "protocol/jsonrpc.ts",
+    "util/log.ts",
+  ];
+  const offenders = violations(
+    (file) => file.startsWith("graphql/") || file.startsWith("grpc/"),
+    (target) =>
+      target !== undefined && !allowedPrefixes.some((p) => target === p || target.startsWith(p)),
+  );
+  assert.deepEqual(offenders, []);
 });

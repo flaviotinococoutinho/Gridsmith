@@ -9,17 +9,19 @@ graph TD
     FEmain["main (Node privilegiado)"]
     FEpre["preload (window.p7m)"]
     FErnd["renderer (UI)"]
-    FEcore["core/ (12 nucleos puros)"]
+    FEcore["core/ (nucleos puros)"]
     FEmain --> FEpre --> FErnd --> FEcore
   end
   subgraph MW["Middleware (Node/TS)"]
     direction TB
+    MWapp["graphql / grpc<br/>(gateways do app)"]
     MWproto["protocol"]
     MWipc["ipc"]
     MWdom["domain"]
     MWcanon["canonical"]
     MWrt["runtime"]
     MWproto --> MWipc --> MWdom --> MWcanon --> MWrt
+    MWapp --> MWcanon
   end
   subgraph EN["Engine (.NET8)"]
     direction TB
@@ -32,13 +34,14 @@ graph TD
     ENgfx --> ENcore
   end
   MMF[("MMF: plano de dados<br/>header 64B, seqlock, FNV-1a")]
-  FEmain == "controle: JSON-RPC 2.0" ==> MWproto
+  FEmain == "quente: gRPC (prioritario)" ==> MWapp
+  FEmain -. "baseline/fallback: GraphQL" .-> MWapp
   MWipc == "controle: pipes / UDS" ==> ENipc
   MWrt -. "dados: escreve frame" .-> MMF
   MMF -. "le snapshot" .-> ENcore
 ```
 
-*Mostra as tres camadas locais e os dois planos: controle (JSON-RPC sobre pipes/UDS) e dados (MMF com seqlock).*
+*Mostra as tres camadas locais e as tres vias: transports do app (gRPC prioritario com fallback GraphQL, nos gateways do middleware), plano de controle middleware-engine (JSON-RPC sobre pipes/UDS) e plano de dados (MMF com seqlock).*
 
 Duas vias de dados coexistem, cada uma otimizada para seu regime:
 
@@ -177,6 +180,69 @@ sequenceDiagram
   `contracts/schemas/error-codes.md`).
 - Os esquemas dos métodos vivem em [`contracts/schemas/`](../contracts/schemas/) e são a
   **fonte única de verdade**; o middleware valida params contra eles na borda.
+
+## Transports do app (GraphQL + gRPC)
+
+O plano de controle JSON-RPC acima é a borda **middleware ↔ engine**. A borda
+**app (Electron) ↔ middleware** usa dois transports próprios, decididos em
+[ADR-016/017/018](adr/README.md):
+
+- **GraphQL** ([`../contracts/graphql/editor.schema.graphql`](../contracts/graphql/editor.schema.graphql)):
+  superfície **baseline completa** — toda operação do editor existe aqui — e
+  também o destino do **fallback**.
+- **gRPC** ([`../contracts/grpc/p7m_editor.proto`](../contracts/grpc/p7m_editor.proto),
+  package `p7m.editor.v1`): **caminho quente prioritário** — `Dispatch`,
+  `Query`, `StreamEvents` (server streaming) e `Health`.
+
+As três bordas do middleware (gateway JSON-RPC do editor, GraphQL e gRPC)
+delegam na mesma superfície `EditorSurface`
+(`middleware/src/canonical/EditorSurface.ts`): o caminho canônico de mutação
+continua **único** — as regras arquiteturais R10–R12 e F5
+([`GOVERNANCE.md`](GOVERNANCE.md)) impedem que as bordas ganhem domínio ou que
+SDKs de transporte vazem para fora delas.
+
+A política do cliente (`frontend/src/core/transportRouter.ts`) é pura e testada:
+
+```mermaid
+stateDiagram-v2
+  [*] --> grpc
+  grpc --> graphql : falha DE TRANSPORTE (UNAVAILABLE, DEADLINE, socket)
+  graphql --> graphql : sonda ruim (backoff 2s 4s 8s 16s 30s)
+  graphql --> grpc : 2 sondas Health boas consecutivas (histerese)
+  note right of graphql
+    eventos por polling incremental
+    eventsSince(afterSeq) no EventJournal
+  end note
+  note right of grpc
+    eventos por StreamEvents
+    com catch-up por after_seq
+  end note
+```
+
+*Mostra a política do TransportRouter: gRPC prioritário; falha de transporte cai imediatamente para GraphQL; sondas Health com backoff repromovem só após histerese — falha de DOMÍNIO nunca muda o transporte.*
+
+**Endpoints** (`middleware/src/transport/endpoints.ts` — módulo único consumido
+pelos dois lados):
+
+| Plataforma | GraphQL | gRPC |
+|---|---|---|
+| POSIX | UDS `$XDG_RUNTIME_DIR/<pipe>-graphql.sock` | UDS `$XDG_RUNTIME_DIR/<pipe>-grpc.sock` |
+| Windows | TCP `127.0.0.1:<porta derivada>` | TCP `127.0.0.1:<porta derivada>` (grpc-js não suporta named pipes) |
+
+A porta derivada é FNV-1a determinística de `<pipe>-<transport>` na faixa
+dinâmica 49152–65535 — sem arquivo de descoberta.
+
+**Eventos sem perda no fallback:** o middleware mantém um `EventJournal`
+(janela 512, `seq` monotônico). O stream gRPC faz catch-up por `after_seq` e o
+polling GraphQL continua de `eventsSince(afterSeq)` — o cliente dedupa por
+`seq`, então a troca de transporte não perde nem duplica eventos. Consumidor
+atrasado além da janela detecta o gap (`canResumeFrom`) e ressincroniza por
+query completa.
+
+**Verbosidade:** `P7M_VERBOSITY=silent|error|warn|info|debug|trace` controla os
+loggers estruturados dos dois lados (stdout do middleware pertence ao MCP; logs
+vão para stderr). E2E das duas fases (gRPC quente + fallback GraphQL):
+`scripts/verify-transports.sh`.
 
 ## Papel do MCP
 

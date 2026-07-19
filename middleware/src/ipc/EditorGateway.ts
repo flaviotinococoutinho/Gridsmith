@@ -16,16 +16,9 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import net from "node:net";
 import { randomUUID } from "node:crypto";
-import {
-  BlueprintDocumentError,
-  exportBlueprint,
-  replayDocument,
-  type BlueprintDocument,
-} from "../canonical/BlueprintSerializer.js";
-import { getProjectTemplate, PROJECT_TEMPLATES } from "../canonical/ProjectTemplates.js";
+import { EditorSurface } from "../canonical/EditorSurface.js";
 import { CanonicalOrchestrator } from "../canonical/CanonicalOrchestrator.js";
-import { COMMAND_KINDS, reshapeCommand } from "../canonical/commandShape.js";
-import type { BlueprintCommand, BlueprintEvent, BlueprintStore } from "../domain/BlueprintStore.js";
+import type { BlueprintEvent, BlueprintStore } from "../domain/BlueprintStore.js";
 import type { ExperienceGovernor } from "../runtime/ExperienceGovernor.js";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
 import { JsonRpcPeer } from "./JsonRpcPeer.js";
@@ -48,30 +41,24 @@ export interface EditorGatewayOptions {
   requestTimeoutMs?: number;
 }
 
-const QUERYABLE_PROJECTIONS = [
-  "skeletons",
-  "meshes",
-  "lights",
-  "entityDefs",
-  "entities",
-  "camera",
-  "levels",
-  "world",
-  "document",
-] as const;
-
 /**
  * Eventos: "session" (EditorSession), "sessionClosed" (EditorSession, Error).
+ *
+ * Desde a introdução dos transports do app (GraphQL/gRPC — ADR-016/017),
+ * este gateway delega toda a superfície na EditorSurface compartilhada:
+ * três bordas, um único fluxo canônico.
  */
 export class EditorGateway extends EventEmitter {
   private readonly server: net.Server;
   private readonly sessions = new Map<string, EditorSession>();
   private readonly options: EditorGatewayOptions;
+  private readonly surface: EditorSurface;
   readonly pipePath: string;
 
   constructor(options: EditorGatewayOptions) {
     super();
     this.options = options;
+    this.surface = new EditorSurface(options);
     this.pipePath = resolvePipePath(`${options.pipeName}-editor`);
     this.server = net.createServer((socket) => this.onConnection(socket));
 
@@ -149,126 +136,36 @@ export class EditorGateway extends EventEmitter {
     peer.registerMethod("blueprint/dispatch", async (params) => {
       this.requireHandshake(session);
       const p = params as { kind?: unknown; payload?: unknown };
-      if (
-        typeof p?.kind !== "string" ||
-        !(COMMAND_KINDS as readonly string[]).includes(p.kind) ||
-        typeof p?.payload !== "object" || p.payload === null
-      ) {
-        throw new JsonRpcError(
-          RpcErrorCode.InvalidParams,
-          `"kind" must be one of [${COMMAND_KINDS.join(", ")}] and "payload" an object`,
-        );
-      }
-      const command = reshapeCommand(
-        p.kind as BlueprintCommand["kind"],
-        p.payload as Record<string, unknown>,
-      );
-      return this.options.orchestrator.dispatch(command);
+      return this.surface.dispatchByKind(p?.kind as string, p?.payload);
     });
 
     peer.registerMethod("blueprint/query", (params) => {
       this.requireHandshake(session);
       const p = params as { projection?: unknown };
-      const store = this.options.store;
-      switch (p?.projection) {
-        case "skeletons":
-          return { skeletons: store.listSkeletons() };
-        case "meshes":
-          return { meshes: store.listMeshes() };
-        case "lights":
-          return { lights: store.listLights() };
-        case "entityDefs":
-          return { entityDefs: store.listEntityDefs() };
-        case "entities":
-          return { entities: store.listEntities() };
-        case "camera":
-          return { camera: store.cameraSettings };
-        case "levels":
-          return { levels: store.listLevels() };
-        case "world": {
-          const placements = store.listPlacements();
-          return {
-            placements,
-            neighbors: Object.fromEntries(
-              placements.map((p) => [p.levelId, store.neighborsOf(p.levelId)]),
-            ),
-          };
-        }
-        case "document":
-          // snapshot completo do projeto (save-as-file no editor)
-          return { document: exportBlueprint(store) };
-        default:
-          throw new JsonRpcError(
-            RpcErrorCode.InvalidParams,
-            `"projection" must be one of [${QUERYABLE_PROJECTIONS.join(", ")}]`,
-          );
-      }
+      return this.surface.query(p?.projection as string);
     });
 
     peer.registerMethod("blueprint/load", async (params) => {
       this.requireHandshake(session);
       const p = params as { document?: unknown };
-      if (typeof p?.document !== "object" || p.document === null) {
-        throw new JsonRpcError(RpcErrorCode.InvalidParams, `"document" must be a blueprint document object`);
-      }
-      try {
-        return await replayDocument(
-          p.document as BlueprintDocument,
-          this.options.store,
-          this.options.orchestrator,
-        );
-      } catch (err) {
-        if (err instanceof BlueprintDocumentError) {
-          throw new JsonRpcError(RpcErrorCode.InvalidParams, err.message);
-        }
-        throw err;
-      }
+      return this.surface.loadDocument(p?.document);
     });
 
     peer.registerMethod("project/templates", () => {
       this.requireHandshake(session);
-      return {
-        templates: PROJECT_TEMPLATES.map((template) => ({
-          id: template.id,
-          label: template.label,
-          description: template.description,
-        })),
-      };
+      return { templates: this.surface.listTemplates() };
     });
 
     peer.registerMethod("project/new", async (params) => {
       this.requireHandshake(session);
       const p = (params ?? {}) as { templateId?: unknown };
-      if (typeof p?.templateId !== "string" || p.templateId.length === 0) {
-        throw new JsonRpcError(RpcErrorCode.InvalidParams, `"templateId" must be a non-empty string`);
-      }
-      const template = getProjectTemplate(p.templateId);
-      if (!template) {
-        throw new JsonRpcError(RpcErrorCode.InvalidParams, `Unknown project template "${p.templateId}"`);
-      }
-      try {
-        const summary = await replayDocument(
-          template.create(),
-          this.options.store,
-          this.options.orchestrator,
-        );
-        return { templateId: template.id, name: template.label, ...summary };
-      } catch (err) {
-        if (err instanceof BlueprintDocumentError) {
-          throw new JsonRpcError(RpcErrorCode.InvalidParams, err.message);
-        }
-        throw err;
-      }
+      return this.surface.newProjectFromTemplate(p?.templateId);
     });
 
     peer.registerMethod("experience/resolve", (params) => {
       this.requireHandshake(session);
       const p = (params ?? {}) as { family?: string; version?: string };
-      const identity = this.options.adapter.identify();
-      return this.options.governor.resolve(
-        p.family ?? identity?.family ?? this.options.adapter.family,
-        p.version ?? identity?.version ?? "999.0.0",
-      );
+      return this.surface.resolveExperience(p.family, p.version);
     });
 
     peer.on("close", (reason: Error) => {

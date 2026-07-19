@@ -89,3 +89,18 @@ test("F4: o frontend nunca reimplementa protocolo — JSON-RPC/framing vêm do m
     );
   }
 });
+
+test("F5: libs de transporte do app (gRPC/HTTP) são exclusivas de main/transport/", () => {
+  // a política de roteamento vive em core/ (pura); os SDKs de transporte só
+  // podem aparecer nas implementações de main/transport/ — renderer e core
+  // nunca falam com a rede diretamente
+  for (const module_ of modules) {
+    if (module_.file.startsWith("main/transport/")) continue;
+    for (const [specifier] of module_.imports) {
+      assert.ok(
+        !specifier.startsWith("@grpc/") && specifier !== "node:http" && specifier !== "http",
+        `${module_.file} must not import transport SDK "${specifier}" (only main/transport/)`,
+      );
+    }
+  }
+});

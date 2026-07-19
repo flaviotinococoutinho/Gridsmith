@@ -1,0 +1,14 @@
+# ADRs — Architecture Decision Records
+
+Decisões arquiteturais com contexto, alternativas e consequências. As
+decisões estruturais **anteriores** a este diretório (ADR-001..015 — modelo
+canônico, JSON-RPC no plano de controle, framing, shared memory, DOD/Zero-GC,
+HookBus, perfis, adapters, replay, isolamento Electron, JSON Schema, fitness
+functions) estão registradas retroativamente em
+[`../ARCHITECTURE-SPEC.md`](../ARCHITECTURE-SPEC.md) §32, com evidência.
+
+| ADR | Decisão | Status |
+|---|---|---|
+| [ADR-016](ADR-016-graphql-baseline-do-app.md) | GraphQL como superfície COMPLETA (baseline) do app | Accepted |
+| [ADR-017](ADR-017-grpc-caminho-quente-com-fallback.md) | gRPC no caminho quente, prioritário, com fallback para GraphQL | Accepted |
+| [ADR-018](ADR-018-endpoints-e-verbosidade-dos-transports.md) | Endpoints locais dos transports e controle de verbosidade | Accepted |
