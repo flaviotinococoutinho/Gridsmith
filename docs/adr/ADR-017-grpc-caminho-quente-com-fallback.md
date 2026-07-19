@@ -7,10 +7,9 @@
 
 ## Contexto
 
-As chamadas mais quentes do editor (dispatch durante drag, queries de
-projeção, eventos) se beneficiam de canal persistente HTTP/2, framing
-binário e **server streaming**. A direção de produto: priorizar gRPC; se der
-problema, usar GraphQL.
+As chamadas mais frequentes do editor (dispatch durante drag, queries de
+projeção, eventos) são candidatas a canal persistente HTTP/2 e **server
+streaming**. O benefício não é presumido: a ADR-019 o condiciona a medição.
 
 ## Decisão
 
@@ -25,12 +24,12 @@ stateDiagram-v2
   graphql --> graphql : sonda ruim (backoff 2s 4s 8s 16s 30s)
   graphql --> grpc : 2 sondas Health boas consecutivas (histerese)
   note right of graphql
-    eventos por polling incremental
-    eventsSince(afterSeq) no EventJournal
+    eventBatch(instanceId, afterSeq)
+    resync explicito em restart/gap
   end note
   note right of grpc
-    eventos por StreamEvents
-    com catch-up por after_seq
+    StreamEventsV2 envia status
+    antes do catch-up
   end note
 ```
 
@@ -42,9 +41,18 @@ stateDiagram-v2
 - **Modelagem do proto:** envelope TIPADO + `payload_json`. Os 14 comandos já
   têm validação única no `BlueprintStore` e schemas em `contracts/schemas/`;
   re-tipá-los em protobuf criaria uma segunda fonte de verdade de validação.
-  O ganho do caminho quente vem do canal/stream, não de re-tipagem.
-- **Eventos sem perda:** `EventJournal` com seq monotônico; stream faz
-  catch-up por `after_seq`; o polling do fallback continua do mesmo seq.
+  A hipótese medida é canal/stream, não re-tipagem.
+- **Eventos sem perda silenciosa:** o cursor é o par
+  `(middlewareInstanceId, lastEventSeq)`. `StreamEventsV2` e `eventBatch`
+  expõem `firstAvailableSeq`, `lastEventSeq` e `resyncRequired`; restart,
+  cursor futuro e gap fora da janela nunca entregam cauda parcial. O
+  `EditorClient` substitui seu estado por um snapshot de todas as projeções
+  antes de reabrir stream/polling.
+- **Retry idempotente:** `Dispatch` carrega `requestId`; o mesmo identificador
+  é reutilizado se uma resposta gRPC se perde e a chamada precisa seguir no
+  GraphQL. A `EditorSurface` deduplica o request sem reaplicar o comando.
+- **Falha de autenticação não é indisponibilidade:** `UNAUTHENTICATED`/HTTP
+  401 interrompe a operação e nunca aciona fallback.
 - **Endpoints:** UDS `unix:<runtime>/<pipe>-grpc.sock` (POSIX); TCP
   `127.0.0.1:<porta derivada>` no Windows (grpc-js não suporta named pipes).
 
@@ -68,6 +76,6 @@ stateDiagram-v2
 
 ## Critérios de revisão
 
-Benchmark real de latência dispatch/stream quando o preview embutido (P0.5)
-gerar tráfego contínuo; janela do `EventJournal` (512) se sessões longas em
-fallback perderem eventos (gap detectável por `canResumeFrom`).
+A decisão de default/freeze e o benchmark reproduzível estão registrados na
+ADR-019. A janela do `EventJournal` continua deliberadamente limitada; excedê-la
+é condição normal de ressincronização, coberta por teste explícito.

@@ -13,6 +13,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIPE_NAME="p7m-transports-$$"
 MIDDLEWARE_LOG="$(mktemp)"
 ENGINE_LOG="$(mktemp)"
+export P7M_EDITOR_AUTH_TOKEN="${P7M_EDITOR_AUTH_TOKEN:-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')}"
 
 cleanup() {
   for pid in "${ENGINE_PID:-}" "${MIDDLEWARE_PID:-}"; do
@@ -27,10 +28,14 @@ trap cleanup EXIT
 
 start_middleware() {
   local extra_flags=("$@")
+  local previous_ready
+  previous_ready="$(grep -c "graphql gateway listening" "$MIDDLEWARE_LOG" 2>/dev/null || true)"
   node "$ROOT/middleware/dist/index.js" --pipe "$PIPE_NAME" --no-mcp "${extra_flags[@]}" 2>>"$MIDDLEWARE_LOG" &
   MIDDLEWARE_PID=$!
   for _ in $(seq 1 50); do
-    grep -q "graphql gateway listening" "$MIDDLEWARE_LOG" 2>/dev/null && return 0
+    if [ "$(grep -c "graphql gateway listening" "$MIDDLEWARE_LOG" 2>/dev/null || true)" -gt "$previous_ready" ]; then
+      return 0
+    fi
     sleep 0.1
   done
   echo "FAIL: middleware did not start"; cat "$MIDDLEWARE_LOG"; exit 1

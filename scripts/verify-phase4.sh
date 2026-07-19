@@ -9,6 +9,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIPE_NAME="p7m-phase4-$$"
 MIDDLEWARE_LOG="$(mktemp)"
 ENGINE_LOG="$(mktemp)"
+export P7M_EDITOR_AUTH_TOKEN="${P7M_EDITOR_AUTH_TOKEN:-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')}"
 
 cleanup() {
   for pid in "${ENGINE_PID:-}" "${MIDDLEWARE_PID:-}"; do

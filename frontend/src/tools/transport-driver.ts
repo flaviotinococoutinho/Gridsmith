@@ -42,9 +42,10 @@ async function main(): Promise<void> {
   try {
     const { sessionId } = await client.connect();
     step("connect", `session ${sessionId}`);
+    const expectedDiagnostic = expected === "grpc" ? "gRPC" : "GraphQL fallback";
     assert(
-      client.activeTransport === expected,
-      `active transport is "${client.activeTransport}" (expected "${expected}")`,
+      client.technicalDiagnostics.activeTransport === expectedDiagnostic,
+      `active transport is "${client.technicalDiagnostics.activeTransport}" (expected "${expectedDiagnostic}")`,
     );
 
     const received: string[] = [];

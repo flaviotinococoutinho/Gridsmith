@@ -10,6 +10,7 @@
  *  - referências a schemas `contracts/schemas/*.json` existem;
  *  - NÃO há referências transitórias a branches/sessões de geração;
  *  - todo comando `npm run <x>` documentado existe em algum package.json;
+ *  - o workflow de CI executa os gates de transports e de documentação;
  *  - NÃO há contagens de teste fixadas manualmente (devem vir do CI).
  *
  * Uso: `npm run docs:verify` (ou `node scripts/verify-docs.mjs`) na raiz.
@@ -49,6 +50,7 @@ const REQUIRED = [
   "contracts/schemas/error-codes.md",
   "contracts/graphql/editor.schema.graphql",
   "contracts/grpc/p7m_editor.proto",
+  ".github/workflows/ci.yml",
   "scripts/verify-phase1.sh",
   "scripts/verify-phase2.sh",
   "scripts/verify-phase3.sh",
@@ -82,6 +84,35 @@ const scripts = packageScripts();
 for (const rel of REQUIRED) {
   if (!fs.existsSync(path.join(root, rel))) {
     errors.push(`arquivo obrigatório ausente: ${rel}`);
+  }
+}
+
+// O arquivo existir não basta: a documentação declara estes comandos como
+// quality gates, portanto o workflow precisa realmente invocá-los. Comentários
+// são removidos para que uma menção inerte não satisfaça a verificação.
+const ciPath = path.join(root, ".github/workflows/ci.yml");
+if (fs.existsSync(ciPath)) {
+  const executableCi = fs
+    .readFileSync(ciPath, "utf8")
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+  const requiredCiInvocations = [
+    {
+      label: "./scripts/verify-transports.sh",
+      pattern: /^\s*-\s*run:\s+\.\/scripts\/verify-transports\.sh\s*$/m,
+    },
+    {
+      label: "npm run docs:verify",
+      pattern: /^\s*-\s*run:\s+npm run docs:verify\s*$/m,
+    },
+  ];
+  for (const invocation of requiredCiInvocations) {
+    if (!invocation.pattern.test(executableCi)) {
+      errors.push(
+        `.github/workflows/ci.yml: quality gate não invocado -> ${invocation.label}`,
+      );
+    }
   }
 }
 

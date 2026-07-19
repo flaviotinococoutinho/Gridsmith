@@ -13,8 +13,10 @@ import { MonoGameAdapter } from "../src/runtime/MonoGameAdapter.js";
 import { RuntimeProfileRegistry } from "../src/runtime/RuntimeProfile.js";
 import { MONOGAME_PROFILES } from "../src/runtime/profiles/monogame.js";
 import { JsonRpcError, PROTOCOL_VERSION, RpcErrorCode } from "../src/protocol/jsonrpc.js";
+import { generateTransportAuthToken } from "../src/transport/auth.js";
 
 let pipeCounter = 0;
+const AUTH_TOKEN = generateTransportAuthToken();
 
 const LIVE_MANIFEST: EngineManifest = {
   engine: {
@@ -54,6 +56,7 @@ async function makeHarness(): Promise<Harness> {
     store,
     governor: new ExperienceGovernor(profiles, capabilities),
     adapter,
+    authToken: AUTH_TOKEN,
     requestTimeoutMs: 2000,
   });
   await engineServer.listen();
@@ -77,7 +80,11 @@ async function makeHarness(): Promise<Harness> {
     engineCalls,
     async connectEditor(name = "electron-editor") {
       const peer = await connect(gateway.pipePath, name);
-      await peer.request("editor/handshake", { clientName: name, protocolVersion: PROTOCOL_VERSION });
+      await peer.request("editor/handshake", {
+        clientName: name,
+        protocolVersion: PROTOCOL_VERSION,
+        authToken: AUTH_TOKEN,
+      });
       return peer;
     },
     async connectEngine() {
@@ -212,6 +219,34 @@ test("comandos inválidos e chamadas sem handshake são rejeitados", async () =>
       (err: unknown) => err instanceof JsonRpcError && err.code === RpcErrorCode.InvalidParams,
     );
     editor.close();
+  } finally {
+    await h.close();
+  }
+});
+
+test("gateway legado exige o mesmo token efêmero antes de liberar a superfície canônica", async () => {
+  const h = await makeHarness();
+  try {
+    const socket = net.connect(h.gateway.pipePath);
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
+    });
+    const peer = new JsonRpcPeer(socket, { label: "unauthenticated", requestTimeoutMs: 2000 });
+    await assert.rejects(
+      peer.request("editor/handshake", {
+        clientName: "unauthenticated",
+        protocolVersion: PROTOCOL_VERSION,
+        authToken: generateTransportAuthToken(),
+      }),
+      (err: unknown) =>
+        err instanceof JsonRpcError && err.code === RpcErrorCode.AuthenticationFailed,
+    );
+    await assert.rejects(
+      peer.request("blueprint/query", { projection: "document" }),
+      (err: unknown) => err instanceof JsonRpcError && err.code === RpcErrorCode.EngineNotReady,
+    );
+    peer.close();
   } finally {
     await h.close();
   }

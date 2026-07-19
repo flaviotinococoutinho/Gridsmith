@@ -13,7 +13,6 @@
  */
 
 import { EventEmitter } from "node:events";
-import fs from "node:fs";
 import net from "node:net";
 import { randomUUID } from "node:crypto";
 import { EditorSurface } from "../canonical/EditorSurface.js";
@@ -24,6 +23,12 @@ import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
 import { JsonRpcPeer } from "./JsonRpcPeer.js";
 import { resolvePipePath } from "./PipeEndpoint.js";
 import { JsonRpcError, PROTOCOL_VERSION, RpcErrorCode } from "../protocol/jsonrpc.js";
+import { timingSafeTokenEqual, validateTransportAuthToken } from "../transport/auth.js";
+import {
+  prepareUnixSocketPath,
+  removeOwnedUnixSocketPath,
+  restrictUnixSocketPathPermissions,
+} from "./UnixSocketLifecycle.js";
 
 export interface EditorSession {
   sessionId: string;
@@ -38,6 +43,8 @@ export interface EditorGatewayOptions {
   store: BlueprintStore;
   governor: ExperienceGovernor;
   adapter: RuntimeAdapter;
+  /** Segredo efêmero compartilhado apenas entre o Electron e este processo. */
+  authToken: string;
   requestTimeoutMs?: number;
 }
 
@@ -57,7 +64,7 @@ export class EditorGateway extends EventEmitter {
 
   constructor(options: EditorGatewayOptions) {
     super();
-    this.options = options;
+    this.options = { ...options, authToken: validateTransportAuthToken(options.authToken) };
     this.surface = new EditorSurface(options);
     this.pipePath = resolvePipePath(`${options.pipeName}-editor`);
     this.server = net.createServer((socket) => this.onConnection(socket));
@@ -72,9 +79,7 @@ export class EditorGateway extends EventEmitter {
   }
 
   async listen(): Promise<void> {
-    if (process.platform !== "win32" && fs.existsSync(this.pipePath)) {
-      fs.unlinkSync(this.pipePath);
-    }
+    if (process.platform !== "win32") await prepareUnixSocketPath(this.pipePath);
     await new Promise<void>((resolve, reject) => {
       this.server.once("error", reject);
       this.server.listen(this.pipePath, () => {
@@ -82,15 +87,14 @@ export class EditorGateway extends EventEmitter {
         resolve();
       });
     });
+    if (process.platform !== "win32") restrictUnixSocketPathPermissions(this.pipePath);
   }
 
   async close(): Promise<void> {
     for (const session of this.sessions.values()) session.peer.close();
     this.sessions.clear();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
-    if (process.platform !== "win32" && fs.existsSync(this.pipePath)) {
-      fs.unlinkSync(this.pipePath);
-    }
+    if (process.platform !== "win32") removeOwnedUnixSocketPath(this.pipePath);
   }
 
   get activeSessions(): readonly EditorSession[] {
@@ -108,12 +112,18 @@ export class EditorGateway extends EventEmitter {
     let session: EditorSession | undefined;
 
     peer.registerMethod("editor/handshake", (params) => {
-      const p = params as { clientName?: unknown; protocolVersion?: unknown };
+      const p = params as { clientName?: unknown; protocolVersion?: unknown; authToken?: unknown };
       if (typeof p?.clientName !== "string" || p.clientName.length === 0 ||
-          typeof p?.protocolVersion !== "string") {
+          typeof p?.protocolVersion !== "string" || typeof p?.authToken !== "string") {
         throw new JsonRpcError(
           RpcErrorCode.InvalidParams,
-          `editor/handshake requires "clientName" and "protocolVersion"`,
+          `editor/handshake requires "clientName", "protocolVersion" and "authToken"`,
+        );
+      }
+      if (!timingSafeTokenEqual(this.options.authToken, p.authToken)) {
+        throw new JsonRpcError(
+          RpcErrorCode.AuthenticationFailed,
+          "editor transport authentication failed",
         );
       }
       const [major] = p.protocolVersion.split(".");

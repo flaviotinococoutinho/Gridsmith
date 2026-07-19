@@ -34,10 +34,22 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: middleware/package-lock.json
+          cache-dependency-path: |
+            middleware/package-lock.json
+            frontend/package-lock.json
       - run: cd middleware && npm ci && npm run build
-      - run: cd frontend && npm install && npm run build
+      - run: cd frontend && npm ci && npm run build
       - run: cd frontend && npm test
+      - name: Teste explícito — fallback gRPC → GraphQL
+        run: cd frontend && npm run test:transport-fallback
+      - name: Teste explícito — repromoção GraphQL → gRPC
+        run: cd frontend && npm run test:transport-repromotion
+      - name: Teste explícito — autenticação não provoca fallback
+        run: cd frontend && npm run test:transport-auth
+      - name: Teste explícito — gap do EventJournal exige resync
+        run: cd frontend && npm run test:transport-journal-gap
+      - name: Teste explícito — reinício completo do middleware
+        run: cd frontend && npm run test:transport-middleware-restart
 
   engine:
     name: Engine (.NET 8)
@@ -53,22 +65,38 @@ jobs:
       - run: dotnet build --nologo
       - run: dotnet test --no-build --nologo
 
-  e2e:
-    name: Verificação ponta-a-ponta (Fases 1–4)
+  docs:
+    name: Documentação (anti-drift)
     runs-on: ubuntu-latest
-    needs: [middleware, engine]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run docs:verify
+
+  e2e:
+    name: Verificação ponta-a-ponta (Fases 1–4 + transports)
+    runs-on: ubuntu-latest
+    needs: [middleware, frontend, engine]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: middleware/package-lock.json
+          cache-dependency-path: |
+            middleware/package-lock.json
+            frontend/package-lock.json
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - run: cd middleware && npm ci
+      # O build antes do npm ci do frontend garante que a dependência local
+      # file:../middleware seja empacotada com dist/ e os contratos copiados.
+      - run: cd middleware && npm ci && npm run build
+      - run: cd frontend && npm ci
       - run: ./scripts/verify-phase1.sh
       - run: ./scripts/verify-phase2.sh
       - run: ./scripts/verify-phase3.sh
       - run: ./scripts/verify-phase4.sh
+      - run: ./scripts/verify-transports.sh

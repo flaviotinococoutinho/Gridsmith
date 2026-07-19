@@ -20,6 +20,7 @@ import net from "node:net";
 import { JsonRpcPeer } from "../ipc/JsonRpcPeer.js";
 import { resolvePipePath } from "../ipc/PipeEndpoint.js";
 import { PROTOCOL_VERSION } from "../protocol/jsonrpc.js";
+import { loadTransportAuthToken } from "../transport/auth.js";
 
 function step(label: string, message: string): void {
   console.log(`  [${label.padEnd(10)}] ${message}`);
@@ -39,6 +40,7 @@ interface Experience {
 async function main(): Promise<void> {
   const pipeIdx = process.argv.indexOf("--pipe");
   const pipeName = pipeIdx >= 0 ? process.argv[pipeIdx + 1]! : "p7m-engine";
+  const authToken = loadTransportAuthToken();
   const editorPath = resolvePipePath(`${pipeName}-editor`);
 
   const socket = await new Promise<net.Socket>((resolve, reject) => {
@@ -57,6 +59,7 @@ async function main(): Promise<void> {
     const session = (await peer.request("editor/handshake", {
       clientName: "phase4-driver",
       protocolVersion: PROTOCOL_VERSION,
+      authToken,
     })) as { sessionId: string };
     step("handshake", `editor session ${session.sessionId}`);
 

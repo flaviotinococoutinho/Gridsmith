@@ -26,8 +26,10 @@ baseline sempre disponível e transporte de **fallback** do caminho quente.
   R10/R12).
 - Enum `CommandKind` espelha `COMMAND_KINDS` (paridade por teste; R8
   preservada nas três bordas).
-- Eventos por **polling incremental** `eventsSince(afterSeq)` sobre o
-  `EventJournal` — streaming pertence ao gRPC.
+- Eventos por **polling incremental** `eventBatch(middlewareInstanceId,
+  afterSeq)` sobre o `EventJournal`, com limites e `resyncRequired`; a query
+  `snapshot` reconstrói todas as projeções. `eventsSince` permanece legado.
+- Bearer efêmero obrigatório; 401 nunca é interpretado como indisponibilidade.
 - Erros de domínio carregam o código estável JSON-RPC em `extensions.code`.
 
 ## Alternativas
@@ -37,8 +39,9 @@ baseline sempre disponível e transporte de **fallback** do caminho quente.
 2. **Apollo/Yoga + subscriptions WS** — dependências e superfície muito
    maiores para um processo local; polling incremental cobre o fallback com
    1 dep (`graphql`).
-3. **GraphQL como único transporte** — perderia o caminho quente por stream
-   (ADR-017).
+3. **GraphQL como único transporte ativo por padrão** — opção válida quando o
+   benchmark não justificar o custo operacional do gRPC (ADR-019); o código
+   gRPC continua feature-flagged para a futura necessidade de streaming.
 
 ## Consequências
 

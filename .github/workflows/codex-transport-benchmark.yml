@@ -1,0 +1,36 @@
+name: Codex transport benchmark
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            middleware/package-lock.json
+            frontend/package-lock.json
+      - run: cd middleware && npm ci
+      - run: cd frontend && npm ci
+      - name: Executar matriz oficial
+        run: npm run benchmark:transports -- --output benchmarks/results/transport-benchmark-runner.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transport-benchmark
+          path: benchmarks/results/transport-benchmark-runner.json
+          if-no-files-found: error
+          retention-days: 1

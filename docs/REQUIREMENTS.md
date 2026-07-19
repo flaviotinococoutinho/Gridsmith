@@ -82,10 +82,10 @@ graph LR
 | RNF-05 | **Compatibilidade multiplataforma de IPC** | Named Pipes (Win) / UDS (POSIX) com a mesma semântica | ✅ | abstração testada; caveat Windows do MMF documentado no contrato |
 | RNF-06 | **Evolutibilidade de contratos** | versão MAJOR negociada; schemas fonte-de-verdade; perfis imutáveis | ✅ | handshake test + R9 + registry test |
 | RNF-07 | **Explicabilidade** | nenhum recurso desabilitado sem razão legível | ✅ | governor/gate tests (fail-safe com reason) |
-| RNF-08 | **Segurança da borda** | execFile sem shell; renderer sem Node (contextIsolation); validação em toda borda RPC | ✅ | F2/F3 + ExecToolRunner + testes de params inválidos |
+| RNF-08 | **Segurança da borda** | execFile sem shell; renderer sem Node; transports locais autenticados; UDS privados/TCP loopback | ✅ | F2/F3 + testes de auth/endpoints + gateways reais |
 | RNF-09 | **Auditabilidade** | artefatos com revisão, hash estável e proveniência obrigatória | ✅ | canonical-core.test.ts |
 | RNF-10 | **Limites explícitos** | capacidades fixas com erro claro (nunca crescimento silencioso) | ✅ | testes de capacidade cheia (skeleton/light/tilemap) |
-| RNF-11 | Latência do plano de controle | < 5 ms por request local (informal) | 🔶 | observada nos e2e; sem benchmark automatizado |
+| RNF-11 | Latência do plano de controle | decisão baseada em p50/p95/p99 reproduzíveis | 🔶 | harness versionado em `benchmarks/`; baseline oficial registrada pela ADR-019 |
 | RNF-12 | Escala de mapa | > 64k células por streaming/chunks | ⬜ | Fase 5 (shared memory para tiles) |
 
 A coluna **Verificação** acima é sustentada por fitness functions — divididas em
@@ -137,4 +137,4 @@ mindmap
 |---|---|---|
 | Coerência MMF no Windows (WriteFile × view mapeada) | documentado no contrato; e2e roda em Linux | binding nativo de mmap no Electron (OPP-05) |
 | Shaders sem compilação no CI | referências de CPU testadas + contrato espelhado | job de CI com Wine/mgcb (OPP-09) |
-| Sem benchmark de latência/throughput | e2e implícito | harness de performance na Fase 5 (OPP-08) |
+| Baseline de performance depende do ambiente | harness real versionado + metadados completos | repetir antes de mudar o default ou o PreviewHost (ADR-019) |

@@ -95,11 +95,23 @@ export class TransportRouter {
    * chamada corrente no fallback). Falhas no GraphQL nunca mudam o modo —
    * não há transporte abaixo dele.
    */
-  onTransportFailure(transport: TransportName, nowMs: number, reason: string): "stay" | "fellBack" {
-    if (transport !== "grpc" || this.mode !== "primary") return "stay";
+  onTransportFailure(
+    transport: TransportName,
+    nowMs: number,
+    failure: ClassifiedError,
+  ): "stay" | "fellBack" {
+    // Invariante de segurança vive AQUI, não nos call-sites: credencial e
+    // domínio jamais podem ser mascarados por outro transporte.
+    if (
+      failure.category !== "availability" ||
+      transport !== "grpc" ||
+      this.mode !== "primary"
+    ) {
+      return "stay";
+    }
     this.consecutiveFailures++;
     if (this.consecutiveFailures < this.failureThreshold) return "stay";
-    this.transition("fallback", `grpc transport failure: ${reason}`);
+    this.transition("fallback", `grpc transport failure: ${failure.reason}`);
     this.consecutiveProbeSuccesses = 0;
     this.probesAttempted = 0;
     this.nextProbeAtMs = nowMs + this.backoff[0]!;
@@ -145,8 +157,12 @@ export class TransportRouter {
   }
 }
 
-/** Classificação de erro: só falha DE TRANSPORTE justifica fallback. */
+export type TransportErrorCategory = "availability" | "authentication" | "domain";
+
+/** Classificação de erro: só indisponibilidade justifica fallback. */
 export interface ClassifiedError {
+  readonly category: TransportErrorCategory;
+  /** Compatibilidade legível: true somente para category=availability. */
   readonly transport: boolean;
   readonly reason: string;
 }
@@ -157,16 +173,26 @@ export interface ClassifiedError {
  * EPIPE) são transporte; o resto é domínio e sobe ao chamador.
  */
 export function classifyTransportError(err: unknown): ClassifiedError {
-  const e = err as { code?: unknown; message?: unknown };
+  const e = err as { code?: unknown; message?: unknown; statusCode?: unknown };
   const message = typeof e?.message === "string" ? e.message : String(err);
+  if (
+    e?.code === 16 ||
+    e?.code === 7 ||
+    e?.code === "P7M_AUTHENTICATION_FAILED" ||
+    e?.code === "P7M_AUTH_CONFIGURATION" ||
+    e?.statusCode === 401 ||
+    e?.statusCode === 403
+  ) {
+    return { category: "authentication", transport: false, reason: "authentication failed" };
+  }
   if (typeof e?.code === "number" && (e.code === 14 || e.code === 4)) {
-    return { transport: true, reason: `grpc status ${e.code}: ${message}` };
+    return { category: "availability", transport: true, reason: `grpc status ${e.code}: ${message}` };
   }
   if (
     typeof e?.code === "string" &&
     ["ECONNREFUSED", "ENOENT", "ECONNRESET", "EPIPE", "ETIMEDOUT"].includes(e.code)
   ) {
-    return { transport: true, reason: `socket ${e.code}` };
+    return { category: "availability", transport: true, reason: `socket ${e.code}` };
   }
-  return { transport: false, reason: message };
+  return { category: "domain", transport: false, reason: message };
 }

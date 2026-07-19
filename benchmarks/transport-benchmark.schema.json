@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p7m.dev/schemas/transport-benchmark-v1.json",
+  "title": "P7M transport benchmark report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "valid",
+    "methodology",
+    "environment",
+    "config",
+    "payloads",
+    "measurements",
+    "totals"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "p7m.transport-benchmark/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "valid": { "type": "boolean" },
+    "methodology": { "type": "object" },
+    "environment": {
+      "type": "object",
+      "required": [
+        "node",
+        "v8",
+        "platform",
+        "osType",
+        "osRelease",
+        "arch",
+        "cpuModel",
+        "cpuLogicalCount",
+        "totalMemoryBytes",
+        "gitCommit",
+        "gitDirty"
+      ]
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "warmups",
+        "samples",
+        "forks",
+        "concurrency",
+        "eventCount",
+        "graphqlPollIntervalMs",
+        "requestTimeoutMs",
+        "flowTimeoutMs"
+      ],
+      "properties": {
+        "warmups": { "type": "integer", "minimum": 1 },
+        "samples": { "type": "integer", "minimum": 1 },
+        "forks": { "type": "integer", "minimum": 1 },
+        "concurrency": { "type": "integer", "minimum": 1 },
+        "eventCount": { "type": "integer", "minimum": 1 },
+        "graphqlPollIntervalMs": { "type": "integer", "minimum": 1 },
+        "requestTimeoutMs": { "type": "integer", "minimum": 1 },
+        "flowTimeoutMs": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "payloads": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["small", "medium"],
+      "properties": {
+        "small": { "$ref": "#/$defs/payload" },
+        "medium": { "$ref": "#/$defs/payload" }
+      }
+    },
+    "measurements": {
+      "type": "array",
+      "minItems": 24,
+      "items": { "$ref": "#/$defs/measurement" }
+    },
+    "totals": {
+      "type": "object",
+      "required": ["failedSamples", "errorCount", "resyncs", "measurementCount"],
+      "properties": {
+        "failedSamples": { "type": "integer", "minimum": 0 },
+        "errorCount": { "type": "integer", "minimum": 0 },
+        "resyncs": { "type": "integer", "minimum": 0 },
+        "measurementCount": { "type": "integer", "const": 24 }
+      }
+    }
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commandKind", "canonicalJson", "utf8Bytes", "sha256"],
+      "properties": {
+        "commandKind": { "const": "level/update" },
+        "canonicalJson": { "type": "string" },
+        "utf8Bytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["min", "p50", "p95", "p99", "max"],
+      "properties": {
+        "min": { "type": ["number", "null"] },
+        "p50": { "type": ["number", "null"] },
+        "p95": { "type": ["number", "null"] },
+        "p99": { "type": ["number", "null"] },
+        "max": { "type": ["number", "null"] }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "required": [
+        "transport",
+        "payloadClass",
+        "operation",
+        "applicationPayloadBytes",
+        "attemptedSamples",
+        "successfulSamples",
+        "failedSamples",
+        "latencyMs",
+        "responseBytes",
+        "throughputOpsPerSecond",
+        "errors",
+        "resyncs",
+        "resyncObservable",
+        "forks"
+      ],
+      "properties": {
+        "transport": { "enum": ["grpc", "graphql", "legacy-jsonrpc"] },
+        "payloadClass": { "enum": ["small", "medium"] },
+        "operation": { "enum": ["dispatch", "query-small", "query-document", "event-flow"] },
+        "applicationPayloadBytes": { "type": "integer", "minimum": 1 },
+        "attemptedSamples": { "type": "integer", "minimum": 1 },
+        "successfulSamples": { "type": "integer", "minimum": 0 },
+        "failedSamples": { "type": "integer", "minimum": 0 },
+        "latencyMs": { "$ref": "#/$defs/summary" },
+        "responseBytes": { "$ref": "#/$defs/summary" },
+        "throughputOpsPerSecond": { "type": ["number", "null"] },
+        "errors": { "type": "array" },
+        "resyncs": { "type": "integer", "minimum": 0 },
+        "resyncObservable": { "type": "boolean" },
+        "targetEvents": { "type": "integer", "minimum": 1 },
+        "receivedEvents": { "type": "integer", "minimum": 0 },
+        "eventCompletionMs": { "$ref": "#/$defs/summary" },
+        "eventCompletionRelativeToLastDispatchMs": { "$ref": "#/$defs/summary" },
+        "eventThroughputPerSecond": { "type": ["number", "null"] },
+        "forks": { "type": "array", "minItems": 1 }
+      }
+    }
+  }
+}

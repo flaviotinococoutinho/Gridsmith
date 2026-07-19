@@ -15,15 +15,19 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain } from "electron";
-import { resolvePipePath } from "@p7m/middleware/dist/ipc/PipeEndpoint.js";
+import {
+  EDITOR_AUTH_TOKEN_ENV,
+  generateTransportAuthToken,
+  loadTransportAuthToken,
+} from "@p7m/middleware/dist/transport/auth.js";
 import { ProjectLifecycle, type ProjectDescriptor } from "../core/projectLifecycle.js";
 import {
   ProcessSupervisor,
   type ManagedProcess,
+  type ServiceReadiness,
   type ServiceStatus,
 } from "./ProcessSupervisor.js";
 import { EditorClient } from "./EditorClient.js";
@@ -80,26 +84,58 @@ function launchService(
   };
 }
 
-/** Prontidão do middleware: o pipe do gateway aceita conexão. */
-async function gatewayAccepts(pipeName: string, timeoutMs = 15_000): Promise<boolean> {
-  const target = resolvePipePath(`${pipeName}-editor`);
+/** Prontidão real: GraphQL baseline obrigatório; gRPC é medido separadamente. */
+async function editorTransportsReady(
+  client: EditorClient,
+  timeoutMs = 15_000,
+): Promise<ServiceReadiness> {
   const deadline = Date.now() + timeoutMs;
+  let last = await client.probeReadiness();
   while (Date.now() < deadline) {
-    const ok = await new Promise<boolean>((resolve) => {
-      const probe = net.connect(target);
-      probe.once("connect", () => {
-        probe.destroy();
-        resolve(true);
-      });
-      probe.once("error", () => resolve(false));
-    });
-    if (ok) return true;
+    if (last.authenticationFailed) {
+      return {
+        ready: false,
+        retryable: false,
+        detail: "falha de autenticação nos transports locais",
+        checks: {
+          middleware: last.middlewareActive ? "active" : "inactive",
+          graphql: last.graphqlActive ? "active" : "authentication-failed",
+          grpc: last.grpcActive ? "active" : "authentication-failed",
+        },
+      };
+    }
+    if (last.graphqlActive) {
+      return {
+        ready: true,
+        detail: last.grpcActive
+          ? "middleware, GraphQL e gRPC ativos"
+          : "middleware e GraphQL ativos; gRPC indisponível em modo degradado",
+        checks: {
+          middleware: "active",
+          graphql: "active",
+          grpc: last.grpcActive ? "active" : "inactive",
+        },
+      };
+    }
     await new Promise((r) => setTimeout(r, 300));
+    last = await client.probeReadiness();
   }
-  return false;
+  return {
+    ready: false,
+    detail: "GraphQL baseline não ficou pronto dentro do prazo",
+    checks: {
+      middleware: last.middlewareActive ? "active" : "inactive",
+      graphql: last.graphqlActive ? "active" : "inactive",
+      grpc: last.grpcActive ? "active" : "inactive",
+    },
+  };
 }
 
-function buildSupervisor(pipeName: string, client: EditorClient): ProcessSupervisor {
+function buildSupervisor(
+  pipeName: string,
+  client: EditorClient,
+  authToken: string,
+): ProcessSupervisor {
   const repoRoot = path.join(dirname, "../../..");
   const middlewareEntry = path.join(dirname, "../../node_modules/@p7m/middleware/dist/index.js");
   const engineDll = path.join(
@@ -118,9 +154,12 @@ function buildSupervisor(pipeName: string, client: EditorClient): ProcessSupervi
           "middleware",
           process.execPath,
           [middlewareEntry, "--pipe", pipeName, "--no-mcp"],
-          { ELECTRON_RUN_AS_NODE: "1" },
+          {
+            ELECTRON_RUN_AS_NODE: "1",
+            [EDITOR_AUTH_TOKEN_ENV]: authToken,
+          },
         ),
-      waitReady: () => gatewayAccepts(pipeName),
+      waitReady: () => editorTransportsReady(client),
       maxAttempts: 3,
     },
     {
@@ -198,14 +237,19 @@ void app.whenReady().then(async () => {
   if (!ensureSingleInstance(() => mainWindow)) return;
 
   const pipeName = pipeNameFromArgs();
-  const client = new EditorClient(pipeName);
+  const externalServices = process.argv.includes("--external-services");
+  // Em produção, o segredo vive somente no main e no ambiente do filho. No
+  // modo externo, o operador fornece a mesma credencial por env/arquivo.
+  const authToken = externalServices
+    ? loadTransportAuthToken()
+    : generateTransportAuthToken();
+  const client = new EditorClient(pipeName, { authToken });
   const lifecycle = new ProjectLifecycle(Date.now, {}, loadRecents());
   let window: BrowserWindow;
 
   // P0.1: por padrão o Electron é o supervisor do ecossistema (executável
   // único); --external-services preserva o modo dev com serviços próprios
-  const externalServices = process.argv.includes("--external-services");
-  const supervisor = externalServices ? undefined : buildSupervisor(pipeName, client);
+  const supervisor = externalServices ? undefined : buildSupervisor(pipeName, client, authToken);
   const supervisionStarted = supervisor?.startAll();
 
   const serviceStatusPayload = (): Array<ServiceStatus & { recentLog: readonly string[] }> =>
@@ -361,6 +405,7 @@ void app.whenReady().then(async () => {
     }
   });
   ipcMain.handle("p7m:service-status", () => serviceStatusPayload());
+  ipcMain.handle("p7m:technical-diagnostics", () => client.technicalDiagnostics);
   ipcMain.handle("p7m:service-restart", async (_event, serviceId: string) => {
     if (!supervisor) return false;
     const ok = await supervisor.restart(serviceId);
@@ -432,6 +477,11 @@ void app.whenReady().then(async () => {
     if (lifecycle.commandApplied()) void autosave();
     if (!window.isDestroyed()) {
       window.webContents.send("p7m:blueprint-event", event);
+    }
+  });
+  client.onResynchronized((snapshot, record) => {
+    if (!window.isDestroyed()) {
+      window.webContents.send("p7m:projection-resync", { snapshot, record });
     }
   });
 

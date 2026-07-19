@@ -180,3 +180,138 @@ test("restart isolado preserva os demais serviços", async () => {
   assert.equal(middleware.launches.length, 1); // middleware intocado
   assert.equal(supervisor.status("engine").state, "running");
 });
+
+test("waitReady=false encerra processo ainda vivo antes do retry e não trava", async () => {
+  const launches: FakeProcess[] = [];
+  let readinessCalls = 0;
+  const spec: ServiceSpec = {
+    id: "middleware",
+    displayName: "Middleware",
+    maxAttempts: 2,
+    launch: () => {
+      const proc = new FakeProcess();
+      launches.push(proc);
+      return proc;
+    },
+    waitReady: async () => ++readinessCalls >= 2,
+  };
+  const supervisor = new ProcessSupervisor([spec], instantSleep);
+
+  assert.equal(await supervisor.startAll(), true);
+  assert.equal(launches.length, 2);
+  assert.equal(launches[0]?.killed, true);
+  assert.equal(supervisor.status("middleware").state, "running");
+});
+
+test("restart aguarda saída antiga antes de abrir um novo processo", async () => {
+  class SlowStopProcess implements ManagedProcess {
+    killed = false;
+    private resolveExit!: (value: { code: number | null }) => void;
+    readonly exited = new Promise<{ code: number | null }>((resolve) => {
+      this.resolveExit = resolve;
+    });
+
+    kill(): void {
+      this.killed = true;
+    }
+
+    release(): void {
+      this.resolveExit({ code: 0 });
+    }
+  }
+
+  const launches: ManagedProcess[] = [];
+  const first = new SlowStopProcess();
+  const spec: ServiceSpec = {
+    id: "middleware",
+    displayName: "Middleware",
+    launch: () => {
+      const process = launches.length === 0 ? first : new FakeProcess();
+      launches.push(process);
+      return process;
+    },
+    waitReady: async () => true,
+  };
+  const supervisor = new ProcessSupervisor([spec], instantSleep, 1_000);
+  await supervisor.startAll();
+
+  const restarting = supervisor.restart("middleware");
+  await Promise.resolve();
+  assert.equal(first.killed, true);
+  assert.equal(launches.length, 1, "novo bind deve esperar o processo anterior sair");
+  first.release();
+
+  assert.equal(await restarting, true);
+  assert.equal(launches.length, 2);
+});
+
+test("processo que ignora terminação cancela restart para evitar colisão", async () => {
+  const stuck: ManagedProcess = {
+    exited: new Promise(() => {}),
+    kill: () => undefined,
+  };
+  let launches = 0;
+  const spec: ServiceSpec = {
+    id: "middleware",
+    displayName: "Middleware",
+    launch: () => (++launches === 1 ? stuck : new FakeProcess()),
+    waitReady: async () => true,
+  };
+  const supervisor = new ProcessSupervisor([spec], instantSleep, 10);
+  await supervisor.startAll();
+
+  assert.equal(await supervisor.restart("middleware"), false);
+  assert.equal(launches, 1);
+  assert.equal(supervisor.status("middleware").state, "failed");
+  assert.match(supervisor.status("middleware").detail ?? "", /colisão de endpoint/);
+});
+
+test("readiness diferencia processo, GraphQL e gRPC sem bloquear fallback legítimo", async () => {
+  const process = new FakeProcess();
+  const spec: ServiceSpec = {
+    id: "middleware",
+    displayName: "Middleware",
+    launch: () => process,
+    waitReady: async () => ({
+      ready: true,
+      detail: "GraphQL ativo; gRPC indisponível; fallback habilitado",
+      checks: { middleware: "active", graphql: "active", grpc: "inactive" },
+    }),
+  };
+  const supervisor = new ProcessSupervisor([spec], instantSleep);
+
+  assert.equal(await supervisor.startAll(), true);
+  assert.deepEqual(supervisor.status("middleware").checks, {
+    middleware: "active",
+    graphql: "active",
+    grpc: "inactive",
+  });
+  assert.match(supervisor.status("middleware").detail ?? "", /fallback/);
+});
+
+test("readiness de autenticação é não recuperável e não relança", async () => {
+  const launches: FakeProcess[] = [];
+  const spec: ServiceSpec = {
+    id: "middleware",
+    displayName: "Middleware",
+    maxAttempts: 3,
+    launch: () => {
+      const process = new FakeProcess();
+      launches.push(process);
+      return process;
+    },
+    waitReady: async () => ({
+      ready: false,
+      retryable: false,
+      detail: "falha de autenticação no gRPC",
+      checks: { middleware: "active", graphql: "active", grpc: "authentication-failed" },
+    }),
+  };
+  const supervisor = new ProcessSupervisor([spec], instantSleep);
+
+  assert.equal(await supervisor.startAll(), false);
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0]?.killed, true);
+  assert.equal(supervisor.status("middleware").state, "failed");
+  assert.equal(supervisor.status("middleware").checks?.["grpc"], "authentication-failed");
+});

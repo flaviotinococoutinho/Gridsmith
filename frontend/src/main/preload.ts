@@ -20,6 +20,7 @@ export interface ServiceStatusPayload {
   state: string;
   attempts: number;
   detail?: string;
+  checks?: Readonly<Record<string, "pending" | "active" | "inactive" | "authentication-failed">>;
   recentLog: string[];
 }
 
@@ -29,6 +30,10 @@ export interface P7mEditorApi {
   query(projection: string): Promise<unknown>;
   experience(family?: string, version?: string): Promise<unknown>;
   onBlueprintEvent(listener: (event: { kind: string }) => void): void;
+  /** Snapshot completo após restart/gap; substitui o estado projetado local. */
+  onProjectionResync(
+    listener: (payload: { snapshot: unknown; record: { reason: string } }) => void,
+  ): void;
   // ---- ciclo de vida do projeto (ALPHA-0.1 P0.2) ----
   /** New/Open/Save/Save As/Close disparados pela UI; diálogos vivem no main. */
   projectCommand(
@@ -44,6 +49,8 @@ export interface P7mEditorApi {
   /** Reinicia um serviço isolado (engine caída → projeto preservado). */
   serviceRestart(serviceId: string): Promise<boolean>;
   onServiceStatus(listener: (services: ServiceStatusPayload[]) => void): void;
+  /** Diagnóstico técnico; não é usado pela interface normal do editor. */
+  technicalDiagnostics(): Promise<unknown>;
 }
 
 const api: P7mEditorApi = {
@@ -53,6 +60,9 @@ const api: P7mEditorApi = {
   experience: (family, version) => ipcRenderer.invoke("p7m:experience", family, version),
   onBlueprintEvent: (listener) => {
     ipcRenderer.on("p7m:blueprint-event", (_event, payload) => listener(payload));
+  },
+  onProjectionResync: (listener) => {
+    ipcRenderer.on("p7m:projection-resync", (_event, payload) => listener(payload));
   },
   projectCommand: (command, payload) => ipcRenderer.invoke("p7m:project-command", command, payload),
   projectStatus: () => ipcRenderer.invoke("p7m:project-status"),
@@ -67,6 +77,7 @@ const api: P7mEditorApi = {
   onServiceStatus: (listener) => {
     ipcRenderer.on("p7m:service-status", (_event, services) => listener(services));
   },
+  technicalDiagnostics: () => ipcRenderer.invoke("p7m:technical-diagnostics"),
 };
 
 contextBridge.exposeInMainWorld("p7m", api);

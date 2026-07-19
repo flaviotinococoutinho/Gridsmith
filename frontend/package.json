@@ -9,7 +9,13 @@
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "benchmark:transports": "../scripts/benchmark-transports.sh",
     "test": "node --import tsx --test test/*.test.ts",
+    "test:transport-fallback": "node --import tsx --test --test-name-pattern=\"^resiliência: fallback gRPC → GraphQL mantém chamadas e eventos$\" test/editor-client.integration.test.ts",
+    "test:transport-repromotion": "node --import tsx --test --test-name-pattern=\"^resiliência: repromoção GraphQL → gRPC exige sondas saudáveis consecutivas$\" test/editor-client.integration.test.ts",
+    "test:transport-auth": "node --import tsx --test --test-name-pattern=\"^resiliência: autenticação gRPC inválida não faz fallback para GraphQL$\" test/editor-client.integration.test.ts",
+    "test:transport-journal-gap": "node --import tsx --test --test-name-pattern=\"^resiliência: gap maior que EventJournal faz resync completo sem cauda parcial$\" test/editor-client.integration.test.ts",
+    "test:transport-middleware-restart": "node --import tsx --test --test-name-pattern=\"^resiliência: reinício completo do middleware troca instância, refaz snapshot e aceita seq reiniciado$\" test/editor-client.integration.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "app": "electron dist/main/main.js"
   },
