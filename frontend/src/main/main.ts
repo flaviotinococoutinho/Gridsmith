@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, Menu, app, dialog, ipcMain, type MenuItemConstructorOptions } from "electron";
+import { BrowserWindow, Menu, app, dialog, ipcMain } from "electron";
 import {
   EDITOR_AUTH_TOKEN_ENV,
   EDITOR_AUTH_TOKEN_FILE_ENV,
@@ -29,9 +29,14 @@ import { ProjectLifecycle, type RecentProject } from "../core/projectLifecycle.j
 import type {
   CreateProjectFromTemplateRequest,
   DiscardAutosaveRequest,
+  NativeMenuCommandDescriptor,
   OpenProjectRequest,
-  ProjectMenuAction,
+  ProjectCommandInvocation,
   RestoreAutosaveRequest,
+} from "../core/projectApi.js";
+import {
+  PROJECT_CLOSE_PREFLIGHT_CHANNELS,
+  PROJECT_COMMAND_IDS,
 } from "../core/projectApi.js";
 import {
   ProcessSupervisor,
@@ -59,6 +64,12 @@ import {
   loadWindowState,
   trackWindowState,
 } from "./appConfig.js";
+import {
+  buildNativeMenuTemplate,
+  defaultNativeMenuCommands,
+  validateNativeMenuCommandDescriptors,
+} from "./nativeMenuHost.js";
+import { ProjectClosePreflight } from "./projectClosePreflight.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -310,6 +321,7 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
   });
 
   let rebuildMenu = (): void => undefined;
+  let projectedNativeMenuCommands: readonly NativeMenuCommandDescriptor[] | undefined;
   let recentsWrite = Promise.resolve();
   const broadcast = (): void => {
     if (window && !window.isDestroyed()) {
@@ -378,6 +390,8 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
     return result.outcome;
   });
   ipcMain.handle("p7m:query", (_event, projection: string) => client.query(projection));
+  ipcMain.handle("p7m:capture-project-snapshot", (_event, expectedProjectSessionId: string) =>
+    client.captureProjectSnapshot(expectedProjectSessionId));
   ipcMain.handle("p7m:history-undo", () => controller.undo());
   ipcMain.handle("p7m:history-redo", () => controller.redo());
   ipcMain.handle("p7m:history-status", (_event, limit?: number) =>
@@ -402,7 +416,6 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
   );
   ipcMain.handle("p7m:save-project", () => controller.saveProject());
   ipcMain.handle("p7m:save-project-as", () => controller.saveProjectAs());
-  ipcMain.handle("p7m:close-project", () => controller.closeProject());
   ipcMain.handle("p7m:restore-autosave", (_event, request: RestoreAutosaveRequest) =>
     controller.restoreAutosave(request),
   );
@@ -418,7 +431,29 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
   // (sandbox, navegação bloqueada), estado persistido entre sessões
   window = new BrowserWindow(hardenedWindowOptions(path.join(dirname, "preload.js")));
   mainWindow = window;
-  window.webContents.on("render-process-gone", () => controller.clearEditGestures());
+  const closePreflight = new ProjectClosePreflight({
+    createId: randomUUID,
+    send: (request) => {
+      if (window.isDestroyed() || window.webContents.isDestroyed()) {
+        throw new Error("renderer indisponível");
+      }
+      window.webContents.send(PROJECT_CLOSE_PREFLIGHT_CHANNELS.request, request);
+    },
+  });
+  ipcMain.on(PROJECT_CLOSE_PREFLIGHT_CHANNELS.response, (event, response: unknown) => {
+    if (event.sender.id === window.webContents.id) closePreflight.accept(response);
+  });
+  ipcMain.handle("p7m:close-project", async (event) => {
+    if (event.sender.id !== window.webContents.id) {
+      throw new Error("Project close rejected for an unknown renderer");
+    }
+    if (lifecycle.project) await closePreflight.request("project-close");
+    return controller.closeProject();
+  });
+  window.webContents.on("render-process-gone", () => {
+    controller.clearEditGestures();
+    closePreflight.cancelAll();
+  });
   if (loadWindowState().maximized) window.maximize();
   trackWindowState(window);
   hardenNavigation(window);
@@ -429,57 +464,56 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
       error instanceof Error ? error.message : String(error),
     );
   };
-  const runNative = (operation: () => Promise<unknown>) => (): void => {
-    void operation().catch(reportProjectError);
-  };
-  // Menu nativo: o wizard vive no renderer; IO/recentes permanecem no main.
-  const sendMenuAction = (action: ProjectMenuAction) => (): void => {
-    if (!window.isDestroyed()) window.webContents.send("p7m:menu-action", action);
+  // Menu nativo é só mais uma superfície do CommandRegistry. O renderer
+  // resolve a contribuição e chama a API preload correspondente; IO e gates
+  // transacionais continuam no ProjectController, nunca no registro.
+  const emitCommandInvocation = (invocation: ProjectCommandInvocation): void => {
+    if (!window.isDestroyed()) window.webContents.send("p7m:menu-action", invocation);
   };
   rebuildMenu = (): void => {
-    const recentSubmenu: MenuItemConstructorOptions[] = lifecycle.recentProjects.length === 0
-      ? [{ label: "Nenhum projeto recente", enabled: false }]
-      : lifecycle.recentProjects.map((recent) => ({
-          label: recent.name,
-          sublabel: recent.filePath,
-          click: runNative(() => controller.openRecent(recent.filePath)),
-        }));
-    Menu.setApplicationMenu(Menu.buildFromTemplate([
-      {
-        label: "Arquivo",
-        submenu: [
-          { label: "Novo projeto…", accelerator: "CmdOrCtrl+N", click: sendMenuAction("new") },
-          { label: "Abrir projeto…", accelerator: "CmdOrCtrl+O", click: sendMenuAction("open") },
-          { label: "Abrir exemplo", click: sendMenuAction("open-example") },
-          { label: "Recentes", submenu: recentSubmenu },
-          { type: "separator" },
-          { label: "Salvar", accelerator: "CmdOrCtrl+S", click: runNative(() => controller.saveProject()) },
-          { label: "Salvar como…", accelerator: "CmdOrCtrl+Shift+S", click: runNative(() => controller.saveProjectAs()) },
-          { type: "separator" },
-          { label: "Fechar projeto", accelerator: "CmdOrCtrl+W", click: runNative(() => controller.closeProject()) },
-          { label: "Sair", click: () => window.close() },
-        ],
+    const commands = projectedNativeMenuCommands ?? defaultNativeMenuCommands({
+      new: PROJECT_COMMAND_IDS.new,
+      open: PROJECT_COMMAND_IDS.open,
+      openExample: PROJECT_COMMAND_IDS.openExample,
+      openRecent: PROJECT_COMMAND_IDS.openRecent,
+      save: PROJECT_COMMAND_IDS.save,
+      saveAs: PROJECT_COMMAND_IDS.saveAs,
+      close: PROJECT_COMMAND_IDS.close,
+      undo: PROJECT_COMMAND_IDS.undo,
+      redo: PROJECT_COMMAND_IDS.redo,
+    });
+    Menu.setApplicationMenu(Menu.buildFromTemplate(buildNativeMenuTemplate({
+      commands,
+      recentProjects: lifecycle.recentProjects,
+      recentCommandId: PROJECT_COMMAND_IDS.openRecent,
+      invoke: emitCommandInvocation,
+      openRecent: (filePath) => {
+        const recent = lifecycle.recentProjects.find((candidate) => candidate.filePath === filePath);
+        if (!recent) return;
+        emitCommandInvocation({
+          commandId: PROJECT_COMMAND_IDS.openRecent,
+          args: { filePath: recent.filePath },
+        });
       },
-      {
-        label: "Editar",
-        submenu: [
-          { label: "Desfazer", accelerator: "CmdOrCtrl+Z", click: runNative(() => controller.undo()) },
-          { label: "Refazer", accelerator: "CmdOrCtrl+Shift+Z", click: runNative(() => controller.redo()) },
-        ],
-      },
-      {
-        label: "Exibir",
-        submenu: [
-          { role: "reload", label: "Recarregar" },
-          { role: "toggleDevTools", label: "Ferramentas de desenvolvimento" },
-          { type: "separator" },
-          { role: "resetZoom", label: "Zoom padrão" },
-          { role: "zoomIn", label: "Aumentar zoom" },
-          { role: "zoomOut", label: "Diminuir zoom" },
-        ],
-      },
-    ]));
+      requestClose: () => window.close(),
+    })));
   };
+  ipcMain.handle("p7m:update-native-menu", (event, commands: unknown) => {
+    if (event.sender.id !== window.webContents.id) {
+      throw new Error("Native menu projection rejected for an unknown renderer");
+    }
+    const validated = validateNativeMenuCommandDescriptors(commands);
+    const previous = projectedNativeMenuCommands;
+    projectedNativeMenuCommands = validated;
+    try {
+      rebuildMenu();
+    } catch (error) {
+      projectedNativeMenuCommands = previous;
+      rebuildMenu();
+      throw error;
+    }
+    return { acceptedCommandCount: validated.length };
+  });
   rebuildMenu();
 
   let allowWindowClose = false;
@@ -489,7 +523,7 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
     event.preventDefault();
     if (closeInFlight) return;
     closeInFlight = true;
-    void controller.closeProject().then(
+    void closePreflight.request("window-close").then(() => controller.closeProject()).then(
       (result) => {
         if (result.outcome === "completed" && !lifecycle.project) {
           allowWindowClose = true;
@@ -542,7 +576,11 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
       return;
     }
     focusExistingProjectWindow(window);
-    void controller.openRecent(filePath).catch(reportProjectError);
+    emitCommandInvocation({
+      commandId: PROJECT_COMMAND_IDS.openRecent,
+      args: { filePath },
+      source: "external-open",
+    });
   };
   const initialPath = projectPathFromArgs(process.argv);
   if (initialPath) pendingOpenPaths.unshift(initialPath);

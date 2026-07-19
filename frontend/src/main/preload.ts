@@ -4,12 +4,18 @@
  */
 
 import { contextBridge, ipcRenderer } from "electron";
+import { PROJECT_CLOSE_PREFLIGHT_CHANNELS } from "../core/projectApi.js";
 import type {
   CreateProjectFromTemplateRequest,
   DiscardAutosaveRequest,
+  NativeMenuCommandDescriptor,
+  NativeMenuProjectionResult,
   OpenProjectRequest,
   ProjectActionResult,
-  ProjectMenuAction,
+  ProjectClosePreflightHandler,
+  ProjectClosePreflightRequest,
+  ProjectClosePreflightResponse,
+  ProjectCommandInvocation,
   ProjectStatusPayload,
   ProjectTemplateDescriptor,
   RestoreAutosaveRequest,
@@ -20,6 +26,7 @@ import type {
   HistoryOperationResult,
   HistoryStatusPayload,
 } from "../core/editorCommands.js";
+import type { CapturedProjectSnapshot } from "./EditorClient.js";
 
 export type { ProjectStatusPayload } from "../core/projectApi.js";
 
@@ -38,6 +45,8 @@ export interface P7mEditorApi {
   connect(): Promise<{ sessionId: string }>;
   dispatch(kind: string, payload: Record<string, unknown>): Promise<DispatchOutcome>;
   query(projection: string): Promise<unknown>;
+  /** Documento + sessão + commandSequence capturados sob a mesma barreira. */
+  captureProjectSnapshot(expectedProjectSessionId: string): Promise<CapturedProjectSnapshot>;
   experience(family?: string, version?: string): Promise<unknown>;
   onBlueprintEvent(
     listener: (event: BlueprintEventPayload) => void,
@@ -58,8 +67,17 @@ export interface P7mEditorApi {
   openRecent(filePath: string): Promise<ProjectActionResult>;
   projectStatus(): Promise<ProjectStatusPayload>;
   onProjectStatus(listener: (status: ProjectStatusPayload) => void): void;
-  /** Ações do menu nativo roteadas ao renderer (undo/redo do editor ativo). */
-  onMenuAction(listener: (action: ProjectMenuAction) => void): void;
+  /** Invocações do menu/shell nativos roteadas ao CommandRegistry do renderer. */
+  onMenuAction(listener: (invocation: ProjectCommandInvocation) => void): void;
+  /** Substitui atomicamente a projeção serializável do CommandRegistry no main. */
+  updateNativeMenu(
+    commands: readonly NativeMenuCommandDescriptor[],
+  ): Promise<NativeMenuProjectionResult>;
+  /**
+   * Registra o único preflight de Close. O wiring deve desfocar o controle
+   * ativo e aguardar PendingEditCoordinator.flush(); rejeição cancela Close.
+   */
+  onProjectClosePreflight(handler: ProjectClosePreflightHandler): void;
   /** Histórico global da sessão, independente do painel ativo. */
   undo(): Promise<HistoryOperationResult>;
   redo(): Promise<HistoryOperationResult>;
@@ -80,6 +98,8 @@ const api: P7mEditorApi = {
   connect: () => ipcRenderer.invoke("p7m:connect"),
   dispatch: (kind, payload) => ipcRenderer.invoke("p7m:dispatch", kind, payload),
   query: (projection) => ipcRenderer.invoke("p7m:query", projection),
+  captureProjectSnapshot: (expectedProjectSessionId) =>
+    ipcRenderer.invoke("p7m:capture-project-snapshot", expectedProjectSessionId),
   experience: (family, version) => ipcRenderer.invoke("p7m:experience", family, version),
   onBlueprintEvent: (listener) => {
     ipcRenderer.on("p7m:blueprint-event", (_event, payload) => listener(payload));
@@ -102,7 +122,11 @@ const api: P7mEditorApi = {
     ipcRenderer.on("p7m:project-status", (_event, status) => listener(status));
   },
   onMenuAction: (listener) => {
-    ipcRenderer.on("p7m:menu-action", (_event, action) => listener(action));
+    ipcRenderer.on("p7m:menu-action", (_event, invocation) => listener(invocation));
+  },
+  updateNativeMenu: (commands) => ipcRenderer.invoke("p7m:update-native-menu", commands),
+  onProjectClosePreflight: (handler) => {
+    projectClosePreflightHandler = handler;
   },
   undo: () => ipcRenderer.invoke("p7m:history-undo"),
   redo: () => ipcRenderer.invoke("p7m:history-redo"),
@@ -116,5 +140,54 @@ const api: P7mEditorApi = {
   },
   technicalDiagnostics: () => ipcRenderer.invoke("p7m:technical-diagnostics"),
 };
+
+let projectClosePreflightHandler: ProjectClosePreflightHandler | undefined;
+
+ipcRenderer.on(PROJECT_CLOSE_PREFLIGHT_CHANNELS.request, (_event, value: unknown) => {
+  const request = projectClosePreflightRequest(value);
+  if (!request) return;
+  void respondToProjectClosePreflight(request);
+});
+
+async function respondToProjectClosePreflight(
+  request: ProjectClosePreflightRequest,
+): Promise<void> {
+  let response: ProjectClosePreflightResponse;
+  try {
+    if (Date.now() > request.deadlineUnixMs) throw new Error("A solicitação de fechamento expirou.");
+    if (!projectClosePreflightHandler) {
+      throw new Error("O editor ainda não registrou a confirmação de alterações pendentes.");
+    }
+    await projectClosePreflightHandler(request);
+    response = { requestId: request.requestId, status: "ready" };
+  } catch (error) {
+    response = {
+      requestId: request.requestId,
+      status: "rejected",
+      reason: safePreflightReason(error),
+    };
+  }
+  ipcRenderer.send(PROJECT_CLOSE_PREFLIGHT_CHANNELS.response, response);
+}
+
+function projectClosePreflightRequest(value: unknown): ProjectClosePreflightRequest | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate["requestId"] !== "string" ||
+    !["project-close", "window-close"].includes(candidate["reason"] as string) ||
+    typeof candidate["deadlineUnixMs"] !== "number" ||
+    !Number.isFinite(candidate["deadlineUnixMs"])
+  ) return undefined;
+  return candidate as unknown as ProjectClosePreflightRequest;
+}
+
+function safePreflightReason(error: unknown): string {
+  const message = (error instanceof Error ? error.message : String(error))
+    .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/gu, " ")
+    .trim()
+    .slice(0, 240);
+  return message || "A edição pendente não pôde ser confirmada.";
+}
 
 contextBridge.exposeInMainWorld("p7m", api);

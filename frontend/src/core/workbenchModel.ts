@@ -1,85 +1,73 @@
 /**
- * View-model do workbench (ALPHA-0.1 P0.3): o estado de navegação da UI —
- * qual painel está ativo, quais itens o rail mostra (com rótulo humano,
- * habilitação e razão traduzível), e qual aba do painel inferior está aberta.
- * Puro e testável; o renderer só materializa.
+ * Estado de foco do workbench, alimentado por PanelRegistry. O modelo não
+ * contém catálogo de painéis, labels ou capability IDs próprios.
  */
 
-import { ExperienceGate, PANEL_REQUIREMENTS, type ResolvedExperienceLike } from "./experienceGate.js";
-import { panelLabel } from "./vocabulary.js";
+import type { ContributionContext } from "./contributionContext.js";
+import type { PanelRegistry } from "./panelRegistry.js";
 
 export interface NavigationItem {
   readonly panelId: string;
   readonly label: string;
   readonly enabled: boolean;
-  /** Razão de desabilitado (tooltip); ausente quando habilitado. */
   readonly reason?: string;
   readonly active: boolean;
 }
 
-export type BottomTab = "problems" | "output" | "history";
-
-export class WorkbenchModel {
-  private gate: ExperienceGate | undefined;
+export class WorkbenchModel<TMountTarget = unknown> {
   private activePanel: string | undefined;
-  private bottomTab: BottomTab = "output";
+  private bottomTab: string | undefined;
   private readonly listeners = new Set<() => void>();
 
-  /** Recebida do gateway (experience/resolve); pode ser re-resolvida a qualquer momento. */
-  applyExperience(experience: ResolvedExperienceLike): void {
-    this.gate = new ExperienceGate(experience);
-    // painel ativo que ficou desabilitado perde o foco (fail-safe)
-    if (this.activePanel && !this.gate.panel(this.activePanel).enabled) {
-      this.activePanel = undefined;
-    }
-    // sem painel ativo: foca o primeiro habilitado
-    if (!this.activePanel) {
-      this.activePanel = this.navigation().find((item) => item.enabled)?.panelId;
-    }
-    this.notify();
-  }
-
-  get runtimeLabel(): string {
-    return this.gate?.runtimeLabel ?? "Runtime desconectado";
+  constructor(
+    private readonly panels: PanelRegistry<TMountTarget>,
+    private context: ContributionContext,
+  ) {
+    this.reconcile();
   }
 
   get currentPanel(): string | undefined {
     return this.activePanel;
   }
 
-  get currentBottomTab(): BottomTab {
+  get currentBottomTab(): string | undefined {
     return this.bottomTab;
   }
 
-  /** Itens do rail, na ordem canônica dos painéis. */
-  navigation(): NavigationItem[] {
-    return Object.keys(PANEL_REQUIREMENTS).map((panelId) => {
-      const answer = this.gate?.panel(panelId) ?? {
-        enabled: false,
-        reason: "Aguardando conexão com o middleware",
-      };
-      return {
-        panelId,
-        label: panelLabel(panelId),
-        enabled: answer.enabled,
-        ...(answer.enabled ? {} : { reason: answer.reason }),
-        active: panelId === this.activePanel,
-      };
-    });
+  updateContext(context: ContributionContext): void {
+    this.context = context;
+    this.reconcile();
+    this.notify();
   }
 
-  /** Ativa um painel. Painel desabilitado não ativa (retorna false). */
+  navigation(): NavigationItem[] {
+    return this.panels.list(this.context, { includeDisabled: true }).map((panel) => ({
+      panelId: panel.contribution.id,
+      label: panel.contribution.label,
+      enabled: panel.enabled,
+      ...(panel.reason ? { reason: panel.reason } : {}),
+      active: panel.contribution.id === this.activePanel,
+    }));
+  }
+
   activatePanel(panelId: string): boolean {
-    const item = this.navigation().find((i) => i.panelId === panelId);
-    if (!item?.enabled) return false;
+    const panel = this.panels.availability(panelId, this.context);
+    if (!panel?.visible || !panel.enabled) return false;
+    if (this.activePanel === panelId) return true;
     this.activePanel = panelId;
     this.notify();
     return true;
   }
 
-  selectBottomTab(tab: BottomTab): void {
-    this.bottomTab = tab;
+  selectBottomTab(panelId: string): boolean {
+    const panel = this.panels.availability(panelId, this.context);
+    if (!panel?.visible || !panel.enabled || panel.contribution.defaultRegion !== "bottom") {
+      return false;
+    }
+    if (this.bottomTab === panelId) return true;
+    this.bottomTab = panelId;
     this.notify();
+    return true;
   }
 
   onChange(listener: () => void): () => void {
@@ -87,7 +75,18 @@ export class WorkbenchModel {
     return () => this.listeners.delete(listener);
   }
 
+  private reconcile(): void {
+    const visible = this.panels.list(this.context, { includeDisabled: true });
+    if (!visible.some((panel) => panel.enabled && panel.contribution.id === this.activePanel)) {
+      this.activePanel = visible.find((panel) => panel.enabled)?.contribution.id;
+    }
+    const bottom = visible.filter((panel) => panel.contribution.defaultRegion === "bottom");
+    if (!bottom.some((panel) => panel.enabled && panel.contribution.id === this.bottomTab)) {
+      this.bottomTab = bottom.find((panel) => panel.enabled)?.contribution.id;
+    }
+  }
+
   private notify(): void {
-    for (const listener of this.listeners) listener();
+    for (const listener of [...this.listeners]) listener();
   }
 }

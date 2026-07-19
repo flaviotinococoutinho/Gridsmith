@@ -75,10 +75,10 @@ Três achados estruturais orientam as recomendações:
 2. A **explicabilidade** é imposta pelo tipo: `ProjectionResult` é uma união
    discriminada; `reason` é obrigatório nos ramos `skipped` e `deferred` e proibido
    no ramo `projected`. **CONFIRMADO.**
-3. A **cobertura de testes espelha o diagnóstico de produto**: núcleos puros
-   fortemente testados (suíte completa validada pelo CI), mas a camada de produto — `renderer.ts` (738
-   linhas) e o wire de `main.ts` (440 linhas) — sem teste automatizado, e sem e2e
-   visual da jornada de aceite. **RISCO.**
+3. A **cobertura de testes espelha o diagnóstico de produto**: núcleos puros e
+   registries/layout do workbench têm gate explícito; composition root e command
+   bridge possuem fitness checks estruturais. Ainda não há driver DOM/Electron nem
+   e2e visual da jornada de aceite. **RISCO.**
 
 Nenhuma reescrita é recomendada. Toda evolução relevante cabe em passos incrementais
 sobre as fronteiras atuais.
@@ -92,7 +92,8 @@ processos locais.
 
 - **Frontend** (`frontend/`, Electron + TS): `main/` (processo Node privilegiado),
   `preload/` (ponte `window.p7m` com contextIsolation), `renderer/` (UI pura sobre
-  `core/`), `core/` (12 módulos puros e testáveis fora do Electron).
+  `core/`), `core/` (núcleos puros e testáveis fora do Electron, incluindo
+  registries, seleção e layout adaptativo).
 - **Middleware** (`middleware/`, Node + TS): módulos `protocol/`, `ipc/`, `domain/`,
   `canonical/`, `runtime/` (+`runtime/profiles/`), `mcp/`, `assets/`, `leveldesign/`,
   `sharedmem/`, `util/`, `tools/`, e a raiz de composição `index.ts`.
@@ -532,8 +533,9 @@ simples, benefício, custo e condição de rejeição.
 - **State (máquina de estados)** — `ProjectLifecycle` (documento),
   `ProcessSupervisor` (`ServiceState`), `StateMachine` do editor (semântica Gum).
   Transições inválidas impedidas. **CONFIRMADO.**
-- **Registry** — `RuntimeProfileRegistry`, `CapabilityRegistry` (cache do manifesto).
-  **CONFIRMADO.**
+- **Registry** — runtime/perfis no middleware e contribuições internas no frontend
+  (`PanelRegistry`, `CommandRegistry`, `ToolRegistry`, `InspectorRegistry`).
+  **CONFIRMADO.** Registries de UI resolvem contexto; não são plugin API pública.
 - **Composition Root** — `index.ts main()` instancia tudo uma vez e injeta por
   construtor. **CONFIRMADO.**
 - **Template Method / Herança** — **essencialmente ausente**; composição predomina
@@ -547,7 +549,7 @@ simples, benefício, custo e condição de rejeição.
 | PR-1 | **Ciclo de sessão na porta — ENTREGUE** | Todo runtime é obrigado por tipo a limpar/reidratar sessão | `RuntimeAdapter.resetSession/rehydrateFrom` | A ADR-020 rejeitou manter os métodos apenas no adapter concreto | — | Fechada |
 | PR-2 | **Result tipado para projeção — ENTREGUE** | P-7 é garantido pelo compilador | `ProjectionResult` | União discriminada por `status`, com `reason` exigido em `skipped`/`deferred` | — | Fechada |
 | PR-3 | **Fila de `deferred` (outbox) explícita** | eventos `deferred` hoje não são reaplicados senão via reidratação total | orquestrador/adapter | reidratação total já cobre reconexão; a fila só se justifica com dependências parciais (asset não compilado) — introduzir **sob requisito** | M | Média |
-| PR-4 | **Controlador puro do editor de níveis** (extrair de `renderer.ts`) | 738 linhas de UI sem teste | `renderer/` → `core/` | mover máquina de ferramentas/hit-test/drag para `core/` (testável, F1) | M | Alta |
+| PR-4 | **Controlador puro e workbench modular — ENTREGUE** | Ferramentas, seleção e layout precisavam ser testáveis fora do Electron | `core/` + adapters finos em `renderer/` | registries puros, `levelEditorTools` e composition root mínima fecham F1 sem criar API pública de plugins | — | Fechada |
 | PR-5 | **Correlation ID ponta a ponta** | hoje não há correlação editor→mw→engine | protocolo | um `correlationId` local resolve; **não** adotar W3C Trace Context inteiro (§17) | M | Média |
 
 ## 14. Padrões que NÃO devem ser utilizados (com razão)
@@ -966,8 +968,8 @@ adversariais).
 | Nível | Estado | Evidência |
 |---|---|---|
 | 1. Unidade (lógica pura, invariantes, algoritmos) | ✅ forte | núcleos `core/`, canonical, engine `Core` |
-| 2. Componentes (inspector, toolbar, paleta, canvas) | ❌ ausente | `renderer.ts` sem teste |
-| 3. Integração da app (renderer↔preload↔main↔gateway) | 🔶 fino | só `editor-client.integration.test.ts` |
+| 2. Componentes (inspector, toolbar, paleta, canvas) | 🔶 estrutural/core | registries, Inspector, layout e wiring estático; falta driver DOM real |
+| 3. Integração da app (renderer↔preload↔main↔gateway) | 🔶 parcial | EditorClient, lifecycle e command bridge testados; sem Electron dirigido |
 | 4. E2E visual (Playwright + Electron da jornada) | ❌ ausente | — |
 | 5. Usabilidade | ❌ ausente | — |
 
@@ -975,18 +977,18 @@ adversariais).
 graph TD
   N5(["5 Usabilidade — ausente"])
   N4["4 E2E visual (Playwright + Electron) — ausente"]
-  N3["3 Integracao da app (renderer-preload-main-gateway) — fino"]
-  N2["2 Componentes (inspector, toolbar, paleta, canvas) — ausente"]
+  N3["3 Integracao da app (renderer-preload-main-gateway) — parcial"]
+  N2["2 Componentes (inspector, toolbar, paleta, canvas) — estrutural/core"]
   N1["1 Unidade (logica pura, invariantes, algoritmos) — forte"]
   N5 --> N4 --> N3 --> N2 --> N1
 ```
 
-*Mostra a piramide de testes do P7M com o estado observado por nivel: base solida de unidade e topo vazio — componentes e e2e visual ausentes, integracao fina. O desequilibrio espelha o gap plataforma-madura x produto-embrionario.*
+*Mostra a pirâmide de testes do P7M: base unitária forte, componentes e integração parcialmente cobertos por gates estruturais/core, e topo visual/usabilidade ainda vazio.*
 
-**RISCO estrutural:** `renderer.ts` (738 linhas) e o wire de `main.ts` (440) não têm
-teste automatizado — toda a máquina de ferramentas, hit-test, drag, hidratação, chips
-de supervisor e diálogos vivem sem rede de segurança. É a maior lacuna de teste do
-projeto (espelha o gap de produto).
+**RISCO estrutural remanescente:** os gates provam registries, reducers, contratos e
+wiring por inspeção de source, mas não exercitam layout/render/foco em um browser real.
+Regressões de CSS, eventos DOM e integração Electron continuam dependendo de e2e
+visual; não devem ser declaradas cobertas pelo teste estrutural.
 
 **Contract tests, property-based e mutation (recomendados):**
 
@@ -1041,7 +1043,8 @@ continuam fora deste benchmark.
 
 - **Produto** — novo runtime = adapter + perfil; nova capacidade = manifesto; novo
   comando/evento; novo pipeline por composição; nova ferramenta MCP como fachada; novo
-  painel dirigido por capacidades. **CONFIRMADO** como caminho de extensão (§preservar).
+  painel/comando/ferramenta por registry interno governado por seleção, modo e
+  capabilities. **CONFIRMADO** pela ADR-023.
 - **Desenvolvimento** — módulos com fronteira testada, baixo raio de mudança, ownership
   claro; agentes de IA operam pelo mesmo caminho. **CONFIRMADO.**
 - **Computacional** — stores SoA com capacidade fixa; tilemap ≤ 256² por mapa (mapas
@@ -1059,14 +1062,17 @@ projeto, diálogos) → `preload` (contrato `window.p7m` com contextIsolation) �
 `renderer` (UI) → `core/` (núcleos puros, executáveis fora do Electron e aptos a
 workers). O renderer **NÃO importa** Electron/Node (F2/F3); `main` só entra como *type*.
 
-**Padrões observados:** máquinas de estado (`ProjectLifecycle`, `StateMachine`),
-projeções (query do gateway), estado explícito. **Sem React/Redux** — e **NÃO DEVE**
-introduzi-los sem requisito; a stack é DOM puro sobre núcleos testados.
+**Padrões observados:** máquinas de estado (`ProjectLifecycle`, `StateMachine`,
+`EditorModeService`), projeções, registries internos (`Panel`, `Command`, `Tool`,
+`Inspector`), seleção transversal e layout por porta de persistência. **Sem
+React/Redux** — e **NÃO DEVE** introduzi-los sem requisito; a stack é DOM puro
+sobre núcleos testados.
 
-**Regra normativa (PR-4):** a lógica de interação do editor (ferramentas, hit-test,
-drag, snap) **DEVERIA** ser extraída de `renderer.ts` para `core/` (pura, testável,
-apta a `OffscreenCanvas`/worker — o loader vendorizado do AutoTiler já prepara o caminho
-para o worker).
+**PR-4 entregue:** `renderer.ts` é composition root mínima; interação de nível,
+hit-test, drag, seleção, enablement e layout vivem em módulos de `core/` ou adapters
+de view focados. Novos handlers de ferramenta **DEVEM** continuar puros quando
+possível. Contribuições são uma fronteira interna do MVP e **NÃO DEVEM** ser
+publicadas como API de plugins antes de requisitos reais de extensão.
 
 ## 30. Arquitetura do middleware
 
@@ -1141,6 +1147,8 @@ Já registrados em [`docs/adr/`](adr/README.md) (status Accepted):
 | [ADR-019](adr/ADR-019-freeze-medido-dos-transports.md) | Freeze medido do default e manutenção dos três transports existentes |
 | [ADR-020](adr/ADR-020-sessao-de-projeto-transacional.md) | Sessão de projeto explícita, replay privado e substituição atômica com rollback de runtime |
 | [ADR-021](adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md) | Lifecycle de arquivo durável, recovery explícito, templates e unidades canônicas |
+| [ADR-022](adr/ADR-022-historico-global-transacional.md) | Histórico global incremental, projeção otimista e savepoint lógico |
+| [ADR-023](adr/ADR-023-workbench-adaptativo-por-contribuicoes.md) | Workbench adaptativo por contribuições internas e seleção transversal |
 
 Cada ADR **DEVE** conter contexto, decisão, alternativas, consequências, riscos,
 critério de revisão, status, data e links para código e teste.
@@ -1166,6 +1174,12 @@ critério de revisão, status, data e links para código e teste.
   Electron/Node; `main` só type), F3 (Electron só em `main/`), F4 (proibido
   `writeUInt32LE`/`readUInt32LE` no source), F5 (SDKs de transporte — `@grpc/*`,
   `node:http` — só em `main/transport/`).
+- **Workbench adaptativo** (`npm run test:adaptive-workbench`): registries e
+  seleção puros, layout/persistência, composition root mínima, hosts por sessão,
+  navegação estrutural, adapters DOM críticos de palette/contexto exercitados fora
+  do Electron, inspeção estrutural dos demais adapters e projeção validada de
+  comandos no menu nativo. É gate de arquitetura/core, não substitui e2e visual
+  em Electron real.
 - **Engine E1–E5** (`ArchitectureTests.cs`) por **reflexão de assembly**: layering
   Core/Ipc/Graphics/Runtime + Core sem MonoGame.
 - **Semânticas:** testes `*_is_allocation_free` (um por hot loop), determinismo por seed,
@@ -1198,7 +1212,7 @@ executável, estável, relevante e difícil de validar manualmente.
 |---|---|---|---|
 | G1 | middleware | build + suíte middleware (inclui R1–R13) | sim |
 | G2 | engine | build + suíte engine (inclui E1–E5, Zero-GC) | sim |
-| G3 | frontend | build + suíte frontend (inclui F1–F5) | sim |
+| G3 | frontend | build + suíte frontend (inclui F1–F5) + gates lifecycle/canonical-editing/adaptive-workbench | sim |
 | G4 | e2e | `verify-phase1..4` com processos reais | sim |
 
 **Recomendados (separar por velocidade):**
@@ -1252,8 +1266,9 @@ broadcast); subsistema de engine (manifesto+hints); perfil (nova versão+razões
 - R-08: `docs/adr/` com os 15 ADRs retroativos.
 
 **Fase C — Testabilidade da UI (M, maior alavancagem):**
-- PR-4: extrair controlador puro do editor de níveis para `core/` + testes.
-- Esqueleto Playwright + Electron da jornada de aceite (pirâmide nível 4).
+- ✅ PR-4: controlador de nível e registries puros extraídos; shell adaptativo e
+  adapters DOM cobertos por testes fora do Electron (entregue pela ADR-023).
+- Resta o esqueleto Playwright + Electron da jornada de aceite (pirâmide nível 4).
 
 **Fase D — Resiliência/observabilidade sob requisito (M):**
 - PR-5: `correlationId` ponta a ponta.
@@ -1267,8 +1282,8 @@ funcional), P0.7 undo/redo global canônico (ADR-022, entregue), P0.8 diagnósti
 
 (Consolidados no Apêndice G — Top 15. Aqui, os de maior severidade.)
 
-- **RISCO-1 (Alta):** camada de produto sem teste (`renderer.ts`/`main.ts`; sem e2e
-  visual) — regressões de UX invisíveis ao CI.
+- **RISCO-1 (Média):** ainda não há e2e visual no Electron empacotado; os testes de
+  core e adapters DOM não validam CSS, foco nativo e integração do pacote completo.
 - **RISCO-4 (Média):** sem contract test schema↔handler — schemas podem divergir dos
   DTOs sem o CI perceber.
 - **RISCO-5 (Média):** path traversal em `asset_ingest` (R-07).
@@ -1314,7 +1329,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 | Chain of Responsibility | filters/pipelines | quando um predicado puro basta | HookBus filters, `pipeline:<id>:<stage>` | ordem acidental | HookBus ordering |
 | Strategy | variação real (perfis, runner) | variação inexistente | `editorRules`+governor; `ToolRunner` | Strategy prematuro | governor/gate |
 | State | ciclos de vida | fluxo linear | `ProjectLifecycle`, `ProcessSupervisor` | transição inválida não barrada | testes de lifecycle |
-| Registry | catálogos resolvíveis | Map simples sem política | `RuntimeProfileRegistry`, `CapabilityRegistry` | registry sem invariante | registry tests |
+| Registry | catálogos resolvíveis/contextuais | Map simples sem política | `RuntimeProfileRegistry`; registries de painel/comando/tool/Inspector | registry sem invariante | registry tests |
 | Composition Root | montar o grafo uma vez | espalhar `new` | `index.ts main()` | service locator | — |
 
 ## C. Matriz de paradigmas
@@ -1325,7 +1340,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 | Validação, conversão, matemática, hashing, AutoTiler, easing, projeção | **Funções puras** | `AutoTiler`, `fnv1a`, `stableStringify`, `reshapeCommand`, curvas Bézier, referências de CPU de shader |
 | Hot loops (Update/Draw, leitura de MMF) | **Data-Oriented Design** (SoA, Zero-GC) | `SkeletonStore`, `LightStore`, `TilemapStore`, `ActorStore`, seqlock reader |
 | Integrações (runtime, ferramentas, IPC, filesystem) | **Ports & Adapters** | `RuntimeAdapter`, `ToolRunner`, `ipc/` |
-| UI | **Estado explícito + projeções** (sem framework) | `ProjectLifecycle`, `WorkbenchModel`, query do gateway |
+| UI | **Estado explícito + projeções/contribuições** (sem framework) | `ProjectLifecycle`, `SelectionService`, registries, `WorkbenchLayoutController`, query do gateway |
 | Extensões | **Hooks e pipelines governados** | `HookBus`, `PipelineRunner` |
 
 ## D. Matriz de normas
@@ -1360,7 +1375,8 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
    harness.
 6. **Melhoria de resiliência:** timeout por estágio de pipeline sob requisito; limpeza
    de MMF órfão (DN-4). *(Migradores de schema já entregues — R-06.)*
-7. **Melhoria de testabilidade:** PR-4 (controlador puro do editor) + Playwright e2e.
+7. **Melhoria de testabilidade:** ✅ PR-4 entregue; próximo passo é Playwright e2e
+   no Electron empacotado.
 8. **Preparação para extensibilidade:** 2º adapter de exemplo exercitando o contrato
    já obrigatório de reset/reidratação e a união discriminada de projeção.
 
@@ -1389,7 +1405,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 
 | # | Risco | Sev. | Mitigação |
 |---|---|---|---|
-| 1 | Camada de produto sem teste (renderer/main; sem e2e visual) | Alta | PR-4 + Playwright |
+| 1 | Sem e2e visual no Electron empacotado | Média | Playwright; PR-4 já cobre core e adapters DOM |
 | 2 | ~~`reason` de projeção não obrigatório por tipo~~ | — | **Resolvido:** união discriminada + FF-1 (ADR-020) |
 | 3 | ~~Reidratação/limpeza fora da porta de adapter~~ | — | **Resolvido:** `resetSession` + `rehydrateFrom` obrigatórios (ADR-020) |
 | 4 | Schemas JSON não exercidos no CI | Média | R-05/FF-2 |
@@ -1431,7 +1447,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 | R-07 | middleware | Risco | path traversal em ingest | `AssetPipelineService.ts:119` | trust boundary | — | ISO 25010 (segurança) | validar caminho sob `assetsRoot` | P | Alta | caminho externo é rejeitado | teste de borda | remover guarda |
 | R-08 | docs | Melhoria | sem ADRs | inexistência de `docs/adr/` | ISO 42010 | — | 42010 | 15 ADRs retroativos | P | Média | ADR-001..015 presentes | — | remover diretório |
 | R-14 | docs | Melhoria | contagens/textos desatualizados | `GOVERNANCE.md:102`, `REQUIREMENTS.md:44`, `ARCHITECTURE.md:44,76` | P-4 | — | — | ✅ aplicado (I-2..I-5); resta I-6 (nota de mapeamento de nomes no contrato) | P | Média | docs sem contagens fixas (derivadas do CI) | — | git revert |
-| PR-4 | frontend | Melhoria | UI sem teste | `renderer.ts` (738 linhas) | P-8 | — | ISO 25010 | extrair controlador puro p/ `core/` + testes | M | Alta | lógica de ferramenta testada fora do Electron (F1) | unit do controlador | manter em renderer |
+| PR-4 | frontend | Confirmado | ✅ workbench modular e lógica de ferramentas testável | registries puros, `levelEditorTools`, `renderer.ts` mínimo; ADR-023 | P-8 | Registry/Composition Root | ISO 25010 | contribuições internas + adapters finos | — | Fechada | nova contribuição sem switch central; F1 em CI | unit/core/DOM adapters | git revert |
 | PR-5 | todos | Melhoria | sem correlação ponta a ponta | ausência | — | — | Trace Context (local) | `correlationId` em dispatch→project→engine | M | Média | um id percorre os 3 processos no log | teste de propagação | remover campo |
 
 ---

@@ -1,9 +1,7 @@
 /**
- * Vista do editor de níveis (P0.4) — DOM/eventos apenas; as decisões de
- * ferramenta vivem em core/levelEditorTools.ts (puras e testadas) e o
- * documento em core/intGridDocument.ts. Montada pelo workbench
- * (renderer.ts) com contexto explícito — organizada para crescer sem
- * estado de módulo compartilhado.
+ * Vista DOM do editor de níveis. O canvas encaminha entradas para a instância
+ * ativa do ToolRegistry; decisões geométricas continuam nos módulos puros de
+ * core e nenhuma ferramenta é escolhida por ID hardcoded na casca.
  */
 
 import { CanvasViewport } from "../core/canvasViewport.js";
@@ -11,27 +9,34 @@ import {
   commandFailureMessage,
   isAvailabilityError,
 } from "../core/canonicalCommandFeedback.js";
+import type { ContributionContext } from "../core/contributionContext.js";
+import type { DispatchOutcome, LevelPatchCommand } from "../core/editorCommands.js";
 import { IntGridDocument } from "../core/intGridDocument.js";
+import type { LevelEditorStore } from "../core/levelEditorStore.js";
 import {
   applyBrushAt,
   applyBrushStroke,
   commitDrag,
   dragCells,
   hitMarker,
+  LEVEL_EDITOR_TOOL_CONTROLLER_SERVICE,
   nextEntityId,
   type CellPoint,
+  type LevelEditorToolController,
+  type LevelEditorToolInput,
+  type LevelEditorToolInstance,
+  type LevelEditorToolKind,
   type LevelTool,
 } from "../core/levelEditorTools.js";
-import { cellToWorldCenter } from "./vendor/GridCoordinates.js";
-import type { DispatchOutcome, LevelPatchCommand } from "../core/editorCommands.js";
-import type { LevelEditorStore } from "../core/levelEditorStore.js";
 import {
   LEVEL_PALETTE,
   TILE_COLORS,
   defaultLevelRules,
   type LevelRule,
 } from "../core/levelPresets.js";
-import type { ExperienceGate } from "../core/experienceGate.js";
+import type { SelectionService } from "../core/selectionService.js";
+import type { ResolvedTool, ToolContext, ToolKind, ToolRegistry } from "../core/toolRegistry.js";
+import { cellToWorldCenter } from "./vendor/GridCoordinates.js";
 // type-only (apagado na compilação): o módulo real é vendorizado pelo build
 import type { resolveAutoTiles as ResolveAutoTilesFn } from "@p7m/middleware/dist/leveldesign/AutoTiler.js";
 
@@ -52,14 +57,36 @@ export interface LevelEditorContext {
   readonly store: LevelEditorStore;
   /** Registra a limpeza a executar quando o painel for trocado. */
   readonly setCleanup: (cleanup: () => void) => void;
-  /** Gate da experiência (governança por runtime); pode não existir offline. */
-  readonly gate: ExperienceGate | undefined;
+  /** Registry transversal; registrations são feitas pela composição. */
+  readonly toolRegistry: ToolRegistry;
+  /** Seleção compartilhada por canvas, árvore e inspector. */
+  readonly selection: SelectionService;
+  /** Contexto de capability/mode/serviços fornecido pelo workbench. */
+  readonly contributionContext: Omit<ContributionContext, "selection">;
+  /** Escopo explícito que impede seleções atrasadas de contaminarem outra sessão. */
+  readonly projectSessionId: string;
+  readonly projectId: string;
   /** ID vindo do documento/resultado de Open; nunca criado pelo renderer. */
   readonly preferredLevelId?: string;
+  /** Publica o resultado estruturado no diagnóstico da shell. */
+  readonly onDispatchOutcome?: (outcome: DispatchOutcome) => void;
 }
 
-export function mountLevelEditor(ctx: LevelEditorContext): void {
-  const { host, gate, store } = ctx;
+export interface LevelEditorViewHandle {
+  /** Reavalia capabilities sem reconstruir o canvas ou perder o viewport. */
+  activate(): void;
+}
+
+interface EntityMarker {
+  readonly entityId: string;
+  position: [number, number];
+}
+
+type DragLevelTool = Extract<LevelTool, "line" | "rect">;
+
+export function mountLevelEditor(ctx: LevelEditorContext): LevelEditorViewHandle {
+  const { host, projectId, projectSessionId, selection, store, toolRegistry } = ctx;
+  selection.switchSession(projectSessionId, "level-editor-mount");
   store.select(ctx.preferredLevelId);
   const initial = store.snapshot.level;
   let levelId = initial?.levelId;
@@ -72,14 +99,9 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     shortcut: String(entry.value),
   })) ?? LEVEL_PALETTE;
   let activeValue = 1;
-  let tool: LevelTool = "pencil";
 
-  // camada de entidades (P0.4 placement ⇄ P0.6 spawn): marcadores em pixels
-  // do mundo, hidratados do Blueprint e mantidos pelos próprios dispatches
-  interface EntityMarker {
-    entityId: string;
-    position: [number, number];
-  }
+  // Marcadores são hidratados da projeção canônica e só recebem feedback
+  // otimista enquanto o dispatch correspondente aguarda confirmação.
   let entityDefinitionId = store.snapshot.playerEntityDefinitionId;
   const entities = new Map<string, EntityMarker>();
   for (const entity of store.snapshot.entities) {
@@ -93,65 +115,106 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   const view = document.createElement("div");
   view.id = "level-view";
 
-  // toolbar do editor
   const toolbar = document.createElement("div");
   toolbar.id = "level-toolbar";
+  toolbar.setAttribute("role", "toolbar");
+  toolbar.setAttribute("aria-label", "Ferramentas do nível");
+
+  const toolStrip = document.createElement("span");
+  toolStrip.className = "level-tool-contributions";
+  toolStrip.setAttribute("role", "group");
+  toolStrip.setAttribute("aria-label", "Ferramentas de edição");
+  toolbar.append(toolStrip);
+
+  const addSeparator = (): void => {
+    const separator = document.createElement("span");
+    separator.className = "sep";
+    separator.setAttribute("role", "separator");
+    toolbar.append(separator);
+  };
   const addButton = (label: string, onClick: () => void, title?: string): HTMLButtonElement => {
-    const b = document.createElement("button");
-    b.textContent = label;
-    if (title) b.title = title;
-    b.addEventListener("click", onClick);
-    toolbar.append(b);
-    return b;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    if (title) button.title = title;
+    button.addEventListener("click", onClick);
+    toolbar.append(button);
+    return button;
   };
 
-  const toolButtons = new Map<string, HTMLButtonElement>();
-  const selectTool = (name: LevelTool): void => {
-    tool = name;
-    for (const [id, b] of toolButtons) b.setAttribute("aria-pressed", String(id === name));
-  };
-  toolButtons.set("pencil", addButton("Pincel", () => selectTool("pencil"), "Pintar célula (arraste)"));
-  toolButtons.set("eraser", addButton("Borracha", () => selectTool("eraser")));
-  toolButtons.set("flood", addButton("Balde", () => selectTool("flood"), "Preencher região conectada"));
-  toolButtons.set("rect", addButton("Retângulo", () => selectTool("rect"), "Arraste para preencher a área"));
-  toolButtons.set("line", addButton("Linha", () => selectTool("line"), "Arraste para traçar uma linha"));
-  toolButtons.set("picker", addButton("Conta-gotas", () => selectTool("picker"), "Clique para pegar o significado da célula"));
-  const entityToolButton = addButton(
-    "Jogador",
-    () => selectTool("entity"),
-    "Clique posiciona, arraste move, Delete remove",
-  );
-  toolButtons.set("entity", entityToolButton);
-  entityToolButton.disabled = true; // habilitado somente após ler a definição real
-  selectTool("pencil");
-
-  // governança: a ferramenta de spawn segue a decisão do perfil/manifesto
-  // (fail-safe, com a razão no tooltip — nunca um "indisponível" genérico)
-  const spawnAnswer = gate?.feature("entities.spawn");
-  if (spawnAnswer && !spawnAnswer.enabled) {
-    entityToolButton.disabled = true;
-    entityToolButton.title = spawnAnswer.reason;
-  }
-
-  toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
-
-  const swatches = new Map<number, HTMLButtonElement>();
+  addSeparator();
   const paletteHost = document.createElement("span");
   paletteHost.className = "level-palette";
+  paletteHost.setAttribute("role", "group");
+  paletteHost.setAttribute("aria-label", "Significados da paleta");
   toolbar.append(paletteHost);
+
+  addSeparator();
+  addButton(
+    "Editar paleta…",
+    () => void editActivePaletteEntry().catch(showCommandError("editar paleta")),
+    "Altera nome/cor do significado ativo em uma transação canônica",
+  );
+
+  const canvas = document.createElement("canvas");
+  canvas.id = "level-canvas";
+  canvas.tabIndex = 0;
+  canvas.setAttribute("role", "application");
+  canvas.setAttribute(
+    "aria-label",
+    "Canvas do nível. Use as setas para navegar, Enter ou Espaço para aplicar a ferramenta e a barra para escolher uma ação.",
+  );
+  canvas.setAttribute("aria-describedby", "level-status");
+
+  const status = document.createElement("div");
+  status.id = "level-status";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  status.textContent = "Selecione uma ferramenta · roda = zoom · botão do meio = pan";
+
+  view.append(toolbar, canvas, status);
+  host.append(view);
+
+  const viewport = new CanvasViewport(800, 600);
+  const context = canvas.getContext("2d")!;
+  const resize = (): void => {
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.floor(rect.width));
+    canvas.height = Math.max(1, Math.floor(rect.height));
+    viewport.resize(canvas.width, canvas.height);
+    repaint();
+  };
+  const resizeObserver = new ResizeObserver(resize);
+  resizeObserver.observe(canvas);
+
+  let meaningColors = new Map(levelPalette.map((entry) => [entry.value, entry.color]));
+  const swatches = new Map<number, HTMLButtonElement>();
+
   const selectValue = (value: number): void => {
     activeValue = value;
-    for (const [v, s] of swatches) s.setAttribute("aria-pressed", String(v === value));
+    for (const [candidate, swatch] of swatches) {
+      swatch.setAttribute("aria-pressed", String(candidate === value));
+    }
   };
+
   const renderPaletteSwatches = (): void => {
     swatches.clear();
     paletteHost.replaceChildren();
     for (const entry of levelPalette) {
       const swatch = document.createElement("button");
+      swatch.type = "button";
       swatch.className = "palette-swatch";
       swatch.style.background = entry.color;
-      swatch.title = `${entry.name} (tecla ${entry.shortcut})`;
-      swatch.setAttribute("aria-label", entry.name);
+      swatch.title = `${entry.value} — ${entry.name} (tecla ${entry.shortcut})`;
+      swatch.setAttribute("aria-label", `${entry.value}: ${entry.name}`);
+      swatch.setAttribute("aria-keyshortcuts", entry.shortcut);
+
+      // O número continua visível sobre qualquer cor: a paleta nunca comunica
+      // significado apenas pelo matiz do swatch.
+      const valueBadge = document.createElement("span");
+      valueBadge.className = "palette-value-label";
+      valueBadge.textContent = String(entry.value);
+      swatch.append(valueBadge);
       swatch.addEventListener("click", () => selectValue(entry.value));
       swatches.set(entry.value, swatch);
       paletteHost.append(swatch);
@@ -161,34 +224,16 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   };
   renderPaletteSwatches();
 
-  toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
-  const doUndo = (): void => {
-    void window.p7m.undo().catch(showCommandError("desfazer"));
-  };
-  const doRedo = (): void => {
-    void window.p7m.redo().catch(showCommandError("refazer"));
-  };
-  addButton("Desfazer", doUndo, "Ctrl+Z — histórico global do projeto");
-  addButton("Refazer", doRedo, "Ctrl+Shift+Z — histórico global do projeto");
-  addButton(
-    "Editar paleta…",
-    () => void editActivePaletteEntry().catch(showCommandError("editar paleta")),
-    "Altera nome/cor do significado ativo em uma transação canônica",
-  );
-  addButton("Enquadrar", () => { viewport.fit(doc.width, doc.height, tileSize); repaint(); });
-
-  // "Pinte significado, derive arte": preview usa o MESMO resolvedor da projeção
+  // "Pinte significado, derive arte": o preview usa o mesmo resolvedor da projeção.
   let artPreview = false;
   let previewTiles: Int32Array | undefined;
   let previewTimer: ReturnType<typeof setTimeout> | undefined;
-  const previewBtn = addButton("Ver arte", () => {
-    artPreview = !artPreview;
-    previewBtn.setAttribute("aria-pressed", String(artPreview));
-    schedulePreview(0);
-  }, "Alterna entre significado (IntGrid) e arte derivada pelas regras");
 
   function schedulePreview(delayMs = 80): void {
-    if (!artPreview) { repaint(); return; }
+    if (!artPreview) {
+      repaint();
+      return;
+    }
     clearTimeout(previewTimer);
     previewTimer = setTimeout(() => {
       void loadAutoTiler().then((resolve) => {
@@ -205,6 +250,27 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   function onEdited(): void {
     repaint();
     schedulePreview();
+  }
+
+  addButton("Enquadrar", () => {
+    viewport.fit(doc.width, doc.height, tileSize);
+    repaint();
+  });
+  const previewButton = addButton("Ver arte", () => {
+    artPreview = !artPreview;
+    previewButton.setAttribute("aria-pressed", String(artPreview));
+    schedulePreview(0);
+  }, "Alterna entre significado (IntGrid) e arte derivada pelas regras");
+  addButton(
+    "Recalcular arte",
+    () => schedulePreview(0),
+    "Reexecuta a arte derivada; toda edição já segue o caminho canônico",
+  );
+
+  function showCommandError(action: string): (error: unknown) => void {
+    return (error) => {
+      status.textContent = commandFailureMessage(`Falha ao ${action}`, error);
+    };
   }
 
   let openLevelTransactionId: string | undefined;
@@ -242,15 +308,13 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     status.textContent = `${gesture.label}: confirmando…`;
     let confirmationUncertain = false;
     try {
-      const outcome = await window.p7m.dispatch(
-        command.kind,
-        {
-          levelId: command.levelId,
-          changes: command.changes,
-          transactionId: command.transactionId,
-          metadata: command.metadata,
-        },
-      ) as DispatchOutcome;
+      const outcome = await window.p7m.dispatch(command.kind, {
+        levelId: command.levelId,
+        changes: command.changes,
+        transactionId: command.transactionId,
+        metadata: command.metadata,
+      }) as DispatchOutcome;
+      ctx.onDispatchOutcome?.(outcome);
       // A resposta sela o patch antes de o journal necessariamente entregar o
       // eco. O apply posterior é idempotente pelo transactionId.
       confirmationUncertain = !store.applyAcknowledgement(outcome.event);
@@ -273,43 +337,6 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     window.p7m.endEditGesture(transactionId);
     onEdited();
   }
-
-  addButton(
-    "Recalcular arte",
-    () => schedulePreview(0),
-    "Reexecuta a arte derivada; toda edição já segue o caminho canônico",
-  );
-
-  // canvas
-  const canvas = document.createElement("canvas");
-  canvas.id = "level-canvas";
-  const status = document.createElement("div");
-  status.id = "level-status";
-  status.textContent = "Pincel: pinte com o botão esquerdo · roda = zoom · botão do meio = pan";
-
-  function showCommandError(action: string): (error: unknown) => void {
-    return (error) => {
-      status.textContent = commandFailureMessage(`Falha ao ${action}`, error);
-    };
-  }
-
-  view.append(toolbar, canvas, status);
-  host.append(view);
-
-  const viewport = new CanvasViewport(800, 600);
-  const context = canvas.getContext("2d")!;
-
-  const resize = (): void => {
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = Math.max(1, Math.floor(rect.width));
-    canvas.height = Math.max(1, Math.floor(rect.height));
-    viewport.resize(canvas.width, canvas.height);
-    repaint();
-  };
-  const resizeObserver = new ResizeObserver(resize);
-  resizeObserver.observe(canvas);
-
-  let meaningColors = new Map(levelPalette.map((p) => [p.value, p.color]));
 
   function applyPaletteEntryLocally(entry: { value: number; name: string; color: string }): void {
     levelPalette = levelPalette.map((current) =>
@@ -337,7 +364,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     const transactionId = crypto.randomUUID();
     window.p7m.beginEditGesture(transactionId);
     applyPaletteEntryLocally(after);
-    status.textContent = `Editar paleta: confirmando…`;
+    status.textContent = "Editar paleta: confirmando…";
     let confirmationUncertain = false;
     try {
       const outcome = await window.p7m.dispatch("level/palette", {
@@ -346,6 +373,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         transactionId,
         metadata: { label: `Alterar paleta: ${current.name}` },
       }) as DispatchOutcome;
+      ctx.onDispatchOutcome?.(outcome);
       confirmationUncertain = !store.applyAcknowledgement(outcome.event);
       status.textContent = `Paleta alterada para “${name}”.`;
     } catch (error) {
@@ -357,9 +385,11 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     }
   }
 
-  // arrasto de retângulo/linha: âncora + célula corrente para o ghost
+  // Ghost compartilhado apenas como estado visual; cada strategy controla seu
+  // próprio ciclo de início/commit/cancelamento.
   let dragAnchor: CellPoint | undefined;
   let dragCurrent: CellPoint | undefined;
+  let dragPreviewTool: DragLevelTool | undefined;
 
   function repaint(): void {
     context.fillStyle = "#101216";
@@ -385,19 +415,32 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       }
     }
 
-    // ghost do retângulo/linha em andamento (semitransparente na cor ativa)
-    if (dragAnchor && dragCurrent) {
+    if (dragPreviewTool && dragAnchor && dragCurrent) {
       context.globalAlpha = 0.55;
       context.fillStyle = meaningColors.get(activeValue) ?? "#888";
       const size = tileSize * zoom;
-      for (const [x, y] of dragCells(tool, dragAnchor, dragCurrent)) {
+      for (const [x, y] of dragCells(dragPreviewTool, dragAnchor, dragCurrent)) {
         const screen = viewport.worldToScreen(x * tileSize, y * tileSize);
         context.fillRect(screen.x, screen.y, size - gap, size - gap);
       }
       context.globalAlpha = 1;
     }
 
-    // marcadores de entidade (círculo com inicial; anel na seleção)
+    // Seleção usa contorno + tracejado, não apenas outra cor.
+    const currentSelection = selection.current;
+    if (currentSelection?.kind === "cell" && currentSelection.levelId === levelId) {
+      context.save();
+      context.lineWidth = 2;
+      context.strokeStyle = "#fff";
+      context.setLineDash([5, 3]);
+      for (const cell of currentSelection.cells) {
+        const screen = viewport.worldToScreen(cell.x * tileSize, cell.y * tileSize);
+        const size = tileSize * zoom;
+        context.strokeRect(screen.x + 1, screen.y + 1, Math.max(1, size - 2), Math.max(1, size - 2));
+      }
+      context.restore();
+    }
+
     for (const marker of entities.values()) {
       const screen = viewport.worldToScreen(marker.position[0], marker.position[1]);
       const radius = Math.max(5, tileSize * 0.45 * zoom);
@@ -407,7 +450,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       context.fill();
       if (marker.entityId === selectedEntityId) {
         context.lineWidth = 2;
-        context.strokeStyle = "#ffffff";
+        context.strokeStyle = "#fff";
         context.stroke();
       }
       context.fillStyle = "#fff";
@@ -416,22 +459,62 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       context.textBaseline = "middle";
       context.fillText("J", screen.x, screen.y);
     }
-
   }
 
-  // ---- camada de entidades: hit-test, placement, drag e remoção ----
+  function cellAtScreen(screenX: number, screenY: number): CellPoint | undefined {
+    const cell = viewport.screenToCell(screenX, screenY, tileSize, doc.width, doc.height);
+    return cell.inside ? { x: cell.x, y: cell.y } : undefined;
+  }
 
-  function entityAtScreen(offsetX: number, offsetY: number): EntityMarker | undefined {
+  function publishCellSelection(cell: CellPoint): void {
+    if (!levelId) return;
+    const coordinate = { x: cell.x, y: cell.y, index: cell.y * doc.width + cell.x };
+    selection.select({
+      kind: "cell",
+      projectSessionId,
+      projectId,
+      levelId,
+      cells: [coordinate],
+      anchor: coordinate,
+    }, "level-canvas");
+  }
+
+  function publishEntitySelection(entityId: string): void {
+    selection.select({
+      kind: "entity-instance",
+      projectSessionId,
+      projectId,
+      entityId,
+      ...(levelId ? { levelId } : {}),
+    }, "level-canvas");
+  }
+
+  function publishLevelSelection(): void {
+    if (!levelId) return;
+    selection.select({
+      kind: "level",
+      projectSessionId,
+      projectId,
+      levelId,
+    }, "level-canvas");
+  }
+
+  function entityAtScreen(screenX: number, screenY: number): EntityMarker | undefined {
     const zoom = viewport.current.zoom;
     const hitRadius = Math.max(6, tileSize * 0.5 * zoom);
-    return hitMarker(entities.values(), offsetX, offsetY, (wx, wy) => viewport.worldToScreen(wx, wy), hitRadius);
+    return hitMarker(
+      entities.values(),
+      screenX,
+      screenY,
+      (worldX, worldY) => viewport.worldToScreen(worldX, worldY),
+      hitRadius,
+    );
   }
 
-  /** Posição do clique em pixels do mundo, ancorada no centro da célula. */
-  function snapToCellCenter(offsetX: number, offsetY: number): [number, number] | undefined {
-    const cell = viewport.screenToCell(offsetX, offsetY, tileSize, doc.width, doc.height);
-    if (!cell.inside) return undefined;
-    return [...cellToWorldCenter({ x: cell.x, y: cell.y }, tileSize)];
+  /** Posição em pixels do mundo, centralizada na célula pela conversão única. */
+  function snapToCellCenter(screenX: number, screenY: number): [number, number] | undefined {
+    const cell = cellAtScreen(screenX, screenY);
+    return cell ? [...cellToWorldCenter(cell, tileSize)] : undefined;
   }
 
   async function ensureEntityDef(): Promise<void> {
@@ -449,6 +532,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     window.p7m.beginEditGesture(transactionId);
     entities.set(entityId, marker);
     selectedEntityId = entityId;
+    publishEntitySelection(entityId);
     repaint();
     let confirmationUncertain = false;
     try {
@@ -460,12 +544,14 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         transactionId,
         metadata: { label: "Posicionar Jogador" },
       }) as DispatchOutcome;
+      ctx.onDispatchOutcome?.(outcome);
       confirmationUncertain = !store.applyAcknowledgement(outcome.event);
     } catch (error) {
       confirmationUncertain = isAvailabilityError(error);
       if (!confirmationUncertain) {
         entities.delete(entityId);
         selectedEntityId = undefined;
+        publishLevelSelection();
         repaint();
       }
       throw error;
@@ -490,6 +576,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         transactionId,
         metadata: { label: "Mover Jogador" },
       }) as DispatchOutcome;
+      ctx.onDispatchOutcome?.(outcome);
       confirmationUncertain = !store.applyAcknowledgement(outcome.event);
       status.textContent = `Jogador movido para (${position[0]}, ${position[1]}).`;
     } catch (error) {
@@ -513,6 +600,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     window.p7m.beginEditGesture(transactionId);
     entities.delete(entityId);
     selectedEntityId = undefined;
+    publishLevelSelection();
     repaint();
     let confirmationUncertain = false;
     try {
@@ -521,6 +609,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         transactionId,
         metadata: { label: "Remover Jogador" },
       }) as DispatchOutcome;
+      ctx.onDispatchOutcome?.(outcome);
       confirmationUncertain = !store.applyAcknowledgement(outcome.event);
       status.textContent = "Jogador removido.";
     } catch (error) {
@@ -528,6 +617,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       if (!confirmationUncertain) {
         entities.set(entityId, marker);
         selectedEntityId = entityId;
+        publishEntitySelection(entityId);
         repaint();
       }
       throw error;
@@ -536,152 +626,506 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     }
   }
 
-  const applyAt = (offsetX: number, offsetY: number): CellPoint | undefined => {
-    const cell = viewport.screenToCell(offsetX, offsetY, tileSize, doc.width, doc.height);
-    if (!cell.inside) return undefined;
-    if (applyBrushAt(doc, tool, cell.x, cell.y, activeValue)) onEdited();
-    return { x: cell.x, y: cell.y };
-  };
+  function applyAt(
+    brush: Extract<LevelTool, "pencil" | "eraser" | "flood">,
+    screenX: number,
+    screenY: number,
+  ): CellPoint | undefined {
+    const cell = cellAtScreen(screenX, screenY);
+    if (!cell) return undefined;
+    publishCellSelection(cell);
+    if (applyBrushAt(doc, brush, cell.x, cell.y, activeValue)) onEdited();
+    return cell;
+  }
 
-  // Atalhos locais: undo/redo é global e fica no workbench, não nesta vista.
-  const onKeyDown = (e: KeyboardEvent): void => {
-    if (e.target instanceof HTMLInputElement) return;
-    const paletteEntry = levelPalette.find((p) => p.shortcut === e.key);
-    if (paletteEntry) { selectValue(paletteEntry.value); return; }
-    if (e.key === "Delete" && selectedEntityId) {
-      e.preventDefault();
-      void removeSelectedEntity().catch(showCommandError("remover Jogador"));
-    }
-  };
-  window.addEventListener("keydown", onKeyDown);
+  const ownedToolInstances = new Set<LevelEditorToolInstance>();
 
-  let painting = false;
-  let lastPaintCell: CellPoint | undefined;
-  let panning = false;
-  let last = { x: 0, y: 0 };
-  canvas.addEventListener("mousedown", (e) => {
-    if (e.button === 1) { panning = true; last = { x: e.offsetX, y: e.offsetY }; e.preventDefault(); return; }
-    if (e.button !== 0) return;
+  function createToolInstance(
+    handle: (input: LevelEditorToolInput) => void,
+    cancel: (reason: string) => void = () => undefined,
+  ): LevelEditorToolInstance {
+    let disposed = false;
+    let instance: LevelEditorToolInstance;
+    instance = {
+      handleInput(input): void {
+        if (!disposed) handle(input);
+      },
+      cancel(reason): void {
+        if (!disposed) cancel(reason);
+      },
+      dispose(): void {
+        disposed = true;
+        ownedToolInstances.delete(instance);
+      },
+    };
+    ownedToolInstances.add(instance);
+    return instance;
+  }
 
-    if (tool === "picker") {
-      const cell = viewport.screenToCell(e.offsetX, e.offsetY, tileSize, doc.width, doc.height);
-      if (cell.inside) {
-        const value = doc.valueAt(cell.x, cell.y);
-        if (value > 0) selectValue(value);
-        selectTool(value > 0 ? "pencil" : "eraser");
-        status.textContent = value > 0
-          ? `Significado "${levelPalette.find((p) => p.value === value)?.name ?? value}" selecionado.`
-          : "Célula vazia: borracha selecionada.";
-      }
-      return;
-    }
-
-    if (tool === "entity") {
-      const hit = entityAtScreen(e.offsetX, e.offsetY);
+  function createSelectionTool(): LevelEditorToolInstance {
+    return createToolInstance((input) => {
+      if (input.type !== "pointer-down" || input.button !== 0) return;
+      const hit = entityAtScreen(input.screenX, input.screenY);
       if (hit) {
         selectedEntityId = hit.entityId;
-        draggingEntity = hit;
-        draggingEntityBefore = [...hit.position];
-        draggingEntityTransactionId = crypto.randomUUID();
-        window.p7m.beginEditGesture(draggingEntityTransactionId);
+        publishEntitySelection(hit.entityId);
+      } else {
+        selectedEntityId = undefined;
+        const cell = cellAtScreen(input.screenX, input.screenY);
+        if (cell) publishCellSelection(cell);
+      }
+      repaint();
+    });
+  }
+
+  function createBrushTool(brush: Extract<LevelTool, "pencil" | "eraser">): LevelEditorToolInstance {
+    let painting = false;
+    let lastPaintCell: CellPoint | undefined;
+    const labels: Record<typeof brush, string> = {
+      pencil: "Pintar células",
+      eraser: "Apagar células",
+    };
+    const reset = (): void => {
+      painting = false;
+      lastPaintCell = undefined;
+    };
+    return createToolInstance((input) => {
+      if (input.type === "pointer-down" && input.button === 0) {
+        beginLevelGesture(labels[brush]);
+        painting = true;
+        lastPaintCell = applyAt(brush, input.screenX, input.screenY);
+        return;
+      }
+      if (input.type === "pointer-move" && painting) {
+        const current = cellAtScreen(input.screenX, input.screenY);
+        if (current) {
+          publishCellSelection(current);
+          if (lastPaintCell && applyBrushStroke(doc, brush, lastPaintCell, current, activeValue)) {
+            onEdited();
+          }
+          lastPaintCell = current;
+        }
+        return;
+      }
+      if (input.type === "pointer-up" && painting) {
+        reset();
+        void finishLevelGesture().catch(showCommandError("editar nível"));
+      }
+    }, () => {
+      if (painting) cancelLevelGesture();
+      reset();
+    });
+  }
+
+  function createFloodTool(): LevelEditorToolInstance {
+    return createToolInstance((input) => {
+      if (input.type !== "pointer-down" || input.button !== 0) return;
+      beginLevelGesture("Preencher região");
+      applyAt("flood", input.screenX, input.screenY);
+      void finishLevelGesture().catch(showCommandError("preencher região"));
+    }, cancelLevelGesture);
+  }
+
+  function createDragTool(kind: Extract<LevelEditorToolKind, "line" | "rectangle">): LevelEditorToolInstance {
+    const legacyByKind: Record<typeof kind, DragLevelTool> = { line: "line", rectangle: "rect" };
+    const labelByKind: Record<typeof kind, string> = {
+      line: "Pintar linha",
+      rectangle: "Pintar retângulo",
+    };
+    const legacy = legacyByKind[kind];
+    const reset = (): void => {
+      dragAnchor = undefined;
+      dragCurrent = undefined;
+      dragPreviewTool = undefined;
+    };
+    return createToolInstance((input) => {
+      if (input.type === "pointer-down" && input.button === 0) {
+        const cell = cellAtScreen(input.screenX, input.screenY);
+        if (!cell) return;
+        beginLevelGesture(labelByKind[kind]);
+        publishCellSelection(cell);
+        dragAnchor = cell;
+        dragCurrent = cell;
+        dragPreviewTool = legacy;
         repaint();
         return;
       }
-      const position = snapToCellCenter(e.offsetX, e.offsetY);
-      if (position) {
-        void placeEntityAt(position).catch((err) => {
-          status.textContent = `Falha ao posicionar: ${err instanceof Error ? err.message : err}`;
-        });
+      if (input.type === "pointer-move" && dragAnchor) {
+        const cell = cellAtScreen(input.screenX, input.screenY);
+        if (cell) {
+          dragCurrent = cell;
+          publishCellSelection(cell);
+          repaint();
+        }
+        return;
       }
-      return;
-    }
-
-    if (tool === "rect" || tool === "line") {
-      const cell = viewport.screenToCell(e.offsetX, e.offsetY, tileSize, doc.width, doc.height);
-      if (cell.inside) {
-        beginLevelGesture(tool === "rect" ? "Pintar retângulo" : "Pintar linha");
-        dragAnchor = { x: cell.x, y: cell.y };
-        dragCurrent = { x: cell.x, y: cell.y };
-        repaint();
+      if (input.type === "pointer-up" && dragAnchor && dragCurrent) {
+        const anchor = dragAnchor;
+        const current = dragCurrent;
+        reset();
+        commitDrag(doc, legacy, anchor, current, activeValue);
+        onEdited();
+        void finishLevelGesture().catch(showCommandError("editar nível"));
       }
-      return;
-    }
+    }, () => {
+      if (dragAnchor) cancelLevelGesture();
+      reset();
+      repaint();
+    });
+  }
 
-    if (tool === "flood") {
-      beginLevelGesture("Preencher região");
-      applyAt(e.offsetX, e.offsetY);
-      void finishLevelGesture().catch(showCommandError("preencher região"));
-      return;
+  function activateFirstToolOfKind(kind: LevelEditorToolKind): boolean {
+    const resolved = toolRegistry.list(toolContext, { includeDisabled: true })
+      .find((candidate) => candidate.contribution.kind === kind && candidate.enabled);
+    if (!resolved) return false;
+    toolRegistry.activate(resolved.contribution.id, toolContext);
+    return true;
+  }
+
+  function createPickerTool(): LevelEditorToolInstance {
+    return createToolInstance((input) => {
+      if (input.type !== "pointer-down" || input.button !== 0) return;
+      const cell = cellAtScreen(input.screenX, input.screenY);
+      if (!cell) return;
+      publishCellSelection(cell);
+      const value = doc.valueAt(cell.x, cell.y);
+      if (value > 0) selectValue(value);
+      const nextKind: LevelEditorToolKind = value > 0 ? "pencil" : "eraser";
+      status.textContent = value > 0
+        ? `Significado “${levelPalette.find((entry) => entry.value === value)?.name ?? value}” selecionado.`
+        : "Célula vazia: borracha selecionada.";
+      activateFirstToolOfKind(nextKind);
+    });
+  }
+
+  function cancelEntityDrag(): void {
+    if (draggingEntity && draggingEntityBefore) draggingEntity.position = draggingEntityBefore;
+    if (draggingEntityTransactionId) window.p7m.endEditGesture(draggingEntityTransactionId);
+    draggingEntity = undefined;
+    draggingEntityBefore = undefined;
+    draggingEntityTransactionId = undefined;
+    repaint();
+  }
+
+  function createEntityTool(): LevelEditorToolInstance {
+    return createToolInstance((input) => {
+      if (input.type === "delete") {
+        void removeSelectedEntity().catch(showCommandError("remover Jogador"));
+        return;
+      }
+      if (input.type === "pointer-down" && input.button === 0) {
+        const hit = entityAtScreen(input.screenX, input.screenY);
+        if (hit) {
+          selectedEntityId = hit.entityId;
+          publishEntitySelection(hit.entityId);
+          draggingEntity = hit;
+          draggingEntityBefore = [...hit.position];
+          draggingEntityTransactionId = crypto.randomUUID();
+          window.p7m.beginEditGesture(draggingEntityTransactionId);
+          repaint();
+          return;
+        }
+        const position = snapToCellCenter(input.screenX, input.screenY);
+        if (position) {
+          void placeEntityAt(position).catch((error) => {
+            status.textContent = `Falha ao posicionar: ${error instanceof Error ? error.message : error}`;
+          });
+        }
+        return;
+      }
+      if (input.type === "pointer-move" && draggingEntity) {
+        const position = snapToCellCenter(input.screenX, input.screenY);
+        if (position) {
+          draggingEntity.position = position;
+          repaint();
+        }
+        return;
+      }
+      if (input.type === "pointer-up" && draggingEntity) {
+        const marker = draggingEntity;
+        const before = draggingEntityBefore ?? [...marker.position];
+        const transactionId = draggingEntityTransactionId;
+        draggingEntity = undefined;
+        draggingEntityBefore = undefined;
+        draggingEntityTransactionId = undefined;
+        if (transactionId) {
+          void moveEntity(marker, before, [...marker.position], transactionId)
+            .catch(showCommandError("mover Jogador"));
+        }
+      }
+    }, cancelEntityDrag);
+  }
+
+  const toolFactories = new Map<LevelEditorToolKind, () => LevelEditorToolInstance>([
+    ["selection", createSelectionTool],
+    ["pencil", () => createBrushTool("pencil")],
+    ["eraser", () => createBrushTool("eraser")],
+    ["line", () => createDragTool("line")],
+    ["rectangle", () => createDragTool("rectangle")],
+    ["flood", createFloodTool],
+    ["picker", createPickerTool],
+    ["entity", createEntityTool],
+  ]);
+
+  const toolController: LevelEditorToolController = {
+    activate(kind) {
+      const factory = toolFactories.get(kind);
+      if (!factory) throw new Error(`A ferramenta “${kind}” não opera neste editor.`);
+      return factory();
+    },
+  };
+  const services = new Map(ctx.contributionContext.services ?? []);
+  services.set(LEVEL_EDITOR_TOOL_CONTROLLER_SERVICE, toolController);
+  const toolContext: ToolContext = {
+    ...ctx.contributionContext,
+    selection,
+    services,
+  };
+
+  const toolButtons = new Map<string, HTMLButtonElement>();
+
+  function isLevelEditorToolKind(kind: ToolKind): kind is LevelEditorToolKind {
+    return toolFactories.has(kind as LevelEditorToolKind);
+  }
+
+  function viewAvailability(resolved: ResolvedTool): { enabled: boolean; reason?: string } {
+    if (!isLevelEditorToolKind(resolved.contribution.kind)) {
+      return { enabled: false, reason: "Esta ferramenta ainda não opera no editor de níveis." };
     }
-    if (tool === "pencil" || tool === "eraser") {
-      beginLevelGesture(tool === "eraser" ? "Apagar células" : "Pintar células");
-      painting = true;
-      lastPaintCell = applyAt(e.offsetX, e.offsetY);
+    if (!levelId) {
+      return { enabled: false, reason: "O projeto ativo não possui um nível editável." };
+    }
+    if (resolved.contribution.kind === "entity" && !entityDefinitionId) {
+      return { enabled: false, reason: "O documento não possui uma definição Player." };
+    }
+    return {
+      enabled: resolved.enabled,
+      ...(resolved.reason ? { reason: resolved.reason } : {}),
+    };
+  }
+
+  function updateToolPressedState(): void {
+    for (const [id, button] of toolButtons) {
+      button.setAttribute("aria-pressed", String(toolRegistry.activeId === id));
+    }
+    canvas.style.cursor = toolRegistry.activeId
+      ? toolRegistry.get(toolRegistry.activeId)?.cursor ?? "default"
+      : "default";
+  }
+
+  function refreshLocalToolAvailability(): void {
+    const activeId = toolRegistry.activeId;
+    if (!activeId) return;
+    const resolved = toolRegistry.availability(activeId, toolContext);
+    if (!resolved || !viewAvailability(resolved).enabled) {
+      toolRegistry.deactivate("unavailable");
+    }
+  }
+
+  function renderToolButtons(): void {
+    const focusedId = document.activeElement instanceof HTMLElement
+      ? document.activeElement.dataset.toolId
+      : undefined;
+    toolButtons.clear();
+    toolStrip.replaceChildren();
+    for (const resolved of toolRegistry.list(toolContext, { includeDisabled: true })) {
+      const { contribution } = resolved;
+      const availability = viewAvailability(resolved);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = contribution.label;
+      button.dataset.toolId = contribution.id;
+      button.setAttribute("aria-pressed", String(toolRegistry.activeId === contribution.id));
+      button.setAttribute("aria-disabled", String(!availability.enabled));
+      const explanation = [contribution.description, availability.reason].filter(Boolean).join(" — ");
+      if (explanation) button.title = explanation;
+      if (!availability.enabled) {
+        button.classList.add("tool-disabled");
+        button.setAttribute(
+          "aria-label",
+          `${contribution.label}. Indisponível: ${availability.reason ?? "recurso não habilitado"}`,
+        );
+      }
+      button.addEventListener("click", () => {
+        if (!availability.enabled) {
+          status.textContent = availability.reason ?? "Ferramenta indisponível.";
+          return;
+        }
+        try {
+          toolRegistry.activate(contribution.id, toolContext);
+        } catch (error) {
+          status.textContent = error instanceof Error ? error.message : String(error);
+        }
+      });
+      toolButtons.set(contribution.id, button);
+      toolStrip.append(button);
+    }
+    updateToolPressedState();
+    if (focusedId) toolButtons.get(focusedId)?.focus();
+  }
+
+  const onToolbarKeyDown = (event: KeyboardEvent): void => {
+    if (!(event.target instanceof HTMLButtonElement)) return;
+    const buttons = [...toolbar.querySelectorAll<HTMLButtonElement>("button")];
+    const currentIndex = buttons.indexOf(event.target);
+    if (currentIndex < 0) return;
+    const targetIndexByKey: Readonly<Record<string, number>> = {
+      ArrowLeft: (currentIndex - 1 + buttons.length) % buttons.length,
+      ArrowRight: (currentIndex + 1) % buttons.length,
+      Home: 0,
+      End: buttons.length - 1,
+    };
+    const targetIndex = targetIndexByKey[event.key];
+    if (targetIndex === undefined) return;
+    event.preventDefault();
+    buttons[targetIndex]?.focus();
+  };
+  toolbar.addEventListener("keydown", onToolbarKeyDown);
+
+  const onToolRegistryChange = (): void => renderToolButtons();
+  const unsubscribeToolRegistry = toolRegistry.onDidChange(onToolRegistryChange);
+  const unsubscribeToolActivation = toolRegistry.onDidActivate((change) => {
+    updateToolPressedState();
+    if (change.activeId) {
+      const active = toolRegistry.get(change.activeId);
+      if (active) status.textContent = `${active.label} ativa.`;
     }
   });
-  canvas.addEventListener("mousemove", (e) => {
-    const cell = viewport.screenToCell(e.offsetX, e.offsetY, tileSize, doc.width, doc.height);
-    status.textContent = cell.inside ? `Célula (${cell.x}, ${cell.y})` : "Fora do nível";
+
+  let toolSelectionKind = selection.kind;
+  const unsubscribeSelection = selection.subscribe(({ current }) => {
+    if (current?.kind === "entity-instance") {
+      selectedEntityId = entities.has(current.entityId) ? current.entityId : undefined;
+    } else if (current?.kind !== "entity-definition") {
+      selectedEntityId = undefined;
+    }
+    if (current?.kind !== toolSelectionKind) {
+      toolSelectionKind = current?.kind;
+      toolRegistry.refresh(toolContext);
+      renderToolButtons();
+    }
+    repaint();
+  });
+
+  if (!selection.current) {
+    if (levelId) publishLevelSelection();
+    else selection.select({ kind: "project", projectSessionId, projectId }, "level-editor-mount");
+  }
+  const activateAvailableTool = (): void => {
+    refreshLocalToolAvailability();
+    renderToolButtons();
+    if (!toolRegistry.activeId) {
+      const initialTool = toolRegistry.list(toolContext, { includeDisabled: true })
+        .find((candidate) => viewAvailability(candidate).enabled);
+      if (initialTool) toolRegistry.activate(initialTool.contribution.id, toolContext);
+    }
+  };
+  renderToolButtons();
+  if (toolRegistry.activeInstance && !ownedToolInstances.has(
+    toolRegistry.activeInstance as LevelEditorToolInstance,
+  )) {
+    toolRegistry.deactivate();
+  }
+  activateAvailableTool();
+
+  let panning = false;
+  let lastPanPoint = { x: 0, y: 0 };
+  const sendToolInput = (input: LevelEditorToolInput): void => {
+    (toolRegistry.activeInstance as LevelEditorToolInstance | undefined)?.handleInput(input);
+  };
+
+  canvas.addEventListener("mousedown", (event) => {
+    canvas.focus();
+    if (event.button === 1) {
+      panning = true;
+      lastPanPoint = { x: event.offsetX, y: event.offsetY };
+      event.preventDefault();
+      return;
+    }
+    sendToolInput({
+      type: "pointer-down",
+      screenX: event.offsetX,
+      screenY: event.offsetY,
+      button: event.button,
+    });
+  });
+
+  canvas.addEventListener("mousemove", (event) => {
+    const cell = cellAtScreen(event.offsetX, event.offsetY);
+    status.textContent = cell ? `Célula (${cell.x}, ${cell.y})` : "Fora do nível";
     if (panning) {
-      viewport.panByScreen(e.offsetX - last.x, e.offsetY - last.y);
-      last = { x: e.offsetX, y: e.offsetY };
+      viewport.panByScreen(event.offsetX - lastPanPoint.x, event.offsetY - lastPanPoint.y);
+      lastPanPoint = { x: event.offsetX, y: event.offsetY };
       repaint();
-    } else if (draggingEntity) {
-      const position = snapToCellCenter(e.offsetX, e.offsetY);
-      if (position) {
-        draggingEntity.position = position; // feedback local; o dispatch sela no mouseup
-        repaint();
-      }
-    } else if (dragAnchor && cell.inside) {
-      dragCurrent = { x: cell.x, y: cell.y };
-      repaint();
-    } else if (painting && (tool === "pencil" || tool === "eraser")) {
-      if (cell.inside) {
-        const current = { x: cell.x, y: cell.y };
-        if (
-          lastPaintCell &&
-          applyBrushStroke(doc, tool, lastPaintCell, current, activeValue)
-        ) onEdited();
-        lastPaintCell = current;
-      }
+      return;
     }
+    sendToolInput({ type: "pointer-move", screenX: event.offsetX, screenY: event.offsetY });
   });
+
   const onMouseUp = (): void => {
-    if (draggingEntity) {
-      const marker = draggingEntity;
-      const before = draggingEntityBefore ?? [...marker.position];
-      const transactionId = draggingEntityTransactionId;
-      draggingEntity = undefined;
-      draggingEntityBefore = undefined;
-      draggingEntityTransactionId = undefined;
-      if (transactionId) {
-        void moveEntity(marker, before, [...marker.position], transactionId)
-          .catch(showCommandError("mover Jogador"));
-      }
-    }
-    if (dragAnchor && dragCurrent) {
-      commitDrag(doc, tool, dragAnchor, dragCurrent, activeValue);
-      dragAnchor = undefined;
-      dragCurrent = undefined;
-      onEdited();
-      void finishLevelGesture().catch(showCommandError("editar nível"));
-    } else if (painting) {
-      void finishLevelGesture().catch(showCommandError("editar nível"));
-    }
-    painting = false;
-    lastPaintCell = undefined;
     panning = false;
+    sendToolInput({ type: "pointer-up" });
   };
   window.addEventListener("mouseup", onMouseUp);
-  canvas.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    viewport.zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+
+  canvas.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    viewport.zoomAt(event.offsetX, event.offsetY, event.deltaY < 0 ? 1.15 : 1 / 1.15);
     repaint();
   }, { passive: false });
 
-  resize();
-  viewport.fit(doc.width, doc.height, tileSize);
-  repaint();
+  const canvasNavigation: Readonly<Record<string, readonly [number, number]>> = {
+    ArrowLeft: [-1, 0],
+    ArrowRight: [1, 0],
+    ArrowUp: [0, -1],
+    ArrowDown: [0, 1],
+  };
+  canvas.addEventListener("keydown", (event) => {
+    const delta = canvasNavigation[event.key];
+    const current = selection.current?.kind === "cell" && selection.current.levelId === levelId
+      ? selection.current.anchor ?? selection.current.cells[0]
+      : undefined;
+    if (delta) {
+      event.preventDefault();
+      const next = {
+        x: Math.max(0, Math.min(doc.width - 1, (current?.x ?? 0) + delta[0])),
+        y: Math.max(0, Math.min(doc.height - 1, (current?.y ?? 0) + delta[1])),
+      };
+      publishCellSelection(next);
+      status.textContent = `Célula (${next.x}, ${next.y}) selecionada pelo teclado.`;
+      return;
+    }
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    const target = current ?? { x: 0, y: 0 };
+    publishCellSelection(target);
+    const screen = viewport.worldToScreen(
+      (target.x + 0.5) * tileSize,
+      (target.y + 0.5) * tileSize,
+    );
+    sendToolInput({ type: "pointer-down", screenX: screen.x, screenY: screen.y, button: 0 });
+    sendToolInput({ type: "pointer-up" });
+  });
+
+  // Atalhos locais; undo/redo continuam globais no CommandRegistry/workbench.
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement ||
+      event.target instanceof HTMLSelectElement ||
+      (event.target instanceof HTMLElement && event.target.isContentEditable)
+    ) return;
+    const paletteEntry = levelPalette.find((entry) => entry.shortcut === event.key);
+    if (paletteEntry) {
+      selectValue(paletteEntry.value);
+      return;
+    }
+    if (event.key === "Delete") {
+      event.preventDefault();
+      sendToolInput({ type: "delete" });
+    }
+  };
+  window.addEventListener("keydown", onKeyDown);
 
   const syncFromStore = (): void => {
     const projection = store.snapshot;
@@ -698,10 +1142,27 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         doc = level.intGrid;
         viewport.fit(doc.width, doc.height, tileSize);
       }
+    } else {
+      cancelLevelGesture();
+      levelId = undefined;
+      doc = new IntGridDocument(1, 1);
+      tileSize = 16;
+      levelSeed = 1;
+      levelRules = defaultLevelRules();
+      levelPalette = LEVEL_PALETTE;
+      meaningColors = new Map(levelPalette.map((entry) => [entry.value, entry.color]));
+      previewTiles = undefined;
+      dragAnchor = undefined;
+      dragCurrent = undefined;
+      dragPreviewTool = undefined;
+      selectedEntityId = undefined;
+      renderPaletteSwatches();
+      viewport.fit(1, 1, tileSize);
+      status.textContent = "O projeto ativo não possui um nível editável.";
     }
     if (!draggingEntity) {
       entities.clear();
-      for (const entity of projection.entities) {
+      for (const entity of level ? projection.entities : []) {
         entities.set(entity.entityId, {
           entityId: entity.entityId,
           position: [entity.position[0], entity.position[1]],
@@ -709,24 +1170,33 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       }
     }
     entityDefinitionId = projection.playerEntityDefinitionId;
-    entityToolButton.disabled = !entityDefinitionId || Boolean(spawnAnswer && !spawnAnswer.enabled);
-    if (!entityDefinitionId && !(spawnAnswer && !spawnAnswer.enabled)) {
-      entityToolButton.title = "O documento não possui uma definição Player";
-    }
+    refreshLocalToolAvailability();
+    renderToolButtons();
     onEdited();
   };
   const unsubscribeStore = store.onChange(syncFromStore);
   syncFromStore();
 
+  resize();
+  viewport.fit(doc.width, doc.height, tileSize);
+  repaint();
+
   ctx.setCleanup(() => {
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("mouseup", onMouseUp);
+    toolbar.removeEventListener("keydown", onToolbarKeyDown);
     unsubscribeStore();
+    unsubscribeSelection();
+    unsubscribeToolRegistry();
+    unsubscribeToolActivation();
     resizeObserver.disconnect();
-    cancelLevelGesture();
-    if (draggingEntityTransactionId) {
-      if (draggingEntity && draggingEntityBefore) draggingEntity.position = draggingEntityBefore;
-      window.p7m.endEditGesture(draggingEntityTransactionId);
+    clearTimeout(previewTimer);
+    const activeInstance = toolRegistry.activeInstance;
+    if (activeInstance && ownedToolInstances.has(activeInstance as LevelEditorToolInstance)) {
+      toolRegistry.deactivate();
     }
+    cancelLevelGesture();
+    cancelEntityDrag();
   });
+  return { activate: activateAvailableTool };
 }

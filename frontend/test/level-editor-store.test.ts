@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { LevelEditorStore } from "../src/core/levelEditorStore.js";
+import {
+  LevelEditorStore,
+  reconcileSelectionsWithLevelProjection,
+} from "../src/core/levelEditorStore.js";
+import type { Selection } from "../src/core/selectionService.js";
 import type { BlueprintEventPayload } from "../src/core/editorCommands.js";
 
 const envelope = (event: Record<string, unknown>): BlueprintEventPayload => ({
@@ -60,6 +64,46 @@ test("edição canônica: store aplica patch e evento remoto na mesma projeção
   assert.deepEqual(doc.snapshot(), [3, 7]);
 });
 
+test("workbench adaptativo: resync mantém nível escolhido e reconcilia toda a seleção", () => {
+  const store = new LevelEditorStore();
+  const document = {
+    projectId: "project",
+    levels: [
+      { levelId: "level-1", width: 2, height: 2, tileSize: 16, seed: 1, intGrid: [0, 0, 0, 0], rules: [] },
+      { levelId: "level-2", width: 2, height: 2, tileSize: 16, seed: 2, intGrid: [0, 0, 0, 0], rules: [] },
+    ],
+    entities: [{ entityId: "player", entityDefId: "player-def", position: [8, 8] as const }],
+  };
+  store.replace(document, "level-2", cursor("4"));
+  assert.equal(store.snapshot.level?.levelId, "level-2");
+
+  const scope = { projectSessionId: "session", projectId: "project" } as const;
+  const selections: Selection[] = [
+    {
+      kind: "cell",
+      ...scope,
+      levelId: "level-2",
+      cells: [{ x: 1, y: 1, index: 99 }, { x: 3, y: 3 }],
+      anchor: { x: 3, y: 3 },
+    },
+    { kind: "entity-instance", ...scope, entityId: "removed" },
+    { kind: "entity-instance", ...scope, entityId: "player", levelId: "level-2" },
+  ];
+  assert.deepEqual(reconcileSelectionsWithLevelProjection(selections, store.snapshot), [
+    {
+      kind: "cell",
+      ...scope,
+      levelId: "level-2",
+      cells: [{ x: 1, y: 1, index: 3 }],
+      anchor: { x: 1, y: 1, index: 3 },
+    },
+    { kind: "entity-instance", ...scope, entityId: "player", levelId: "level-2" },
+  ]);
+
+  store.replace(document, store.snapshot.level?.levelId, cursor("8"));
+  assert.equal(store.snapshot.level?.levelId, "level-2", "gap/resync não volta ao primeiro nível");
+});
+
 test("edição canônica: palette v4 sobrevive resync e aplica levelPaletteChanged delta-only", () => {
   const store = new LevelEditorStore();
   store.replace({
@@ -105,14 +149,62 @@ test("edição canônica: entidades convergem por eventos entre painéis", () =>
   store.replace({ levels: [], entities: [] }, undefined, cursor());
   store.applyEvent(envelope({
     kind: "entityPlaced",
-    entity: { entityId: "player", entityDefId: "player-def", position: [8, 8] },
+    entity: { entityId: "player", entityDefId: "player-def", position: [8, 8], fields: { speed: 3 } },
   }));
   store.applyEvent(envelope({
     kind: "entityMoved",
     commandSequence: "2",
-    entity: { entityId: "player", entityDefId: "player-def", position: [24, 8] },
+    entity: { entityId: "player", entityDefId: "player-def", position: [24, 8], fields: { speed: 3 } },
   }));
   assert.deepEqual(store.snapshot.entities[0]?.position, [24, 8]);
+  assert.deepEqual(store.snapshot.entities[0]?.fields, { speed: 3 });
+
+  store.applyEvent(envelope({
+    kind: "entityPropertiesChanged",
+    commandSequence: "3",
+    entity: { entityId: "player", entityDefId: "player-def", position: [24, 8], fields: { speed: 5 } },
+  }));
+  assert.deepEqual(store.snapshot.entities[0]?.fields, { speed: 5 });
+});
+
+test("edição canônica: camera replace remove campos antigos após undo", () => {
+  const store = new LevelEditorStore();
+  store.replace({ camera: { frequency: 2, damping: 0.5 } }, undefined, cursor());
+  assert.equal(store.applyEvent(envelope({
+    kind: "cameraConfigured",
+    settings: { frequency: 2 },
+    replace: true,
+  })), true);
+  assert.deepEqual(store.snapshot.camera, { frequency: 2 });
+});
+
+test("edição canônica: assets e definição Player convergem incrementalmente", () => {
+  const store = new LevelEditorStore();
+  store.replace({ skeletons: [], meshes: [], entityDefs: [] }, undefined, cursor());
+  store.applyEvent(envelope({
+    kind: "skeletonDefined",
+    skeleton: { skeletonId: "hero-rig", bones: [] },
+  }));
+  store.applyEvent(envelope({
+    kind: "meshBound",
+    commandSequence: "2",
+    binding: { meshId: "hero-mesh", skeletonId: "hero-rig" },
+  }));
+  store.applyEvent(envelope({
+    kind: "entityDefDefined",
+    commandSequence: "3",
+    definition: { entityDefId: "hero", archetypeId: "player", fields: [] },
+  }));
+  assert.deepEqual(store.snapshot.skeletons, [{ skeletonId: "hero-rig" }]);
+  assert.deepEqual(store.snapshot.meshes, [{ meshId: "hero-mesh", skeletonId: "hero-rig" }]);
+  assert.equal(store.snapshot.playerEntityDefinitionId, "hero");
+
+  store.applyEvent(envelope({
+    kind: "entityDefRemoved",
+    commandSequence: "4",
+    entityDefId: "hero",
+  }));
+  assert.equal(store.snapshot.playerEntityDefinitionId, undefined);
 });
 
 test("edição canônica: ACK N atrasado não regride journal N+1", () => {

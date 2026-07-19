@@ -6,13 +6,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { IntGridDocument } from "../src/core/intGridDocument.js";
+import { SelectionService } from "../src/core/selectionService.js";
 import {
+  activateLevelEditorTool,
   applyBrushAt,
   applyBrushStroke,
   commitDrag,
   dragCells,
   hitMarker,
+  LEVEL_EDITOR_TOOL_CONTROLLER_SERVICE,
   nextEntityId,
+  type LevelEditorToolInput,
 } from "../src/core/levelEditorTools.js";
 
 test("edição canônica: dragCells cobre retângulo e linha", () => {
@@ -95,4 +99,37 @@ test("edição canônica: nextEntityId pula ids ocupados", () => {
   existing.set("jogador-3", {});
   existing.delete("jogador-1"); // {2,3}: size+1 = 3 está ocupado → avança para 4
   assert.equal(nextEntityId(existing, "jogador"), "jogador-4");
+});
+
+test("workbench adaptativo: contribuição ativa a strategy fornecida pela vista", () => {
+  const observed: LevelEditorToolInput[] = [];
+  const services = new Map<string, unknown>([[
+    LEVEL_EDITOR_TOOL_CONTROLLER_SERVICE,
+    {
+      activate: (kind: string) => ({
+        handleInput: (input: LevelEditorToolInput) => observed.push(input),
+        dispose: () => undefined,
+        kind,
+      }),
+    },
+  ]]);
+  const instance = activateLevelEditorTool("pencil", {
+    selection: new SelectionService("session-a"),
+    capabilities: () => ({ enabled: true, reason: "Disponível" }),
+    mode: "edit",
+    services,
+  });
+  instance.handleInput({ type: "pointer-down", screenX: 10, screenY: 20, button: 0 });
+  assert.deepEqual(observed, [
+    { type: "pointer-down", screenX: 10, screenY: 20, button: 0 },
+  ]);
+
+  assert.throws(
+    () => activateLevelEditorTool("eraser", {
+      selection: new SelectionService("session-a"),
+      capabilities: () => ({ enabled: true, reason: "Disponível" }),
+      mode: "edit",
+    }),
+    /não forneceu o controlador/,
+  );
 });

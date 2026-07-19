@@ -71,4 +71,81 @@ export interface DiscardAutosaveRequest {
   readonly filePath: string;
 }
 
-export type ProjectMenuAction = "new" | "open" | "open-example" | "undo" | "redo";
+/**
+ * Invocação de um comando registrado no renderer.
+ *
+ * O contrato é deliberadamente extensível: o processo main só conhece o id e
+ * os argumentos serializáveis da contribuição. Disponibilidade, atalhos e a
+ * execução pertencem ao CommandRegistry, que por sua vez chama estas APIs
+ * tipadas para preservar os gates do ProjectController.
+ */
+export interface ProjectCommandInvocation<TArguments = unknown> {
+  readonly commandId: string;
+  readonly args?: TArguments;
+  /** Intents do SO são serializados; cliques comuns podem ser recusados quando ocupados. */
+  readonly source?: "native-menu" | "external-open";
+}
+
+/**
+ * Representa somente os dados necessários para espelhar uma contribuição do
+ * CommandRegistry no menu nativo. Funções, capabilities e argumentos nunca
+ * atravessam o boundary Electron.
+ *
+ * `menuPath` preserva o path semântico completo do placement (por exemplo
+ * `["Arquivo", "Salvar"]`). O último segmento localiza o item, mas o texto
+ * exibido é sempre `label`; nenhum segmento pode ser interpretado como role ou
+ * outro tipo de MenuItem Electron.
+ */
+export interface NativeMenuCommandDescriptor {
+  readonly id: string;
+  readonly label: string;
+  readonly menuPath: readonly string[];
+  readonly order?: number;
+  readonly accelerator?: string;
+  readonly enabled: boolean;
+  /** Diagnóstico mostrado pelo menu quando o comando está indisponível. */
+  readonly reason?: string;
+}
+
+/** Confirma a substituição atômica da última projeção válida do renderer. */
+export interface NativeMenuProjectionResult {
+  readonly acceptedCommandCount: number;
+}
+
+export type ProjectClosePreflightReason = "project-close" | "window-close";
+
+export interface ProjectClosePreflightRequest {
+  readonly requestId: string;
+  readonly reason: ProjectClosePreflightReason;
+  readonly deadlineUnixMs: number;
+}
+
+export type ProjectClosePreflightResponse =
+  | { readonly requestId: string; readonly status: "ready" }
+  | { readonly requestId: string; readonly status: "rejected"; readonly reason: string };
+
+export type ProjectClosePreflightHandler = (
+  request: ProjectClosePreflightRequest,
+) => void | Promise<void>;
+
+/** Canais internos compartilhados apenas para impedir divergência main/preload. */
+export const PROJECT_CLOSE_PREFLIGHT_CHANNELS = Object.freeze({
+  request: "p7m:project-close-preflight-request",
+  response: "p7m:project-close-preflight-response",
+});
+
+/** IDs das contribuições acionadas pelas superfícies nativas do Electron. */
+export const PROJECT_COMMAND_IDS = {
+  new: "project.new",
+  open: "project.open",
+  openExample: "project.openExample",
+  openRecent: "project.openRecent",
+  save: "project.save",
+  saveAs: "project.saveAs",
+  close: "project.close",
+  undo: "history.undo",
+  redo: "history.redo",
+} as const;
+
+/** @deprecated Use ProjectCommandInvocation. Mantido para consumidores 0.1. */
+export type ProjectMenuAction = ProjectCommandInvocation;

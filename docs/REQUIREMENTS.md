@@ -31,23 +31,24 @@ Legenda: ✅ completo · 🔶 parcial · ❌ ausente · — não se aplica.
 | Máquina de estados | ✅ | — | ❌ | ❌ | ❌ | **Não entregue** |
 | Níveis IntGrid + auto-tiling | ✅ (`level/patch` incremental) | ✅ | ✅ | ✅ (projeção otimista; salvar/reabrir sem publicação) | 🔶 | **Fluxo canônico entregue** (P0.4) |
 | World map | ✅ | ✅ query | ❌ streaming | ❌ | ❌ | **Parcial** |
-| Entidades tipadas | ✅ | ✅ | ✅ spawn table (archetypeId → ator vivo; move ao vivo) | 🔶 placement/drag/remoção no canvas (falta inspector) | ❌ | **Em fechamento** (P0.6) |
+| Entidades tipadas | ✅ | ✅ | ✅ spawn table (archetypeId → ator vivo; move ao vivo) | 🔶 placement/drag/remoção + Inspector schema-driven; faltam sprite/colisão | ❌ | **Em fechamento** (P0.6) |
 | Pipeline Aseprite/MGCB | ✅ | ✅ MCP | ✅ compilação | ❌ | ❌ | **Parcial** |
-| Câmera cinemática | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
-| Iluminação deferred | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
+| Câmera cinemática | ✅ | ✅ | ✅ | 🔶 seleção na árvore + Inspector canônico; sem gizmo | ❌ | **Fluxo visual parcial** |
+| Iluminação deferred | ✅ | ✅ | ✅ | 🔶 seleção na árvore + Inspector canônico; sem handles | ❌ | **Fluxo visual parcial** |
 | Save/load + criação de projeto | ✅ (Blueprint v4 com `projectId`, metadata/unidades/paleta; sessão temporária, replay e troca atômica) | ✅ (sessão nas quatro bordas + API tipada de lifecycle no preload) | ✅ reset antes de reidratar; `runtimeState` explícito | ✅ (wizard, recovery, exemplo, Recentes e save do estado visível) | 🔶 (falta aceite do app empacotado) | **Em fechamento** (P0.2 técnico fechado; aceite em P0.9) |
 | Supervisão de processos | ✅ (máquina de estados testada) | — | — | 🔶 (wire real + chips de estado + restart; falta caminho empacotado) | ❌ | **Em fechamento** (P0.1↔P0.9) |
 | Preview embutido | 🔶 fundação | ❌ | 🔶 fundação | ❌ | ❌ | **Requisito P0.5** |
 | Undo/redo | ✅ global, incremental e session-aware | ✅ quatro bordas | ✅ reprojeção/rehydrate | ✅ atalhos globais e histórico legível | 🔶 aceite empacotado | **Entregue tecnicamente** (P0.7) |
-| Diagnósticos (problems) | ✅ razões existem | 🔶 | 🔶 | ❌ | ❌ | **P0.8** |
+| Workbench adaptativo | ✅ registries/seleção/layout puros | — | — | ✅ contribuições, drawers, splitters e command palette | 🔶 sem e2e Electron | **Entregue tecnicamente** (P0.3) |
+| Diagnósticos (problems) | ✅ razões existem | 🔶 | 🔶 | 🔶 Problemas/Saída/Histórico/Performance | ❌ | **P0.8 parcial** |
 | Empacotamento/instalador | ❌ | — | — | ❌ | ❌ | **P0.9** |
 | Operação por agentes (MCP) | ✅ | ✅ | ✅ | — | 🔶 | **Entregue para agentes** |
 
 ### Leitura executiva
 
-A coluna Core está quase toda verde; as colunas UI e Jornada estão quase todas
-vermelhas. **A prioridade não é adicionar subsistemas: é converter a fundação
-em um fluxo vertical utilizável** (ver decisão de congelamento em
+A coluna Core está quase toda verde e o workbench tornou parte da UI utilizável;
+Jornada e2e e fluxos visuais especializados continuam majoritariamente abertos.
+**A prioridade não é adicionar subsistemas: é fechar o fluxo vertical** (ver decisão de congelamento em
 [`ALPHA-0.1.md`](ALPHA-0.1.md)).
 
 A definição operacional de "Produto" no Alpha-0.1 é a jornada de aceite

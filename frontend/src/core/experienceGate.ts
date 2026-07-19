@@ -5,7 +5,11 @@
  * a razão vinda do perfil/manifesto, nunca um genérico "indisponível".
  *
  * A UI NUNCA consulta capacidades diretamente: todo gating passa por aqui.
+ * A associação capability→contribuição pertence aos registries; este módulo
+ * não conhece painéis ou ferramentas concretos.
  */
+
+import { featureLabel } from "./vocabulary.js";
 
 export interface FeatureDecision {
   readonly feature: string;
@@ -26,16 +30,6 @@ export interface GateAnswer {
   readonly enabled: boolean;
   readonly reason: string;
 }
-
-/** Painéis da UI e os recursos governados que eles exigem. */
-export const PANEL_REQUIREMENTS: Readonly<Record<string, readonly string[]>> = {
-  "level-editor": ["level.intgrid-editor"],
-  "lighting-pipeline": ["lighting.deferred-pipeline"],
-  "shader-editor": ["shaders.hlsl-editing"],
-  "asset-compiler": ["assets.mgcb-compile"],
-  "embedded-preview": ["preview.embedded"],
-  "debug-overlay": ["debug.overlay"],
-};
 
 export class ExperienceGate {
   private readonly decisions = new Map<string, FeatureDecision>();
@@ -59,31 +53,32 @@ export class ExperienceGate {
     if (!decision) {
       return {
         enabled: false,
-        reason: `feature "${feature}" is not governed by the ${this.runtimeLabel} profile (fail-safe: disabled)`,
+        reason: `${featureLabel(feature)} não está disponível no perfil ${this.runtimeLabel}.`,
       };
     }
-    return { enabled: decision.enabled, reason: decision.reason };
+    return { enabled: decision.enabled, reason: localizeCapabilityReason(decision.reason) };
   }
 
-  /** Painel: habilitado sse TODOS os recursos exigidos estão habilitados. */
-  panel(panelId: string): GateAnswer {
-    const requirements = PANEL_REQUIREMENTS[panelId];
-    if (!requirements) {
-      return { enabled: false, reason: `unknown panel "${panelId}"` };
-    }
-    for (const feature of requirements) {
-      const answer = this.feature(feature);
-      if (!answer.enabled) {
-        return { enabled: false, reason: answer.reason };
-      }
-    }
-    return { enabled: true, reason: `all requirements satisfied by ${this.runtimeLabel}` };
-  }
+}
 
-  /** Mapa completo painel → decisão, pronto para renderizar a shell da UI. */
-  allPanels(): Readonly<Record<string, GateAnswer>> {
-    return Object.fromEntries(
-      Object.keys(PANEL_REQUIREMENTS).map((panelId) => [panelId, this.panel(panelId)]),
-    );
+/** Traduz os diagnósticos estruturais ainda emitidos em inglês pelo governor. */
+export function localizeCapabilityReason(reason: string): string {
+  const missingCapability = /^capability "([^"]+)" absent from (.+)$/u.exec(reason);
+  if (missingCapability) {
+    return `A capacidade “${featureLabel(missingCapability[1]!)}” não existe em ${missingCapability[2]}.`;
   }
+  const subsystem = /^subsystem "([^"]+)" is ([^ ]+) in the connected engine$/u.exec(reason);
+  if (subsystem) {
+    const translations: Readonly<Record<string, string>> = {
+      absent: "ausente",
+      unavailable: "indisponível",
+      degraded: "degradado",
+    };
+    return `O subsistema “${subsystem[1]}” está ${translations[subsystem[2]!] ?? subsystem[2]} na engine conectada.`;
+  }
+  const noEngine = /^no engine connected to confirm subsystem "([^"]+)" \(fail-safe: disabled\)$/u.exec(reason);
+  if (noEngine) {
+    return `Nenhuma engine está conectada para confirmar o subsistema “${noEngine[1]}”; recurso desabilitado por segurança.`;
+  }
+  return reason;
 }

@@ -216,6 +216,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 | Persistência de projeto (documento v4 com `projectId`, metadata/unidades/paleta; open transacional e replay privado) | ✅ (`ProjectSessionManager`, `project/create`, `project/openDocument`, `project/close`, `project/status`) |
 | Histórico global incremental (inversos, proveniência, barreiras, savepoint lógico e paridade cross-transport) | ✅ (`CommandHistory`, `level/patch`, `undo`, `redo`, ADR-022) |
 | Lifecycle de arquivo (New/Open/Save/Save As/Close/Recovery/Recentes) | ✅ controller/adapters testáveis, escrita durável e gate explícito no CI (ADR-021) |
+| Workbench adaptativo | ✅ registries internos, seleção transversal, Inspector schema-driven, layout persistido/adaptativo e command bridge com gate explícito (ADR-023) |
 | Contratos ↔ implementação | ✅ auditados (R8/R9 + tabela contracts) |
 | Lacunas conhecidas e aceitas | registradas em [`OPPORTUNITIES.md`](OPPORTUNITIES.md) com impacto/esforço |
 
@@ -225,7 +226,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 |---|---|---|
 | G1 | `middleware` | build + suíte middleware (inclui R1–R13) |
 | G2 | `engine` | build + suíte engine (inclui E1–E5, Zero-GC) |
-| G3 | `frontend` | build + suíte frontend (inclui F1–F5) + gate explícito do lifecycle de projeto |
+| G3 | `frontend` | build + suíte frontend (inclui F1–F5) + gates explícitos do lifecycle, edição canônica e workbench adaptativo |
 | G4 | `e2e` | verify-phase1..4 + verify-transports com processos reais |
 
 Os três gates de camada e o gate e2e devem convergir verdes para liberar a

@@ -308,6 +308,39 @@ sessão transacional. Recentes e argumentos de segunda instância convergem no
 mesmo controller. A separação e as garantias estão em
 [ADR-021](adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md).
 
+## Workbench adaptativo
+
+O renderer separa casca estrutural de contribuições internas. `renderer.ts` é
+somente a composition root; `EditorWorkbenchApplication` mantém o contexto e
+coordena `PanelRegistry`, `CommandRegistry`, `ToolRegistry`,
+`InspectorRegistry`, `SelectionService` e `EditorModeService`. Registrar uma
+contribuição não cria lógica de domínio nem uma API pública de plugins: toda
+edição continua despachando comandos pela porta tipada do preload.
+
+`SelectionService` carrega `projectSessionId` e rejeita seleção atrasada de uma
+sessão substituída. Canvas, árvore, Inspector e Problems observam essa mesma
+seleção. O host reutiliza painel apenas quando ID, sessão e elegibilidade
+continuam iguais; troca de sessão força `dispose`/mount novo.
+
+`WorkbenchLayoutController` é um core puro. Uma porta injetável persiste somente
+tamanhos e visibilidade no formato `v1`; breakpoint estreito e drawer aberto são
+derivados. A borda browser usa `localStorage` best-effort. Splitters, tablists,
+drawers, F6 e paleta de comandos possuem navegação por teclado, enquanto razões
+de capability permanecem textuais.
+
+Menu nativo, toolbar, contexto, atalhos, command palette e ações corretivas
+resolvem o mesmo `CommandRegistry`. O renderer envia ao main uma projeção
+serializável e validada de menu/atalhos; o main conserva apenas roles Electron,
+Recentes e o boundary de invocação tipada, sem executar um segundo fluxo de
+New/Open/Save/Close/undo/redo. Commits do Inspector são rastreados e drenados
+antes de Save/Close/histórico; validação recusada permanece bloqueante por
+sessão/seleção. O X da janela usa o mesmo preflight, tools são cancelados antes
+da troca de projeto e intents externos de Open são serializados. Modos
+`playing`/`paused` só filtram contribuições:
+PreviewHost e gameplay permanecem fora desta entrega. Decisão e gate:
+[ADR-023](adr/ADR-023-workbench-adaptativo-por-contribuicoes.md) e
+`cd frontend && npm run test:adaptive-workbench`.
+
 **Verbosidade:** `P7M_VERBOSITY=silent|error|warn|info|debug|trace` controla os
 loggers estruturados dos dois lados (stdout do middleware pertence ao MCP; logs
 vão para stderr). E2E das duas fases (gRPC quente + fallback GraphQL):

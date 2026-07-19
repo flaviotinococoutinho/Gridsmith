@@ -17,6 +17,9 @@ governança de runtime.
 | `src/core/projectLifecycle.ts` | Máquina de estados do documento vinculada a `projectSessionId`; dirty tracking e autosave só avançam para a sessão confirmada |
 | `src/core/projectApi.ts` | Contratos tipados compartilhados por main/preload/renderer para New/Open/Save/Save As/Close/Recovery/Recentes |
 | `src/core/projectWizardModel.ts` | Estado e validação puros do wizard de projeto, alimentado pelos templates reais do middleware |
+| `src/core/{panelRegistry,commandRegistry,toolRegistry,inspectorRegistry}.ts` | Registries internos tipados; resolvem seleção, modo e capabilities sem transformar a shell em API pública de plugins |
+| `src/core/selectionService.ts` | Seleção discriminada e session-aware compartilhada por canvas, árvore, Inspector e ações corretivas |
+| `src/core/workbenchLayout.ts` | Estado puro do layout adaptativo: tamanhos limitados, visibilidade, breakpoint estreito, drawers efêmeros e porta de persistência injetável |
 | `src/core/levelEditorTools.ts` | Ferramentas puras do editor de níveis (brush/rect/line/picker, drag de células, hit-test de marcadores) |
 | `src/core/intGridDocument.ts` | Projeção otimista do IntGrid: agrega um patch por gesto, confirma ack/evento e recompõe/reverte rejeições sem histórico paralelo |
 | `src/core/logging.ts` | Logger puro com escopo hierárquico e sink injetável (`P7M_VERBOSITY`) |
@@ -24,8 +27,9 @@ governança de runtime.
 | `src/main/EditorClient.ts` | Cliente do middleware: gRPC quente/fallback GraphQL, cursor `(middlewareInstanceId, projectSessionId, seq)`, snapshot integral em resync e operações transacionais de projeto |
 | `src/main/appConfig.ts` | Configuração refinada do Electron: instância única, estado de janela persistido, `sandbox` + navegação/popups bloqueados |
 | `src/main/project/` | `ProjectController` e adapters injetáveis de dialogs/filesystem: escrita durável (rename POSIX; swap recuperável no Windows), backup, recovery, lease e composição segura com a sessão transacional |
-| `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation; lifecycle exposto apenas por APIs tipadas e nomeadas, sem comando genérico |
-| `src/renderer/` | Start screen + wizard “Novo projeto”, régua de painéis do ExperienceGate e editor de níveis hidratado pelos IDs/dimensões do documento real |
+| `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation; mutações de lifecycle permanecem APIs nomeadas e o menu nativo encaminha uma `ProjectCommandInvocation` tipada ao registry do renderer |
+| `src/renderer/workbenchApplication.ts` | Composition runtime dos registries, portas do preload, seleção, modo, métricas e lifecycle de hosts; não contém regra de domínio |
+| `src/renderer/` | Start screen + wizard “Novo projeto”, shell estrutural adaptativo, contribuições built-in e editor de níveis hidratado pelos IDs/dimensões do documento real |
 
 ### Modelo de processos
 
@@ -59,6 +63,7 @@ npm install        # ELECTRON_SKIP_BINARY_DOWNLOAD=1 para pular o binário (CI)
 npm run build
 npm test           # núcleos + integração real com o EditorGateway
 npm run test:project-lifecycle-product  # gate explícito de New/Open/Save/Recovery/Recentes
+npm run test:adaptive-workbench         # registries, layout, acessibilidade estrutural e command bridge
 
 # execução (requer o binário do Electron e um middleware rodando):
 node ../middleware/dist/index.js --pipe p7m-engine --no-mcp &
@@ -123,6 +128,57 @@ chamam a operação canônica mesmo quando outro painel está ativo. Eventos de
 outros clientes atualizam a mesma projeção; resync substitui a base inteira.
 Save/autosave/Close não capturam gesto pendente. Decisão:
 [ADR-022](../docs/adr/ADR-022-historico-global-transacional.md).
+
+## Shell adaptativo
+
+`renderer.ts` apenas cria `EditorWorkbenchApplication`, registra o catálogo
+built-in e roteia eventos globais. Painéis, comandos, ferramentas e schemas do
+Inspector entram por `PanelRegistry`, `CommandRegistry`, `ToolRegistry` e
+`InspectorRegistry`; `SelectionService` mantém uma única seleção por sessão.
+Capabilities desconhecidas falham fechadas e carregam razão legível. Esses
+contratos são internos ao MVP, não uma API de plugin para terceiros.
+
+Menu nativo, toolbar, menu de contexto, atalhos, paleta de comandos e ações
+corretivas resolvem a mesma contribuição do `CommandRegistry`. O renderer
+publica descritores serializáveis de menu; o main valida limites/shape e mantém
+somente roles Electron, Recentes e a devolução de uma invocação tipada. Ele não
+executa handlers paralelos de New/Open/Save/Close/undo/redo; os IDs estáveis de
+Recentes e do fallback anterior ao boot são as exceções explícitas no main.
+
+O `PendingEditCoordinator` observa commits do Inspector. Operações de projeto e
+histórico esperam a projeção canônica alcançar o valor visível; fechar a janela
+executa um preflight com timeout e cancela em falha, em vez de salvar um draft
+ainda não confirmado. Falhas de validação são isoladas por sessão/seleção, e uma
+troca de projeto cancela o tool ativo antes de bloquear as áreas editáveis.
+
+`workbenchShell.ts` recebe `WorkbenchShellElements` e um
+`WorkbenchLayoutController`; ele não conhece painel, ferramenta ou comando
+concreto. A composição resolve os slots pelos atributos estruturais abaixo e os
+registries montam contribuições nos hosts correspondentes:
+
+| Atributo estrutural | Papel |
+|---|---|
+| `data-workbench-root` | grid raiz e CSS variables dos tamanhos persistidos |
+| `data-workbench-region="left|center|right|bottom"` | regiões Projeto, editor ativo, Inspector e painéis inferiores |
+| `data-panel-host="left|center|right|bottom"` | ponto de montagem de contribuições do `PanelRegistry` |
+| `data-workbench-splitter="left|right|bottom"` | separadores acessíveis por pointer, setas, Home/End e reset por duplo clique |
+| `data-workbench-narrow-tabs` | tablist exibida abaixo do breakpoint |
+| `data-workbench-narrow-tab="left|right"` | abre árvore/Inspector como drawer; Escape fecha e devolve o foco |
+| `data-workbench-bottom-tabs` | tablist genérica com setas, Home/End e ativação por teclado |
+| `data-workbench-toolbar` / `data-workbench-status` | limites da navegação regional F6/Shift+F6 |
+| `data-command-surface="toolbar"` | host da toolbar contextual produzida pelo `CommandRegistry` |
+
+O adapter `BrowserWorkbenchLayoutPersistence` grava somente tamanhos e
+visibilidade. Breakpoint e drawer aberto são estado derivado/efêmero, portanto
+não contaminam o layout restaurado em outro tamanho de janela. O core não acessa
+`localStorage`; testes usam a mesma porta com memória. Projeto e Inspector não
+dependem de IDs de feature, e novos painéis não exigem editar o shell.
+Trocar de região pode preservar a instância ativa, mas trocar de sessão sempre
+descarta o painel para não reutilizar seleção/estado do projeto anterior.
+
+Os modos `playing` e `paused` governam somente contribuições de UI. Nesta fase
+eles não iniciam PreviewHost, engine ou gameplay. Decisão:
+[ADR-023](../docs/adr/ADR-023-workbench-adaptativo-por-contribuicoes.md).
 
 ## Regras da casa
 

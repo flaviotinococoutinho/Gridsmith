@@ -25,6 +25,9 @@ export interface LogEntry {
   readonly actor?: "human" | "agent" | "pipeline";
   readonly historyAction?: "apply" | "undo" | "redo";
   readonly transactionId?: string;
+  readonly projectSessionId?: string;
+  readonly projectId?: string;
+  readonly commandSequence?: string;
 }
 
 export interface LogFilter {
@@ -68,6 +71,31 @@ export class EventLog {
     const actor = event["actor"];
     const historyAction = event["historyAction"];
     const transactionId = event["transactionId"];
+    const projectSessionId = event["projectSessionId"];
+    const projectId = event["projectId"];
+    const commandSequence = event["commandSequence"];
+    const duplicateIndex = typeof commandSequence === "string" && typeof projectSessionId === "string"
+      ? this.entries.findIndex((candidate) => candidate.commandSequence === commandSequence &&
+        candidate.projectSessionId === projectSessionId)
+      : -1;
+    if (duplicateIndex >= 0) {
+      const existing = this.entries[duplicateIndex]!;
+      if (!projection) return existing;
+      const {
+        projectionStatus: _status,
+        projectionLabel: _label,
+        projectionReason: _reason,
+        ...base
+      } = existing;
+      const updated: LogEntry = {
+        ...base,
+        projectionStatus: projection.status,
+        projectionLabel: projectionLabel(projection.status),
+        ...(projection.reason !== undefined ? { projectionReason: projection.reason } : {}),
+      };
+      this.entries[duplicateIndex] = updated;
+      return updated;
+    }
     const entry: LogEntry = {
       sequence: ++this.sequence,
       timestampMs: this.now(),
@@ -80,6 +108,9 @@ export class EventLog {
         ? { historyAction }
         : {}),
       ...(typeof transactionId === "string" ? { transactionId } : {}),
+      ...(typeof projectSessionId === "string" ? { projectSessionId } : {}),
+      ...(typeof projectId === "string" ? { projectId } : {}),
+      ...(typeof commandSequence === "string" ? { commandSequence } : {}),
       ...(projection !== undefined
         ? {
             projectionStatus: projection.status,
@@ -112,6 +143,11 @@ export class EventLog {
 
   get size(): number {
     return this.entries.length;
+  }
+
+  /** Troca de ProjectSession cria uma nova partição de diagnóstico. */
+  clear(): void {
+    this.entries.splice(0);
   }
 
   /** Problemas: entradas skipped/deferred (alimenta o contador da status bar). */

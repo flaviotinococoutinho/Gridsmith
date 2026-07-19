@@ -8,8 +8,78 @@
  */
 
 import { IntGridDocument, lineCells } from "./intGridDocument.js";
+import type { ToolContext, ToolInstance, ToolKind } from "./toolRegistry.js";
 
 export type LevelTool = "pencil" | "eraser" | "flood" | "rect" | "line" | "picker" | "entity";
+
+/**
+ * Ferramentas cujo comportamento de canvas já pertence ao editor de níveis.
+ * Os demais kinds podem continuar registrados (e explicar por que estão
+ * indisponíveis), sem obrigar a vista a conhecer IDs de contribuição.
+ */
+export type LevelEditorToolKind = Extract<
+  ToolKind,
+  | "selection"
+  | "pencil"
+  | "eraser"
+  | "line"
+  | "rectangle"
+  | "flood"
+  | "picker"
+  | "entity"
+>;
+
+/** Chave da porta privada injetada pela vista no contexto das contribuições. */
+export const LEVEL_EDITOR_TOOL_CONTROLLER_SERVICE = "level-editor.tool-controller";
+
+/**
+ * Entrada independente de DOM entregue pelo canvas à ferramenta ativa. Assim,
+ * mousedown/mousemove/teclado não precisam de um switch de IDs na casca.
+ */
+export type LevelEditorToolInput =
+  | {
+    readonly type: "pointer-down";
+    readonly screenX: number;
+    readonly screenY: number;
+    readonly button: number;
+  }
+  | {
+    readonly type: "pointer-move";
+    readonly screenX: number;
+    readonly screenY: number;
+  }
+  | { readonly type: "pointer-up" }
+  | { readonly type: "delete" };
+
+export interface LevelEditorToolInstance extends ToolInstance {
+  handleInput(input: LevelEditorToolInput): void;
+}
+
+export interface LevelEditorToolController {
+  activate(kind: LevelEditorToolKind): LevelEditorToolInstance;
+}
+
+/**
+ * Adapter usado por contribuições internas no ToolRegistry. O registro declara
+ * apenas o kind; a implementação concreta continua pertencendo à vista ativa.
+ */
+export function activateLevelEditorTool(
+  kind: LevelEditorToolKind,
+  context: ToolContext,
+): LevelEditorToolInstance {
+  const candidate = context.services?.get(LEVEL_EDITOR_TOOL_CONTROLLER_SERVICE);
+  if (!isLevelEditorToolController(candidate)) {
+    throw new Error("O editor de níveis ativo não forneceu o controlador de ferramentas.");
+  }
+  return candidate.activate(kind);
+}
+
+function isLevelEditorToolController(value: unknown): value is LevelEditorToolController {
+  return typeof value === "object"
+    && value !== null
+    && "activate" in value
+    && typeof value.activate === "function";
+}
 
 export interface CellPoint {
   readonly x: number;

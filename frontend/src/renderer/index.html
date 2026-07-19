@@ -7,43 +7,136 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <header id="toolbar">
-      <div class="toolbar-group" role="toolbar" aria-label="Projeto">
-        <button id="btn-new">Novo</button>
-        <button id="btn-open">Abrir…</button>
-        <button id="btn-save">Salvar</button>
-        <button id="btn-close">Fechar</button>
+    <header id="toolbar" data-workbench-toolbar>
+      <div
+        id="project-toolbar"
+        class="toolbar-group"
+        role="toolbar"
+        aria-label="Projeto"
+        data-command-surface="toolbar"
+      ></div>
+      <div
+        id="context-toolbar"
+        class="context-toolbar"
+        role="toolbar"
+        aria-label="Ferramentas contextuais"
+        data-command-surface="toolbar"
+      ></div>
+      <div
+        id="compact-region-tabs"
+        class="compact-region-tabs"
+        role="tablist"
+        aria-label="Regiões laterais"
+        data-workbench-narrow-tabs
+        hidden
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-controls="project-region"
+          aria-selected="false"
+          aria-expanded="false"
+          data-workbench-narrow-tab="left"
+        >Projeto</button>
+        <button
+          type="button"
+          role="tab"
+          aria-controls="inspector"
+          aria-selected="false"
+          aria-expanded="false"
+          data-workbench-narrow-tab="right"
+        >Inspector</button>
       </div>
       <span id="project-title" aria-live="polite">Nenhum projeto aberto</span>
       <span id="project-feedback" class="project-feedback" role="alert" hidden></span>
       <span class="toolbar-spacer"></span>
       <span id="runtime-label">Runtime desconectado</span>
-      <span id="connection-dot" class="dot offline" title="Estado da conexão"></span>
+      <span id="connection-dot" class="dot offline" title="Estado da conexão" aria-hidden="true"></span>
     </header>
 
-    <main id="workbench">
-      <nav id="panel-rail" aria-label="Painéis do editor"></nav>
+    <main id="workbench" data-workbench-root data-narrow-side="none">
+      <aside
+        id="project-region"
+        class="workbench-region project-region"
+        aria-label="Projeto"
+        tabindex="-1"
+        data-workbench-region="left"
+      >
+        <nav id="panel-rail" role="tablist" aria-label="Painéis da região esquerda" data-panel-tabs="left"></nav>
+        <div id="project-tree-host" class="panel-host-content" role="tabpanel" data-panel-host="left"></div>
+      </aside>
 
-      <section id="workspace">
-        <div id="view-host" role="region" aria-label="Área de trabalho"></div>
-        <section id="bottom-panel">
-          <div id="bottom-tabs" role="tablist" aria-label="Painéis inferiores">
-            <button role="tab" data-tab="problems">Problemas <span id="problem-count" class="badge">0</span></button>
-            <button role="tab" data-tab="output">Saída</button>
-            <button role="tab" data-tab="history">Histórico</button>
-            <input id="log-filter" type="search" placeholder="Filtrar…" aria-label="Filtrar log" />
-          </div>
-          <div id="bottom-content" role="tabpanel" tabindex="0"></div>
-        </section>
+      <div
+        id="left-splitter"
+        class="region-splitter region-splitter-vertical"
+        role="separator"
+        aria-label="Redimensionar árvore do projeto"
+        aria-controls="project-region"
+        aria-orientation="vertical"
+        tabindex="0"
+        data-workbench-splitter="left"
+      ></div>
+
+      <section id="workspace" data-workbench-region="center">
+        <div id="center-tabs" class="region-panel-tabs" role="tablist" aria-label="Editores centrais" data-panel-tabs="center"></div>
+        <div id="view-host" role="tabpanel" aria-label="Área de trabalho" data-panel-host="center"></div>
       </section>
 
-      <aside id="inspector" aria-label="Inspector">
-        <h2>Inspector</h2>
-        <div id="inspector-content"><p class="muted">Nada selecionado.</p></div>
+      <div
+        id="right-splitter"
+        class="region-splitter region-splitter-vertical"
+        role="separator"
+        aria-label="Redimensionar inspector"
+        aria-controls="inspector"
+        aria-orientation="vertical"
+        tabindex="0"
+        data-workbench-splitter="right"
+      ></div>
+
+      <aside
+        id="inspector"
+        class="workbench-region"
+        aria-label="Inspector"
+        tabindex="-1"
+        data-workbench-region="right"
+      >
+        <div id="inspector-tabs" class="region-panel-tabs" role="tablist" aria-label="Painéis do Inspector" data-panel-tabs="right"></div>
+        <div id="inspector-content" role="tabpanel" data-panel-host="right"><p class="muted">Nada selecionado.</p></div>
       </aside>
+
+      <div
+        id="bottom-splitter"
+        class="region-splitter region-splitter-horizontal"
+        role="separator"
+        aria-label="Redimensionar painéis inferiores"
+        aria-controls="bottom-panel"
+        aria-orientation="horizontal"
+        tabindex="0"
+        data-workbench-splitter="bottom"
+      ></div>
+
+      <section
+        id="bottom-panel"
+        class="workbench-region"
+        data-workbench-region="bottom"
+      >
+        <div id="bottom-header">
+          <div id="bottom-tabs" role="tablist" aria-label="Painéis inferiores" data-workbench-bottom-tabs data-panel-tabs="bottom"></div>
+          <span class="problem-summary" aria-label="Quantidade de problemas">
+            Problemas: <span id="problem-count" class="badge">0</span>
+          </span>
+          <input
+            id="log-filter"
+            type="search"
+            placeholder="Filtrar…"
+            aria-label="Filtrar painel atual"
+          />
+        </div>
+        <div id="bottom-content" role="tabpanel" tabindex="0" data-panel-host="bottom"></div>
+      </section>
     </main>
 
-    <footer id="status-bar" aria-live="polite">
+    <footer id="status-bar" aria-live="polite" tabindex="-1" data-workbench-status>
       <span id="status-project">Nenhum projeto aberto</span>
       <span id="status-connection">Conectando ao middleware…</span>
       <span id="status-services"></span>

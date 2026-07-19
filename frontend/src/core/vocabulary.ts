@@ -7,16 +7,6 @@
  * cobertura garante que os catálogos conhecidos estão 100% traduzidos.
  */
 
-/** Painéis do workbench (rail de navegação). */
-export const PANEL_LABELS: Readonly<Record<string, string>> = {
-  "level-editor": "Editor de níveis",
-  "lighting-pipeline": "Iluminação",
-  "shader-editor": "Editor de shaders",
-  "asset-compiler": "Compilador de assets",
-  "embedded-preview": "Pré-visualização do jogo",
-  "debug-overlay": "Sobreposição de depuração",
-};
-
 /** Recursos governados (tooltips e diagnósticos). */
 export const FEATURE_LABELS: Readonly<Record<string, string>> = {
   "level.intgrid-editor": "Edição de níveis (IntGrid)",
@@ -24,7 +14,12 @@ export const FEATURE_LABELS: Readonly<Record<string, string>> = {
   "shaders.hlsl-editing": "Edição de shaders HLSL",
   "assets.mgcb-compile": "Compilação de assets (MGCB)",
   "preview.embedded": "Pré-visualização embutida",
+  "editor.preview-host.connected": "PreviewHost conectado",
   "debug.overlay": "Sobreposição de depuração",
+  "editor.tool.camera": "Ferramenta de câmera",
+  "editor.tool.light": "Ferramenta de luz",
+  "editor.tool.spawn": "Ferramenta de spawn",
+  "editor.tool.trigger": "Ferramenta de trigger",
 };
 
 /** Eventos do Blueprint (log de saída e histórico). */
@@ -100,7 +95,6 @@ const lookup =
   (id: string): string =>
     table[id] ?? humanize(id);
 
-export const panelLabel = lookup(PANEL_LABELS);
 export const featureLabel = lookup(FEATURE_LABELS);
 export const eventLabel = lookup(EVENT_LABELS);
 export const projectionLabel = lookup(PROJECTION_LABELS);

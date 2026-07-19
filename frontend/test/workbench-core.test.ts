@@ -2,24 +2,34 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   EVENT_LABELS,
-  PANEL_LABELS,
   eventLabel,
   humanize,
-  panelLabel,
   projectionLabel,
 } from "../src/core/vocabulary.js";
-import { PANEL_REQUIREMENTS } from "../src/core/experienceGate.js";
 import { EventLog, subjectOf } from "../src/core/eventLog.js";
 import { WorkbenchModel } from "../src/core/workbenchModel.js";
-import type { ResolvedExperienceLike } from "../src/core/experienceGate.js";
+import { PanelRegistry } from "../src/core/panelRegistry.js";
+import { SelectionService } from "../src/core/selectionService.js";
+import { denyUnknownCapabilities } from "../src/core/capabilityRegistry.js";
+import { EditorModeService } from "../src/core/editorModeService.js";
+import { WorkbenchMetrics } from "../src/core/workbenchMetrics.js";
+import type { ContributionContext } from "../src/core/contributionContext.js";
 
 // ---------- Vocabulário (P0.3: IDs internos nunca aparecem) ----------
 
-test("todo painel do gate tem rótulo humano em pt-BR (cobertura total)", () => {
-  for (const panelId of Object.keys(PANEL_REQUIREMENTS)) {
-    assert.ok(PANEL_LABELS[panelId], `painel "${panelId}" sem tradução`);
-    assert.notEqual(panelLabel(panelId), panelId, "rótulo não pode ser o ID cru");
-  }
+test("painel carrega o próprio rótulo humano sem catálogo central", () => {
+  const panels = new PanelRegistry();
+  panels.register({
+    id: "future.scene-statistics",
+    label: "Estatísticas da cena",
+    defaultRegion: "bottom",
+    requiredCapabilities: [],
+    mount: () => ({ dispose: () => undefined }),
+  });
+  const context = workbenchContext({});
+  const model = new WorkbenchModel(panels, context);
+  assert.equal(model.navigation()[0]?.label, "Estatísticas da cena");
+  assert.equal(model.navigation()[0]?.panelId, "future.scene-statistics");
 });
 
 test("todo kind de evento do Blueprint tem rótulo humano", () => {
@@ -83,73 +93,133 @@ test("filtro por texto e status; problemCount conta skipped/deferred; capacidade
   assert.equal(log.list()[0]?.kind, "lightRemoved");
 });
 
-// ---------- WorkbenchModel (P0.3: navegação governada) ----------
+test("ack e eco do journal da mesma sessão convergem em uma única entrada com diagnóstico", () => {
+  const log = new EventLog(10, () => 42);
+  const event = {
+    kind: "entityMoved",
+    entityId: "Player",
+    projectSessionId: "session-a",
+    projectId: "project-a",
+    commandSequence: "17",
+  };
+  log.record(event);
+  log.record(event, { status: "deferred", reason: "engine desconectada" });
 
-const EXPERIENCE: ResolvedExperienceLike = {
-  family: "monogame",
-  profileVersion: "3.8.2",
-  displayName: "MonoGame 3.8.2 (DesktopGL)",
-  constraints: {},
-  decisions: [
-    { feature: "level.intgrid-editor", enabled: true, source: "live-manifest", reason: "ok" },
-    { feature: "lighting.deferred-pipeline", enabled: true, source: "live-manifest", reason: "ok" },
-    { feature: "shaders.hlsl-editing", enabled: true, source: "profile-rule", reason: "ok" },
-    { feature: "assets.mgcb-compile", enabled: true, source: "profile-rule", reason: "ok" },
-    { feature: "preview.embedded", enabled: false, source: "profile-rule", reason: "chega no 3.8.2" },
-    { feature: "debug.overlay", enabled: false, source: "live-manifest", reason: "sem engine" },
-  ],
-};
-
-test("sem experiência: tudo desabilitado com razão de aguardo (fail-safe)", () => {
-  const model = new WorkbenchModel();
-  const items = model.navigation();
-  assert.ok(items.length > 0);
-  assert.ok(items.every((i) => !i.enabled));
-  assert.match(items[0]?.reason ?? "", /Aguardando conexão/);
-  assert.equal(model.runtimeLabel, "Runtime desconectado");
+  assert.equal(log.size, 1);
+  assert.equal(log.problemCount, 1);
+  assert.equal(log.list()[0]?.commandSequence, "17");
+  assert.equal(log.list()[0]?.projectionReason, "engine desconectada");
 });
 
-test("experiência aplicada: rótulos humanos, foco automático no primeiro habilitado", () => {
-  const model = new WorkbenchModel();
-  model.applyExperience(EXPERIENCE);
+// ---------- WorkbenchModel: foco derivado das contribuições ----------
 
-  const items = model.navigation();
-  const level = items.find((i) => i.panelId === "level-editor")!;
-  assert.equal(level.label, "Editor de níveis");
-  assert.equal(level.enabled, true);
-  assert.equal(level.active, true); // primeiro habilitado ganha o foco
-  assert.equal(model.currentPanel, "level-editor");
+function workbenchContext(
+  capabilities: Readonly<Record<string, { readonly enabled: boolean; readonly reason: string }>>,
+): ContributionContext {
+  return {
+    selection: new SelectionService(),
+    capabilities: denyUnknownCapabilities(capabilities),
+    mode: "edit",
+  };
+}
 
-  const preview = items.find((i) => i.panelId === "embedded-preview")!;
-  assert.equal(preview.enabled, false);
-  assert.equal(preview.reason, "chega no 3.8.2"); // razão da governança no tooltip
-});
-
-test("ativar painel desabilitado é recusado; re-resolução tira o foco de painel que sumiu", () => {
-  const model = new WorkbenchModel();
-  model.applyExperience(EXPERIENCE);
-  assert.equal(model.activatePanel("embedded-preview"), false);
-  assert.equal(model.currentPanel, "level-editor");
-
-  assert.equal(model.activatePanel("lighting-pipeline"), true);
-  assert.equal(model.currentPanel, "lighting-pipeline");
-
-  // a engine caiu: lighting exige subsistema vivo → desabilitado
-  model.applyExperience({
-    ...EXPERIENCE,
-    decisions: EXPERIENCE.decisions.map((d) =>
-      d.feature === "lighting.deferred-pipeline" ? { ...d, enabled: false, reason: "engine caiu" } : d,
-    ),
+function workbenchPanels(): PanelRegistry {
+  const panels = new PanelRegistry();
+  panels.register({
+    id: "level.editor",
+    label: "Editor de nível",
+    defaultRegion: "center",
+    requiredCapabilities: [],
+    order: 0,
+    mount: () => ({ dispose: () => undefined }),
   });
-  assert.notEqual(model.currentPanel, "lighting-pipeline"); // foco realocado
+  panels.register({
+    id: "runtime.preview",
+    label: "Preview",
+    defaultRegion: "center",
+    requiredCapabilities: ["preview.embedded"],
+    order: 10,
+    mount: () => ({ dispose: () => undefined }),
+  });
+  panels.register({
+    id: "diagnostics.problems",
+    label: "Problemas",
+    defaultRegion: "bottom",
+    requiredCapabilities: [],
+    mount: () => ({ dispose: () => undefined }),
+  });
+  panels.register({
+    id: "diagnostics.performance",
+    label: "Performance",
+    defaultRegion: "bottom",
+    requiredCapabilities: [],
+    order: 10,
+    mount: () => ({ dispose: () => undefined }),
+  });
+  return panels;
+}
+
+test("sem capability: contribuição afetada é bloqueada com razão, editor offline permanece", () => {
+  const model = new WorkbenchModel(workbenchPanels(), workbenchContext({}));
+  const editor = model.navigation().find(({ panelId }) => panelId === "level.editor")!;
+  const preview = model.navigation().find(({ panelId }) => panelId === "runtime.preview")!;
+  assert.equal(editor.enabled, true);
+  assert.equal(model.currentPanel, "level.editor");
+  assert.equal(preview.enabled, false);
+  assert.match(preview.reason ?? "", /não está disponível/);
 });
 
-test("notificações de mudança e aba inferior", () => {
-  const model = new WorkbenchModel();
+test("ativar painel bloqueado é recusado; mudança de capability realoca foco", () => {
+  const panels = workbenchPanels();
+  const model = new WorkbenchModel(panels, workbenchContext({
+    "preview.embedded": { enabled: true, reason: "Preview disponível" },
+  }));
+  assert.equal(model.activatePanel("runtime.preview"), true);
+  assert.equal(model.currentPanel, "runtime.preview");
+  model.updateContext(workbenchContext({
+    "preview.embedded": { enabled: false, reason: "Runtime desconectado" },
+  }));
+  assert.equal(model.currentPanel, "level.editor");
+  assert.equal(model.activatePanel("runtime.preview"), false);
+});
+
+test("notificações e aba inferior usam IDs contribuídos, sem union fixa", () => {
+  const model = new WorkbenchModel(workbenchPanels(), workbenchContext({}));
   let changes = 0;
   model.onChange(() => changes++);
-  model.applyExperience(EXPERIENCE);
-  model.selectBottomTab("problems");
-  assert.equal(model.currentBottomTab, "problems");
-  assert.ok(changes >= 2);
+  assert.equal(model.selectBottomTab("diagnostics.performance"), true);
+  assert.equal(model.currentBottomTab, "diagnostics.performance");
+  assert.equal(model.activatePanel("level.editor"), true);
+  assert.equal(changes, 1);
+});
+
+test("modo do editor notifica transições sem iniciar runtime ou duplicar no-op", () => {
+  const mode = new EditorModeService();
+  const changes: unknown[] = [];
+  mode.subscribe((change) => changes.push(change));
+  assert.equal(mode.set("playing", "toolbar"), true);
+  assert.equal(mode.set("playing", "duplicado"), false);
+  assert.equal(mode.set("paused", "toolbar"), true);
+  assert.deepEqual(changes, [
+    { previous: "edit", current: "playing", source: "toolbar" },
+    { previous: "playing", current: "paused", source: "toolbar" },
+  ]);
+});
+
+test("métricas do Performance panel são determinísticas e notificam cada amostra", () => {
+  const metrics = new WorkbenchMetrics(() => 1234);
+  let notifications = 0;
+  metrics.subscribe(() => notifications++);
+  metrics.record("blueprint-event");
+  metrics.record("projection-resync");
+  metrics.record("command");
+  metrics.record("panel-activation");
+  assert.deepEqual(metrics.snapshot, {
+    startedAt: 1234,
+    blueprintEvents: 1,
+    projectionResyncs: 1,
+    commandsExecuted: 1,
+    panelActivations: 1,
+  });
+  assert.equal(notifications, 4);
 });

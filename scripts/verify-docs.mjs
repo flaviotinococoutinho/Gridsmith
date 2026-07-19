@@ -11,6 +11,7 @@
  *  - NÃO há referências transitórias a branches/sessões de geração;
  *  - todo comando `npm run <x>` documentado existe em algum package.json;
  *  - o workflow de CI executa os gates de transports e de documentação;
+ *  - o gate do workbench cobre registries, layout, command bridge e governança;
  *  - schemas JSON têm sintaxe/refs locais coerentes e `required` declarado;
  *  - `COMMAND_KINDS`, enum GraphQL e schema de comandos têm cobertura idêntica;
  *  - o proto mantém o dispatch genérico e as RPCs explícitas de histórico;
@@ -52,6 +53,7 @@ const REQUIRED = [
   "docs/adr/ADR-020-sessao-de-projeto-transacional.md",
   "docs/adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md",
   "docs/adr/ADR-022-historico-global-transacional.md",
+  "docs/adr/ADR-023-workbench-adaptativo-por-contribuicoes.md",
   "contracts/README.md",
   "contracts/shared-memory-layout.md",
   "contracts/schemas/error-codes.md",
@@ -216,11 +218,41 @@ const explicitTestCases = [
   ["middleware/test/transport-gateways.test.ts", "histórico global: MCP"],
   ["frontend/test/project-controller.test.ts", "edição canônica: pintar marca dirty"],
   ["frontend/test/project-controller.test.ts", "edição canônica: Save e autosave não capturam no meio do gesto"],
+  ["frontend/test/adaptive-workbench.test.ts", "workbench adaptativo: renderer.ts é somente composition root"],
+  ["frontend/test/contribution-registries.test.ts", "registries puros: command palette encontra e executa"],
+  ["frontend/test/workbench-layout.test.ts", "layout do workbench: modo estreito e drawer são derivados"],
+  ["frontend/test/native-command-bridge.test.ts", "menus de projeto, histórico e recentes só encaminham ao CommandRegistry"],
 ];
 for (const [rel, marker] of explicitTestCases) {
   const file = path.join(root, rel);
   if (!fs.existsSync(file) || !fs.readFileSync(file, "utf8").includes(marker)) {
     errors.push(`${rel}: caso explícito ausente -> ${marker}`);
+  }
+}
+
+const frontendPackagePath = path.join(root, "frontend", "package.json");
+if (fs.existsSync(frontendPackagePath)) {
+  try {
+    const frontendPackage = JSON.parse(fs.readFileSync(frontendPackagePath, "utf8"));
+    const workbenchGate = frontendPackage.scripts?.["test:adaptive-workbench"];
+    for (const testFile of [
+      "test/contribution-registries.test.ts",
+      "test/workbench-layout.test.ts",
+      "test/adaptive-workbench.test.ts",
+      "test/native-command-bridge.test.ts",
+      "test/native-menu-projection.test.ts",
+      "test/project-close-preflight.test.ts",
+      "test/schema-inspector-view.test.ts",
+      "test/pending-edit-coordinator.test.ts",
+      "test/workbench-core.test.ts",
+      "test/experience-gate.test.ts",
+    ]) {
+      if (typeof workbenchGate !== "string" || !workbenchGate.includes(testFile)) {
+        errors.push(`frontend/package.json: test:adaptive-workbench não inclui ${testFile}`);
+      }
+    }
+  } catch (error) {
+    errors.push(`frontend/package.json: JSON inválido -> ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -262,6 +294,10 @@ if (fs.existsSync(ciPath)) {
     {
       label: "npm run test:transport-middleware-restart",
       pattern: /^\s*run:\s+cd frontend && npm run test:transport-middleware-restart\s*$/m,
+    },
+    {
+      label: "npm run test:adaptive-workbench",
+      pattern: /^\s*run:\s+cd frontend && npm run test:adaptive-workbench\s*$/m,
     },
     {
       label: "middleware npm run test:project-session",

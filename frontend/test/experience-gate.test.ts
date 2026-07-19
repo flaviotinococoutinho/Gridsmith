@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ExperienceGate, type ResolvedExperienceLike } from "../src/core/experienceGate.js";
+import {
+  ExperienceGate,
+  localizeCapabilityReason,
+  type ResolvedExperienceLike,
+} from "../src/core/experienceGate.js";
 
 const EXPERIENCE: ResolvedExperienceLike = {
   family: "monogame",
@@ -17,20 +21,20 @@ const EXPERIENCE: ResolvedExperienceLike = {
   ],
 };
 
-test("painéis habilitam quando todos os requisitos estão habilitados", () => {
+test("capabilities habilitadas preservam a decisão do perfil", () => {
   const gate = new ExperienceGate(EXPERIENCE);
-  assert.equal(gate.panel("level-editor").enabled, true);
-  assert.equal(gate.panel("lighting-pipeline").enabled, true);
-  assert.equal(gate.panel("asset-compiler").enabled, true);
+  assert.equal(gate.feature("level.intgrid-editor").enabled, true);
+  assert.equal(gate.feature("lighting.deferred-pipeline").enabled, true);
+  assert.equal(gate.feature("assets.mgcb-compile").enabled, true);
 });
 
-test("painel desabilitado carrega a RAZÃO da governança", () => {
+test("capability desabilitada carrega a RAZÃO da governança", () => {
   const gate = new ExperienceGate(EXPERIENCE);
-  const preview = gate.panel("embedded-preview");
+  const preview = gate.feature("preview.embedded");
   assert.equal(preview.enabled, false);
   assert.equal(preview.reason, "chega no perfil 3.8.2");
 
-  const overlay = gate.panel("debug-overlay");
+  const overlay = gate.feature("debug.overlay");
   assert.equal(overlay.enabled, false);
   assert.match(overlay.reason, /sem engine conectada/);
 });
@@ -39,17 +43,25 @@ test("recurso não governado é fail-safe (desabilitado com explicação)", () =
   const gate = new ExperienceGate(EXPERIENCE);
   const unknown = gate.feature("teleport.quantum");
   assert.equal(unknown.enabled, false);
-  assert.match(unknown.reason, /not governed/);
-  assert.equal(gate.panel("unknown-panel").enabled, false);
+  assert.match(unknown.reason, /não está disponível/);
+  assert.match(unknown.reason, /Teleport quantum/);
 });
 
-test("allPanels materializa a régua completa da UI e o label do runtime", () => {
-  const gate = new ExperienceGate(EXPERIENCE);
-  const panels = gate.allPanels();
-  assert.deepEqual(
-    Object.entries(panels).filter(([, a]) => a.enabled).map(([id]) => id).sort(),
-    ["asset-compiler", "level-editor", "lighting-pipeline", "shader-editor"],
+test("razões técnicas do governor são apresentadas em português", () => {
+  assert.equal(
+    localizeCapabilityReason('no engine connected to confirm subsystem "camera" (fail-safe: disabled)'),
+    "Nenhuma engine está conectada para confirmar o subsistema “camera”; recurso desabilitado por segurança.",
   );
+  assert.equal(
+    localizeCapabilityReason('subsystem "lighting" is absent in the connected engine'),
+    "O subsistema “lighting” está ausente na engine conectada.",
+  );
+});
+
+test("gate não conhece painéis e mantém metadata do runtime", () => {
+  const gate = new ExperienceGate(EXPERIENCE);
+  assert.equal("panel" in gate, false);
+  assert.equal("allPanels" in gate, false);
   assert.equal(gate.runtimeLabel, "MonoGame 3.8.2 (DesktopGL) (perfil 3.8.2)");
   assert.equal(gate.constraints["maxTextureSize"], 8192);
 });

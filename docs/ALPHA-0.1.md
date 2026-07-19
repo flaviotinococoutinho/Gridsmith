@@ -226,9 +226,17 @@ stateDiagram-v2
 ### P0.3 — Workbench do editor 🔶
 Layout com navegação real, vocabulário humano, painel inferior e status bar.
 - [x] Workbench: toolbar de projeto (Novo/Abrir/Salvar/Fechar), rail de
-  navegação com botões reais (aria-pressed, disabled, tooltip com a razão da
+  navegação com tabs reais (`aria-selected`, `aria-disabled`, tooltip com a razão da
   governança), área de trabalho por painel, inspector, painel inferior com
-  abas Problemas|Saída|Histórico + filtro, status bar (aria-live)
+  abas Problemas|Saída|Histórico|Performance + filtro, status bar (aria-live)
+- [x] Registries internos de painel, comando, ferramenta e Inspector;
+  `SelectionService` transversal e session-aware; `renderer.ts` reduzido à
+  composição/roteamento, sem API pública de plugins
+- [x] Inspector schema-driven para projeto, nível, célula, definição/instância
+  de entidade, câmera, luz, asset e problema; validação inline, unidades,
+  reset, read-only e mixed state para seleção múltipla
+- [x] Paleta de comandos e superfícies unificadas: menu nativo, toolbar,
+  contexto, atalhos e ações corretivas executam o mesmo `CommandRegistry`
 - [x] Vocabulário humano pt-BR — `core/vocabulary.ts` com teste de cobertura
   total (IDs internos nunca aparecem); rótulos para painéis, eventos, status
   de projeção, estados de projeto e de serviços
@@ -237,11 +245,15 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
 - [x] View-model de navegação — `core/workbenchModel.ts`: foco automático no
   primeiro painel habilitado, realocação quando a governança muda, fail-safe
 - [x] Falha de conexão com ação corretiva (botão "Tentar reconectar")
-- [x] Menu nativo (Arquivo/Editar/Exibir) com atalhos: Ctrl+N/O/S/Shift+S/W
-  no main; Ctrl+Z/Shift+Z chamam o histórico canônico da sessão, mesmo depois
-  de trocar de painel
-- [ ] Painéis redimensionáveis e layouts salvos
-- [ ] Razões da governança traduzidas (hoje passam do perfil em inglês)
+- [x] Menu nativo (Arquivo/Editar/Exibir) é projetado pelo `CommandRegistry`,
+  validado no main e publica invocações tipadas pelo preload; Ctrl+N/O/S/Shift+S/W/Z/Shift+Z/Y
+  não mantêm um segundo handler de domínio no main
+- [x] Projeto, Inspector e painel inferior redimensionáveis; tamanhos e
+  visibilidade persistidos por adapter versionado; comandos em Exibir alternam
+  regiões/restauram defaults; modo estreito usa drawers efêmeros e splitters
+  acessíveis por teclado
+- [x] Razões estruturais da governança traduzidas no boundary da UI, com
+  fallback textual e capability desconhecida fail-closed
 
 ### P0.4 — Vertical slice do editor de níveis 🔶
 - [x] Viewport do canvas — `core/canvasViewport.ts`: pan em pixels de tela,
@@ -259,7 +271,7 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
 - [x] Atalhos do editor: dígitos selecionam o significado; Ctrl+Z/Shift+Z/Y
 - [x] Retângulo (arrasto com ghost), linha (Bresenham, ghost) e conta-gotas
   (pega o significado e volta ao pincel; célula vazia vira borracha)
-- [ ] Edição da paleta de tipos
+- [x] Edição incremental da paleta de tipos (`level/palette` canônico)
 - [x] Placement de entidade com handle: ferramenta "Jogador" — clique
   posiciona (snap ao centro da célula), arraste move (`entity/move` canônico
   → `entity/move` na engine, sem respawn), Delete remove; marcadores
@@ -308,11 +320,11 @@ luzes/câmera), seleção cruzada editor↔runtime, erros de projeção visívei
 
 Decisão e invariantes: [ADR-022](adr/ADR-022-historico-global-transacional.md).
 
-### P0.8 — Diagnósticos como funcionalidade ⬜
-Problems panel consolidando erros/warnings/compatibilidade/pipeline com as
-7 perguntas respondidas (o quê, objeto, por quê, impacto, correção, navegação,
-fix automático) — materializa a explicabilidade que já existe na camada
-canônica (reasons de skipped/deferred, AssetToolError, matriz do governor).
+### P0.8 — Diagnósticos como funcionalidade 🔶
+- [x] Painéis contribuídos de Problemas, Saída, Histórico e Performance;
+  status bar, filtro e razão de projeção continuam legíveis sem IDs internos
+- [ ] Consolidar compatibilidade/pipeline e responder as 7 perguntas (o quê,
+  objeto, por quê, impacto, correção, navegação, fix automático) em todo caso
 
 ### P0.9 — Empacotamento ⬜
 Electron Builder/Forge: executável por plataforma, bundling coordenado de
@@ -321,11 +333,10 @@ instalado, release alpha.
 
 ## P1 (depois do P0 — profundidade)
 
-Asset browser com thumbnails e reimport · world map visual · inspector
-schema-driven + modelo de seleção transversal · editor de rigs · timeline ·
-graph editor de estados · live edit genérico (contrato `TunableDescriptor`) ·
-templates · atalhos + command palette · layouts persistidos · acessibilidade
-(teclado, ARIA, daltonismo no IntGrid, i18n).
+Asset browser com thumbnails e reimport · world map visual · inspector profundo
+de referências/assets · editor de rigs · timeline · graph editor de estados ·
+live edit genérico (contrato `TunableDescriptor`) · presets adicionais ·
+acessibilidade validada por e2e (incluindo daltonismo no IntGrid) · i18n.
 
 ## P2 (expansão — deliberadamente adiado)
 
@@ -337,7 +348,8 @@ multi-runtime já está representada nos contratos.
 ## Pirâmide de testes exigida pela milestone
 
 1. **Unidade** — manter os núcleos puros (já coberto).
-2. **Componentes** — inspector, toolbar, paleta, canvas (a introduzir com a UI).
+2. **Componentes** — núcleos/estrutura de inspector, toolbar, paleta e canvas
+   têm gate; falta driver DOM/Electron para comportamento visual completo.
 3. **Integração da aplicação** — renderer↔preload↔main↔gateway, save/load,
    supervisão de processos (parcialmente coberto com fakes injetáveis).
 4. **E2E visual** — Playwright + Electron dirigindo a jornada de aceite.

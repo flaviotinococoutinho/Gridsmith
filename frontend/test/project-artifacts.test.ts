@@ -119,21 +119,27 @@ test("Save As preserva exatamente o caminho confirmado pelo diálogo nativo", ()
 
 test("edição canônica: undo global, paleta e limpeza de gestos estão ligados ao shell", () => {
   const renderer = source("src/renderer/renderer.ts");
+  const application = source("src/renderer/workbenchApplication.ts");
+  const contributions = source("src/renderer/builtinContributions.ts");
   const levelEditor = source("src/renderer/levelEditorView.ts");
   const main = source("src/main/main.ts");
   const commands = source("src/core/editorCommands.ts");
 
-  assert.match(renderer, /window\.addEventListener\("keydown"/);
-  assert.match(renderer, /window\.p7m\.undo\(\)/);
-  assert.match(renderer, /HISTORY_ACTOR_LABELS\[entry\.actor\]/);
-  assert.doesNotMatch(renderer, /activeEditor.*undo|doc\.undo/);
+  assert.match(renderer, /registerBuiltinContributions\(application\)/);
+  assert.match(renderer, /routeGlobalEditorEvents\(application\)/);
+  assert.doesNotMatch(renderer, /level\.editor|pencil|eraser|if \(panel/);
+  assert.match(application, /hostWindow\.addEventListener\("keydown"/);
+  assert.match(contributions, /application\.api\.undo\(\)/);
+  assert.match(contributions, /PROJECT_COMMAND_IDS\.undo/);
+  assert.doesNotMatch(levelEditor, /window\.p7m\.undo\(\)|doc\.undo/);
 
   assert.match(levelEditor, /"level\/palette"/);
   assert.match(levelEditor, /"Editar paleta…"/);
   assert.match(levelEditor, /if \(!confirmationUncertain\) window\.p7m\.endEditGesture/);
   assert.match(levelEditor, /window\.removeEventListener\("mouseup", onMouseUp\)/);
   assert.doesNotMatch(commands, /coalesce/);
-  assert.match(main, /"render-process-gone".*clearEditGestures/);
+  assert.match(main, /"render-process-gone"[\s\S]*?clearEditGestures/);
+  assert.match(main, /"render-process-gone"[\s\S]*?closePreflight\.cancelAll/);
   assert.match(main, /event\.transactionId.*endEditGesture/s);
   assert.match(main, /onResynchronized[\s\S]*clearEditGestures/);
   const editorClient = source("src/main/EditorClient.ts");

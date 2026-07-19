@@ -177,9 +177,10 @@ test("EditorClient v2: conecta via gRPC, despacha, consulta, recebe eventos por 
     // experiência governada (GraphQL baseline) alimenta o gate da UI
     const experience = await client.resolveExperience("monogame", "3.8.2");
     const gate = new ExperienceGate(experience);
-    assert.equal(gate.panel("shader-editor").enabled, true);
-    assert.equal(gate.panel("level-editor").enabled, false); // requiresSubsystem sem engine
-    assert.match(gate.panel("level-editor").reason, /no engine connected/);
+    assert.equal(gate.feature("shaders.hlsl-editing").enabled, true);
+    const levelEditing = gate.feature("level.intgrid-editor");
+    assert.equal(levelEditing.enabled, false); // requiresSubsystem sem engine
+    assert.match(levelEditing.reason, /no engine connected/);
   } finally {
     client.close();
     await rig.close();

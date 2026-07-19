@@ -1,11 +1,18 @@
 import type { BlueprintEventPayload } from "./editorCommands.js";
 import { IntGridDocument, type CellChange } from "./intGridDocument.js";
+import type { CellSelection, Selection } from "./selectionService.js";
 import {
   selectLevelEditorProjection,
   type LevelEditorProjectionDocument,
+  type ProjectedCameraSettings,
   type ProjectedEntity,
+  type ProjectedEntityDefinition,
+  type ProjectedLight,
   type ProjectedLevel,
+  type ProjectedMesh,
+  type ProjectedProjectMetadata,
   type ProjectedPaletteEntry,
+  type ProjectedSkeleton,
 } from "./levelEditorProjection.js";
 
 export interface EditableLevelProjection extends Omit<ProjectedLevel, "intGrid"> {
@@ -13,9 +20,17 @@ export interface EditableLevelProjection extends Omit<ProjectedLevel, "intGrid">
 }
 
 export interface LevelEditorStoreSnapshot {
+  readonly projectId: string | undefined;
+  readonly metadata: ProjectedProjectMetadata | undefined;
   readonly level: EditableLevelProjection | undefined;
+  readonly levels: readonly EditableLevelProjection[];
   readonly entities: readonly ProjectedEntity[];
+  readonly entityDefinitions: readonly ProjectedEntityDefinition[];
   readonly playerEntityDefinitionId: string | undefined;
+  readonly camera: ProjectedCameraSettings;
+  readonly lights: readonly ProjectedLight[];
+  readonly skeletons: readonly ProjectedSkeleton[];
+  readonly meshes: readonly ProjectedMesh[];
 }
 
 export interface LevelEditorProjectionCursor {
@@ -28,8 +43,15 @@ export interface LevelEditorProjectionCursor {
  * base; eventos incrementais atualizam a mesma instância consumida pelo canvas.
  */
 export class LevelEditorStore {
+  private projectId: string | undefined;
+  private metadata: ProjectedProjectMetadata | undefined;
   private levels = new Map<string, EditableLevelProjection>();
   private entities = new Map<string, ProjectedEntity>();
+  private entityDefinitions = new Map<string, ProjectedEntityDefinition>();
+  private camera: ProjectedCameraSettings = {};
+  private lights = new Map<string, ProjectedLight>();
+  private skeletons: readonly ProjectedSkeleton[] = [];
+  private meshes: readonly ProjectedMesh[] = [];
   private playerEntityDefinitionId: string | undefined;
   private preferredLevelId: string | undefined;
   private activeProjectSessionId: string | undefined;
@@ -53,12 +75,26 @@ export class LevelEditorStore {
       throw new Error("A level projection requires a valid project session cursor");
     }
     const selected = selectLevelEditorProjection(document, preferredLevelId);
+    this.projectId = document?.projectId;
+    this.metadata = document?.metadata ? cloneMetadata(document.metadata) : undefined;
     this.levels = new Map(
       (document?.levels ?? []).map((level) => [level.levelId, editableLevel(level)]),
     );
     this.entities = new Map(
       selected.entities.map((entity) => [entity.entityId, cloneEntity(entity)]),
     );
+    this.entityDefinitions = new Map(
+      (document?.entityDefs ?? []).map((definition) => [
+        definition.entityDefId,
+        cloneEntityDefinition(definition),
+      ]),
+    );
+    this.camera = { ...(document?.camera ?? {}) };
+    this.lights = new Map(
+      (document?.lights ?? []).map((light) => [light.lightId, cloneLight(light)]),
+    );
+    this.skeletons = (document?.skeletons ?? []).map((skeleton) => ({ ...skeleton }));
+    this.meshes = (document?.meshes ?? []).map((mesh) => ({ ...mesh }));
     this.playerEntityDefinitionId = selected.playerEntityDefinitionId;
     this.preferredLevelId = selected.level?.levelId ?? preferredLevelId;
     this.activeProjectSessionId = cursor?.projectSessionId;
@@ -69,16 +105,27 @@ export class LevelEditorStore {
   }
 
   select(levelId: string | undefined): void {
-    if (levelId && this.levels.has(levelId)) this.preferredLevelId = levelId;
+    if (levelId && this.levels.has(levelId) && this.preferredLevelId !== levelId) {
+      this.preferredLevelId = levelId;
+      this.notify();
+    }
   }
 
   get snapshot(): LevelEditorStoreSnapshot {
     return {
+      projectId: this.projectId,
+      metadata: this.metadata ? cloneMetadata(this.metadata) : undefined,
       level:
         (this.preferredLevelId ? this.levels.get(this.preferredLevelId) : undefined) ??
         this.levels.values().next().value,
+      levels: [...this.levels.values()],
       entities: [...this.entities.values()].map(cloneEntity),
+      entityDefinitions: [...this.entityDefinitions.values()].map(cloneEntityDefinition),
       playerEntityDefinitionId: this.playerEntityDefinitionId,
+      camera: { ...this.camera },
+      lights: [...this.lights.values()].map(cloneLight),
+      skeletons: this.skeletons.map((skeleton) => ({ ...skeleton })),
+      meshes: this.meshes.map((mesh) => ({ ...mesh })),
     };
   }
 
@@ -162,6 +209,62 @@ export class LevelEditorStore {
   private applyPayload(event: BlueprintEventPayload): boolean {
     let applied = false;
     switch (event.kind) {
+      case "cameraConfigured": {
+        const settings = objectField(event, "settings");
+        if (settings) {
+          this.camera = event["replace"] === true ? { ...settings } : { ...this.camera, ...settings };
+          applied = true;
+        }
+        break;
+      }
+      case "skeletonDefined": {
+        const skeleton = projectedSkeleton(event["skeleton"]);
+        if (skeleton) {
+          this.skeletons = [...this.skeletons.filter(({ skeletonId }) => skeletonId !== skeleton.skeletonId), skeleton];
+          applied = true;
+        }
+        break;
+      }
+      case "meshBound": {
+        const mesh = projectedMesh(event["binding"]);
+        if (mesh) {
+          this.meshes = [...this.meshes.filter(({ meshId }) => meshId !== mesh.meshId), mesh];
+          applied = true;
+        }
+        break;
+      }
+      case "lightAdded":
+      case "lightUpdated": {
+        const light = projectedLight(event["light"]);
+        if (light) {
+          this.lights.set(light.lightId, light);
+          applied = true;
+        }
+        break;
+      }
+      case "lightRemoved": {
+        const lightId = stringField(event, "lightId");
+        if (lightId) applied = this.lights.delete(lightId);
+        break;
+      }
+      case "entityDefDefined":
+      case "entityDefUpdated": {
+        const definition = projectedEntityDefinition(event["definition"]);
+        if (definition) {
+          this.entityDefinitions.set(definition.entityDefId, definition);
+          this.refreshPlayerEntityDefinition();
+          applied = true;
+        }
+        break;
+      }
+      case "entityDefRemoved": {
+        const definitionId = stringField(event, "entityDefId");
+        if (definitionId) {
+          applied = this.entityDefinitions.delete(definitionId);
+          if (applied) this.refreshPlayerEntityDefinition();
+        }
+        break;
+      }
       case "levelPatched": {
         const levelId = stringField(event, "levelId");
         const level = levelId ? this.levels.get(levelId) : undefined;
@@ -209,7 +312,8 @@ export class LevelEditorStore {
         break;
       }
       case "entityPlaced":
-      case "entityMoved": {
+      case "entityMoved":
+      case "entityPropertiesChanged": {
         const entity = projectedEntity(event["entity"]);
         if (entity) {
           this.entities.set(entity.entityId, entity);
@@ -242,9 +346,94 @@ export class LevelEditorStore {
     return settled;
   }
 
+  private refreshPlayerEntityDefinition(): void {
+    this.playerEntityDefinitionId = [...this.entityDefinitions.values()].find((definition) =>
+      definition.archetypeId === "player" || definition.tags?.includes("player"))?.entityDefId;
+  }
+
   private notify(): void {
     for (const listener of this.listeners) listener();
   }
+}
+
+/**
+ * Reconcilia o conjunto inteiro de seleções com uma projeção substituída ou
+ * redimensionada. Células são normalizadas para coordenadas válidas e índices
+ * derivados novamente; alvos removidos desaparecem antes de qualquer Inspector
+ * poder lê-los.
+ */
+export function reconcileSelectionsWithLevelProjection(
+  selections: readonly Selection[],
+  snapshot: LevelEditorStoreSnapshot,
+): readonly Selection[] {
+  const levels = new Map(snapshot.levels.map((level) => [level.levelId, level]));
+  const entities = new Set(snapshot.entities.map(({ entityId }) => entityId));
+  const definitions = new Set(snapshot.entityDefinitions.map(({ entityDefId }) => entityDefId));
+  const lights = new Set(snapshot.lights.map(({ lightId }) => lightId));
+  const assets = new Set([
+    ...snapshot.skeletons.map(({ skeletonId }) => skeletonId),
+    ...snapshot.meshes.map(({ meshId }) => meshId),
+  ]);
+  const reconciled: Selection[] = [];
+  for (const selection of selections) {
+    if (selection.projectId !== snapshot.projectId) continue;
+    switch (selection.kind) {
+      case "project":
+      case "camera":
+      case "problem":
+        reconciled.push(selection);
+        break;
+      case "level":
+        if (levels.has(selection.levelId)) reconciled.push(selection);
+        break;
+      case "cell": {
+        const level = levels.get(selection.levelId);
+        if (!level) break;
+        const coordinates = new Map<string, { readonly x: number; readonly y: number; readonly index: number }>();
+        for (const cell of selection.cells) {
+          if (!validCell(cell.x, cell.y, level.width, level.height)) continue;
+          coordinates.set(`${cell.x}:${cell.y}`, {
+            x: cell.x,
+            y: cell.y,
+            index: cell.y * level.width + cell.x,
+          });
+        }
+        const cells = [...coordinates.values()];
+        if (cells.length === 0) break;
+        const anchor = selection.anchor && validCell(
+          selection.anchor.x,
+          selection.anchor.y,
+          level.width,
+          level.height,
+        )
+          ? cells.find(({ x, y }) => x === selection.anchor!.x && y === selection.anchor!.y) ?? cells[0]
+          : cells[0];
+        reconciled.push({
+          ...selection,
+          cells,
+          ...(anchor ? { anchor } : {}),
+        } satisfies CellSelection);
+        break;
+      }
+      case "entity-definition":
+        if (definitions.has(selection.definitionId)) reconciled.push(selection);
+        break;
+      case "entity-instance":
+        if (entities.has(selection.entityId)) reconciled.push(selection);
+        break;
+      case "asset":
+        if (assets.has(selection.assetId)) reconciled.push(selection);
+        break;
+      case "light":
+        if (lights.has(selection.lightId)) reconciled.push(selection);
+        break;
+    }
+  }
+  return reconciled;
+}
+
+function validCell(x: number, y: number, width: number, height: number): boolean {
+  return Number.isInteger(x) && Number.isInteger(y) && x >= 0 && y >= 0 && x < width && y < height;
 }
 
 function parseCommandSequence(value: string): bigint | undefined {
@@ -270,12 +459,74 @@ function editableLevel(level: ProjectedLevel): EditableLevelProjection {
 }
 
 function cloneEntity(entity: ProjectedEntity): ProjectedEntity {
-  return { ...entity, position: [entity.position[0], entity.position[1]] };
+  return {
+    ...entity,
+    position: [entity.position[0], entity.position[1]],
+    ...(entity.fields ? { fields: { ...entity.fields } } : {}),
+  };
+}
+
+function cloneEntityDefinition(definition: ProjectedEntityDefinition): ProjectedEntityDefinition {
+  return {
+    ...definition,
+    ...(definition.tags ? { tags: [...definition.tags] } : {}),
+    ...(definition.fields
+      ? { fields: definition.fields.map((field) => ({
+          ...field,
+          ...(field.options ? { options: [...field.options] } : {}),
+        })) }
+      : {}),
+    ...(definition.editor ? { editor: { ...definition.editor } } : {}),
+  };
+}
+
+function cloneLight(light: ProjectedLight): ProjectedLight {
+  return {
+    ...light,
+    color: [light.color[0], light.color[1], light.color[2]],
+    ...(light.position ? { position: [light.position[0], light.position[1]] } : {}),
+    ...(light.direction ? { direction: [light.direction[0], light.direction[1]] } : {}),
+  };
+}
+
+function cloneMetadata(metadata: ProjectedProjectMetadata): ProjectedProjectMetadata {
+  return {
+    ...metadata,
+    ...(metadata.referenceResolution
+      ? { referenceResolution: { ...metadata.referenceResolution } }
+      : {}),
+    ...(metadata.spatial ? { spatial: { ...metadata.spatial } } : {}),
+  };
 }
 
 function stringField(value: Record<string, unknown>, field: string): string | undefined {
   const candidate = value[field];
   return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
+}
+
+function objectField(value: Record<string, unknown>, field: string): Record<string, unknown> | undefined {
+  const candidate = value[field];
+  return candidate && typeof candidate === "object" && !Array.isArray(candidate)
+    ? candidate as Record<string, unknown>
+    : undefined;
+}
+
+function projectedLight(value: unknown): ProjectedLight | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Partial<ProjectedLight>;
+  if (typeof candidate.lightId !== "string" ||
+      !["directional", "point", "spot"].includes(candidate.type ?? "") ||
+      !Array.isArray(candidate.color) || candidate.color.length !== 3 ||
+      typeof candidate.intensity !== "number") return undefined;
+  return cloneLight(candidate as ProjectedLight);
+}
+
+function projectedEntityDefinition(value: unknown): ProjectedEntityDefinition | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Partial<ProjectedEntityDefinition>;
+  return typeof candidate.entityDefId === "string"
+    ? cloneEntityDefinition(candidate as ProjectedEntityDefinition)
+    : undefined;
 }
 
 function cellChanges(value: unknown): readonly CellChange[] | undefined {
@@ -369,9 +620,27 @@ function projectedEntity(value: unknown): ProjectedEntity | undefined {
     position.length !== 2 ||
     !position.every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))
   ) return undefined;
+  const fields = entity["fields"];
+  if (fields !== undefined && (!fields || typeof fields !== "object" || Array.isArray(fields))) return undefined;
   return {
     entityId: entity["entityId"],
     entityDefId: entity["entityDefId"],
     position: [position[0] as number, position[1] as number],
+    ...(fields ? { fields: { ...(fields as Record<string, unknown>) } } : {}),
   };
+}
+
+function projectedSkeleton(value: unknown): ProjectedSkeleton | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const skeletonId = (value as Record<string, unknown>)["skeletonId"];
+  return typeof skeletonId === "string" && skeletonId.length > 0 ? { skeletonId } : undefined;
+}
+
+function projectedMesh(value: unknown): ProjectedMesh | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate["meshId"] === "string" && candidate["meshId"].length > 0 &&
+    typeof candidate["skeletonId"] === "string" && candidate["skeletonId"].length > 0
+    ? { meshId: candidate["meshId"], skeletonId: candidate["skeletonId"] }
+    : undefined;
 }

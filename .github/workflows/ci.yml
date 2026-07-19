@@ -56,6 +56,8 @@ jobs:
         run: cd frontend && npm run test:project-session
       - name: Teste explícito — gestos canônicos, projeção otimista e savepoint
         run: cd frontend && npm run test:canonical-editing
+      - name: Teste explícito — workbench, registries, layout e command bridge
+        run: cd frontend && npm run test:adaptive-workbench
       - name: Teste explícito — fallback gRPC → GraphQL
         run: cd frontend && npm run test:transport-fallback
       - name: Teste explícito — repromoção GraphQL → gRPC

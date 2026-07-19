@@ -16,3 +16,4 @@ functions) estão registradas retroativamente em
 | [ADR-020](ADR-020-sessao-de-projeto-transacional.md) | Sessão de projeto explícita, replay isolado e substituição atômica | Accepted |
 | [ADR-021](ADR-021-ciclo-de-vida-duravel-do-projeto.md) | Lifecycle de arquivo durável, recovery explícito, templates e unidades canônicas | Accepted |
 | [ADR-022](ADR-022-historico-global-transacional.md) | Histórico global transacional, patches incrementais e projeção otimista | Accepted |
+| [ADR-023](ADR-023-workbench-adaptativo-por-contribuicoes.md) | Workbench adaptativo composto por registries e seleção transversal | Accepted |
