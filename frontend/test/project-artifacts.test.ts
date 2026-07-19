@@ -57,8 +57,11 @@ test("projeção do renderer preserva IDs, tile size e dimensões do documento",
   const rendererSource = source("src/renderer/levelEditorView.ts");
   assert.match(
     rendererSource,
-    /selectLevelEditorProjection\(projection\.document, ctx\.preferredLevelId\)/,
+    /store\.select\(ctx\.preferredLevelId\)/,
   );
+  assert.match(rendererSource, /kind: "level\/patch"/);
+  assert.match(rendererSource, /"Recalcular arte"/);
+  assert.doesNotMatch(rendererSource, /"Publicar nível"|toLevelPayload/);
   assert.doesNotMatch(
     rendererSource,
     /["'](?:nivel-1|level-1|jogador)["']/,
@@ -112,4 +115,27 @@ test("Save As preserva exatamente o caminho confirmado pelo diálogo nativo", ()
   const dialogs = source("src/main/project/ElectronProjectDialogs.ts");
   assert.match(dialogs, /return result\.filePath;/);
   assert.doesNotMatch(dialogs, /extname|ensureProjectExtension/);
+});
+
+test("edição canônica: undo global, paleta e limpeza de gestos estão ligados ao shell", () => {
+  const renderer = source("src/renderer/renderer.ts");
+  const levelEditor = source("src/renderer/levelEditorView.ts");
+  const main = source("src/main/main.ts");
+  const commands = source("src/core/editorCommands.ts");
+
+  assert.match(renderer, /window\.addEventListener\("keydown"/);
+  assert.match(renderer, /window\.p7m\.undo\(\)/);
+  assert.match(renderer, /HISTORY_ACTOR_LABELS\[entry\.actor\]/);
+  assert.doesNotMatch(renderer, /activeEditor.*undo|doc\.undo/);
+
+  assert.match(levelEditor, /"level\/palette"/);
+  assert.match(levelEditor, /"Editar paleta…"/);
+  assert.match(levelEditor, /if \(!confirmationUncertain\) window\.p7m\.endEditGesture/);
+  assert.match(levelEditor, /window\.removeEventListener\("mouseup", onMouseUp\)/);
+  assert.doesNotMatch(commands, /coalesce/);
+  assert.match(main, /"render-process-gone".*clearEditGestures/);
+  assert.match(main, /event\.transactionId.*endEditGesture/s);
+  assert.match(main, /onResynchronized[\s\S]*clearEditGestures/);
+  const editorClient = source("src/main/EditorClient.ts");
+  assert.match(editorClient, /requestResync\("dispatch_confirmation_uncertain"\)/);
 });

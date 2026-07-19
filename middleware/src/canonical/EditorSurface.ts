@@ -21,17 +21,19 @@ import {
   PROJECT_TEMPLATES,
   type ProjectTemplateOptions,
 } from "./ProjectTemplates.js";
-import type { DispatchResult } from "./CanonicalOrchestrator.js";
+import { HistoryUnavailableError } from "./CommandHistory.js";
 import {
   ProjectNotOpenError,
   ProjectSessionConflictError,
   type ProjectActivationResult,
+  type ProjectHistoryStatus,
   type ProjectSessionManager,
   type ProjectStatus,
   type SessionDispatchResult,
+  type SessionHistoryOperationResult,
 } from "./ProjectSessionManager.js";
 import { COMMAND_KINDS, reshapeCommand } from "./commandShape.js";
-import type { BlueprintCommand } from "../domain/BlueprintStore.js";
+import type { BlueprintCommand, CommandActor } from "../domain/BlueprintStore.js";
 import type { ExperienceGovernor, ResolvedExperience } from "../runtime/ExperienceGovernor.js";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
 import { JsonRpcError, RpcErrorCode } from "../protocol/jsonrpc.js";
@@ -80,14 +82,34 @@ export interface EditorSurfaceOptions {
 interface InFlightDispatch {
   readonly projectSessionId: string;
   readonly fingerprint: string;
-  readonly promise: Promise<DispatchResult>;
+  readonly promise: Promise<SessionDispatchResult>;
 }
 
 interface CompletedDispatch {
   readonly projectSessionId: string;
   readonly fingerprint: string;
   readonly outcome:
-    | { readonly ok: true; readonly value: DispatchResult }
+    | { readonly ok: true; readonly value: SessionDispatchResult }
+    | { readonly ok: false; readonly error: unknown };
+}
+
+export interface HistoryMutationOptions {
+  readonly requestId?: string;
+  readonly expectedProjectSessionId?: string;
+  readonly historyCursor?: string;
+}
+
+interface InFlightHistoryMutation {
+  readonly projectSessionId: string;
+  readonly fingerprint: string;
+  readonly promise: Promise<SessionHistoryOperationResult>;
+}
+
+interface CompletedHistoryMutation {
+  readonly projectSessionId: string;
+  readonly fingerprint: string;
+  readonly outcome:
+    | { readonly ok: true; readonly value: SessionHistoryOperationResult }
     | { readonly ok: false; readonly error: unknown };
 }
 
@@ -97,6 +119,8 @@ const MAX_COMPLETED_DISPATCHES = 1_024;
 export class EditorSurface {
   private readonly inFlightDispatches = new Map<string, InFlightDispatch>();
   private readonly completedDispatches = new Map<string, CompletedDispatch>();
+  private readonly inFlightHistoryMutations = new Map<string, InFlightHistoryMutation>();
+  private readonly completedHistoryMutations = new Map<string, CompletedHistoryMutation>();
 
   constructor(private readonly options: EditorSurfaceOptions) {}
 
@@ -105,7 +129,8 @@ export class EditorSurface {
     kind: string,
     payload: unknown,
     requestId?: string,
-  ): Promise<DispatchResult> {
+    actor: CommandActor = "human",
+  ): Promise<SessionDispatchResult> {
     if (
       typeof kind !== "string" ||
       !(COMMAND_KINDS as readonly string[]).includes(kind) ||
@@ -126,7 +151,7 @@ export class EditorSurface {
       throw new JsonRpcError(RpcErrorCode.ProjectNotOpen, "No project session is active");
     }
     if (requestId === undefined) {
-      return this.dispatchInSession(command, projectSessionId);
+      return this.dispatchInSession(command, projectSessionId, actor);
     }
     if (
       typeof requestId !== "string" ||
@@ -139,7 +164,14 @@ export class EditorSurface {
       );
     }
 
-    const fingerprint = stableJson(command);
+    // Idempotência usa o comando EFETIVO. O actor vindo no payload não
+    // participa da identidade porque a fronteira autenticada o sobrescreve.
+    const fingerprint = stableJson({
+      command: {
+        ...command,
+        metadata: { ...command.metadata, actor },
+      },
+    });
     const completed = this.completedDispatches.get(requestId);
     if (completed) {
       this.assertSameProjectSession(requestId, completed.projectSessionId, projectSessionId);
@@ -163,7 +195,7 @@ export class EditorSurface {
       );
     }
 
-    const promise = this.dispatchInSession(command, projectSessionId);
+    const promise = this.dispatchInSession(command, projectSessionId, actor);
     this.inFlightDispatches.set(requestId, { projectSessionId, fingerprint, promise });
     void promise.then(
       (value) => this.completeDispatch(
@@ -245,6 +277,38 @@ export class EditorSurface {
     // projeções e do journal; durante commit/staging o caller deve tentar de novo.
     this.readCurrentSession();
     return this.options.sessions.status;
+  }
+
+  /** Estado pequeno do histórico global da sessão, usado por menus e atalhos. */
+  historyStatus(limit = 50): ProjectHistoryStatus {
+    if (!Number.isInteger(limit) || limit < 0 || limit > 500) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"limit" must be an integer in [0, 500]`,
+      );
+    }
+    try {
+      // Mesma barreira de leitura de snapshot/projectStatus: menus não podem
+      // observar um cursor novo enquanto a troca de runtime ainda está em commit.
+      this.readCurrentSession();
+      return this.options.sessions.historyStatus(limit);
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  async historyUndo(
+    options: HistoryMutationOptions = {},
+    actor: CommandActor = "human",
+  ): Promise<SessionHistoryOperationResult> {
+    return await this.mutateHistory("undo", options, actor);
+  }
+
+  async historyRedo(
+    options: HistoryMutationOptions = {},
+    actor: CommandActor = "human",
+  ): Promise<SessionHistoryOperationResult> {
+    return await this.mutateHistory("redo", options, actor);
   }
 
   async projectCreate(
@@ -404,12 +468,130 @@ export class EditorSurface {
     return this.options.adapter.isConnected;
   }
 
+  private mutateHistory(
+    direction: "undo" | "redo",
+    options: HistoryMutationOptions,
+    actor: CommandActor,
+  ): Promise<SessionHistoryOperationResult> {
+    this.validateHistoryMutationOptions(options);
+    const projectSessionId = this.readCurrentSession()?.sessionId;
+    if (!projectSessionId) {
+      throw new JsonRpcError(RpcErrorCode.ProjectNotOpen, "No project session is active");
+    }
+    // Mesmo sem CAS explícito do caller, fixe a sessão observada antes de
+    // entrar na fila. Assim um undo atrasado nunca alcança o projeto seguinte.
+    const expectedProjectSessionId = options.expectedProjectSessionId ?? projectSessionId;
+    const execute = (): Promise<SessionHistoryOperationResult> => {
+      try {
+        return direction === "undo"
+          ? this.options.sessions.historyUndo(
+              expectedProjectSessionId,
+              options.historyCursor,
+              actor,
+            )
+          : this.options.sessions.historyRedo(
+              expectedProjectSessionId,
+              options.historyCursor,
+              actor,
+            );
+      } catch (error) {
+        return Promise.reject(this.toApplicationError(error));
+      }
+    };
+    if (options.requestId === undefined) {
+      return execute().catch((error: unknown) => Promise.reject(this.toApplicationError(error)));
+    }
+
+    const requestId = options.requestId;
+    const fingerprint = stableJson({
+      direction,
+      expectedProjectSessionId,
+      historyCursor: options.historyCursor ?? null,
+      actor,
+    });
+    const completed = this.completedHistoryMutations.get(requestId);
+    if (completed) {
+      this.assertSameProjectSession(requestId, completed.projectSessionId, projectSessionId);
+      this.assertSameRequest(requestId, completed.fingerprint, fingerprint);
+      this.completedHistoryMutations.delete(requestId);
+      this.completedHistoryMutations.set(requestId, completed);
+      if (completed.outcome.ok) return Promise.resolve(completed.outcome.value);
+      return Promise.reject(completed.outcome.error);
+    }
+    const inFlight = this.inFlightHistoryMutations.get(requestId);
+    if (inFlight) {
+      this.assertSameProjectSession(requestId, inFlight.projectSessionId, projectSessionId);
+      this.assertSameRequest(requestId, inFlight.fingerprint, fingerprint);
+      return inFlight.promise;
+    }
+    if (this.inFlightHistoryMutations.size >= MAX_IN_FLIGHT_DISPATCHES) {
+      throw new JsonRpcError(
+        RpcErrorCode.InternalError,
+        `Too many in-flight idempotent history mutations`,
+      );
+    }
+
+    const promise = execute().catch((error: unknown) => {
+      throw this.toApplicationError(error);
+    });
+    this.inFlightHistoryMutations.set(requestId, {
+      projectSessionId,
+      fingerprint,
+      promise,
+    });
+    void promise.then(
+      (value) => this.completeHistoryMutation(
+        requestId,
+        projectSessionId,
+        fingerprint,
+        { ok: true, value },
+      ),
+      (error: unknown) => this.completeHistoryMutation(
+        requestId,
+        projectSessionId,
+        fingerprint,
+        { ok: false, error },
+      ),
+    );
+    return promise;
+  }
+
+  private validateHistoryMutationOptions(options: HistoryMutationOptions): void {
+    if (!options || typeof options !== "object") {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `history options must be an object`);
+    }
+    if (
+      options.requestId !== undefined &&
+      (typeof options.requestId !== "string" ||
+        options.requestId.trim().length === 0 ||
+        options.requestId.length > 128)
+    ) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"requestId" must be a non-empty string with at most 128 characters`,
+      );
+    }
+    this.validateExpectedSessionId(options.expectedProjectSessionId);
+    if (
+      options.historyCursor !== undefined &&
+      (typeof options.historyCursor !== "string" ||
+        options.historyCursor.trim().length === 0 ||
+        options.historyCursor.length > 256)
+    ) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"historyCursor" must be a non-empty string with at most 256 characters`,
+      );
+    }
+  }
+
   private async dispatchInSession(
     command: BlueprintCommand,
     projectSessionId: string,
+    actor: CommandActor,
   ): Promise<SessionDispatchResult> {
     try {
-      return await this.options.sessions.dispatch(command, projectSessionId);
+      return await this.options.sessions.dispatch(command, projectSessionId, actor);
     } catch (error) {
       throw this.toApplicationError(error);
     }
@@ -453,6 +635,9 @@ export class EditorSurface {
     }
     if (error instanceof ProjectSessionConflictError) {
       return new JsonRpcError(RpcErrorCode.ProjectSessionConflict, error.message);
+    }
+    if (error instanceof HistoryUnavailableError) {
+      return new JsonRpcError(RpcErrorCode.InvalidParams, error.message);
     }
     return error;
   }
@@ -498,6 +683,27 @@ export class EditorSurface {
       const oldest = this.completedDispatches.keys().next().value as string | undefined;
       if (oldest === undefined) break;
       this.completedDispatches.delete(oldest);
+    }
+  }
+
+  private completeHistoryMutation(
+    requestId: string,
+    projectSessionId: string,
+    fingerprint: string,
+    outcome: CompletedHistoryMutation["outcome"],
+  ): void {
+    const current = this.inFlightHistoryMutations.get(requestId);
+    if (
+      !current ||
+      current.projectSessionId !== projectSessionId ||
+      current.fingerprint !== fingerprint
+    ) return;
+    this.inFlightHistoryMutations.delete(requestId);
+    this.completedHistoryMutations.set(requestId, { projectSessionId, fingerprint, outcome });
+    while (this.completedHistoryMutations.size > MAX_COMPLETED_DISPATCHES) {
+      const oldest = this.completedHistoryMutations.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.completedHistoryMutations.delete(oldest);
     }
   }
 }

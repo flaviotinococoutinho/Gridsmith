@@ -266,8 +266,9 @@ matriz via MCP (`runtime_experience`).
 
 O Blueprint é salvável como **documento declarativo versionado**
 (`BlueprintSerializer`): `exportBlueprint` produz um snapshot completo
-(`schemaVersion`, `projectId`, `metadata` + todos os domínios). Na versão 3,
-`metadata` torna resolução e unidade espacial explícitas. O `ProjectSessionManager`
+(`schemaVersion`, `projectId`, `metadata` + todos os domínios). Na versão 4,
+`metadata` mantém resolução/unidade espacial explícitas e cada nível persiste
+sua paleta semântica. O `ProjectSessionManager`
 faz parse, migração, validação e replay em store temporário, sem publicar
 actions/eventos nem tocar o runtime. Só depois das validações semânticas ele
 reseta/reidrata o runtime e troca a referência ativa. O roundtrip é sem perdas;
@@ -298,13 +299,13 @@ ou comando mais novo.
 
 ```mermaid
 graph TD
-  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v3<br/>schemaVersion + projectId + metadata + dominios")]
+  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v4<br/>schemaVersion + projectId + metadata + paleta + dominios")]
   DOC -.-> RAW["raw carregado"]
   subgraph LOAD["LOAD"]
     RAW --> MIG["migrateBlueprintDocument(raw)<br/>(sem schemaVersion = 0)"]
     MIG --> V{"versao > suportada?"}
     V -->|"sim"| REJ(["REJEITA"])
-    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2->3)"]
+    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2->3->4)"]
     CHAIN --> TMP["cria ProjectSession temporaria"]
     TMP --> REP["replay prepare: filters + store + history<br/>sem actions, journal ou runtime"]
     REP --> SEM["validacoes semanticas + preparar projecao"]
@@ -317,6 +318,30 @@ graph TD
 journal, clientes e referência ativa só mudam após a reidratação bem-sucedida
 ou explicitamente adiada. Erro restaura o runtime anterior antes de retornar;
 falha também na compensação mantém a referência anterior em estado fail-closed.*
+
+## 4.6 Edição incremental e histórico global
+
+O documento declarativo é a fonte persistida, mas não é a unidade normal de
+edição ou undo. Gestos de IntGrid usam `level/patch`, com mudanças ordenadas
+`{index,before,after}` e validação atômica de todos os `before`. A interface
+mantém uma projeção otimista até o ack/evento; não existe etapa separada de
+“Publicar nível”.
+
+`CommandHistory` pertence à `ProjectSession`. Entradas guardam comandos forward
+e inverse, label, ator, transactionId, timestamp e possível barreira. O replay
+de um documento apenas estabelece o baseline. Um novo forward depois de undo
+descarta o futuro; drag e pincel contínuo coalescem pela transação explícita.
+
+Dois identificadores não intercambiáveis evitam ambiguidade:
+
+- `commandSequence` cresce em execute, undo e redo e ordena EventJournal/CAS;
+- `documentStateId` representa o cursor lógico e pode voltar ao savepoint.
+
+Undo/redo é uma operação de aplicação na `EditorSurface`, exposta igualmente
+por JSON-RPC, GraphQL, gRPC e MCP. O MCP atribui `actor=agent`; transports do app
+atribuem `human`. Eventos carregam entrada, transação, ação e estado lógico para
+que clientes, dirty/autosave e runtime observem o mesmo commit. Detalhes e
+alternativas: [ADR-022](adr/ADR-022-historico-global-transacional.md).
 
 ## 5. Migração e regras de evolução
 

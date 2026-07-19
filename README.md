@@ -72,13 +72,19 @@ da engine, nunca assume suporte. Desenho completo em
 - **Sessão de projeto transacional:** `ProjectSessionManager` prepara parse, migração,
   validação, replay e projeção fora da sessão publicada; só então faz a troca atômica.
   `EditorSurface`, JSON-RPC, GraphQL, gRPC e MCP resolvem a mesma sessão ativa. O
-  documento Blueprint v3 persiste `projectId`, metadata e unidades espaciais explícitas;
+  documento Blueprint v4 persiste `projectId`, metadata, unidades espaciais e a
+  paleta semântica dos níveis;
   create/open/close usam `expectedProjectSessionId` + `expectedCommandSequence`
   como compare-and-swap para rejeitar sessão ou revisão atrasadas.
 - **Lifecycle de arquivo durável:** New materializa um template real, Save publica por
   temporário + flush + rename e Close só prossegue depois de Save confirmado. Recovery,
   exemplo editável e Recentes passam pelo mesmo controller tipado e testável
   ([ADR-021](docs/adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md)).
+- **Histórico canônico global:** gestos visuais enviam patches incrementais,
+  com inversos, transação, label e proveniência na sessão. Undo/redo usa a
+  mesma superfície nos quatro transports, atualiza Blueprint/runtime/dirty e
+  distingue o relógio de eventos do savepoint lógico
+  ([ADR-022](docs/adr/ADR-022-historico-global-transacional.md)).
 
 ## Rumo atual: Alpha 0.1 — First Playable Workflow
 
@@ -160,8 +166,9 @@ graph LR
   restrito a diagnósticos), **sessões de projeto substituíveis** (create/open/close/status
   paritários nas quatro bordas, replay privado e rollback atômico), **nível como comando
   canônico** (`level/define` com IntGrid + regras; o adapter resolve o auto-tiling na
-  projeção e a engine ganha `tilemap/remove`) e **IntGridDocument** no editor (pincéis
-  paint/rect/flood com undo/redo célula a célula → payload de `level/define`). Parte 3:
+  projeção e a engine ganha `tilemap/remove`) e **IntGridDocument** no editor
+  como projeção otimista (um `level/patch` por gesto, ack/rejeição e undo/redo
+  global; sem snapshot completo como operação normal). Parte 3:
   **pipeline de assets** (`AssetPipelineService`: watcher do catálogo taxonômico →
   export CLI Aseprite → artefato canônico com tags por diretório → compile MGCB para
   `.xnb`, com `ToolRunner` injetável e erros tipados; flag `--assets <dir>` no

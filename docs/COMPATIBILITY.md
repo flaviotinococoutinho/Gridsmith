@@ -87,11 +87,11 @@ graph TD
 | Campo | Conteúdo |
 |---|---|
 | Componente | Documento declarativo do projeto (`exportBlueprint` / load por replay) |
-| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 3`; documento sem `schemaVersion` é tratado como versão `0` |
+| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 4`; documento sem `schemaVersion` é tratado como versão `0` |
 | Fonte de verdade | `middleware/src/canonical/BlueprintSerializer.ts` |
 | Regra de compatibilidade | Versão exata é carregada direto; versões anteriores são **migradas em cadeia** `v(n) → v(n+1)` antes do replay |
 | Breaking change | Qualquer mudança estrutural do documento exige nova versão **+** entrada correspondente no registro `MIGRATIONS` |
-| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3`); v2 introduz `projectId`, derivado deterministicamente para v1; v3 introduz `metadata` com nome, resolução de referência e semântica espacial explícita. A migração `2 → 3` preserva valores genéricos já interpretados como mundo e converte somente a forma completa do factory v2 conhecido (IDs, grid, câmera, regras e coordenadas exatos), ignorando o `projectId` que o fluxo histórico substituía por UUID, por `cellToWorldCenter`. `project/openDocument` prepara e valida antes da troca; identidade + `expectedCommandSequence` protegem o commit contra candidato/revisão obsoletos |
+| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3 → 4`); v2 introduz `projectId`; v3 introduz metadata e semântica espacial explícita; v4 persiste a paleta semântica de cada nível, preservando os significados 1–3 disponíveis no editor v3 e criando defaults determinísticos para outros valores já usados. A migração `2 → 3` preserva valores genéricos já interpretados como mundo e converte somente a forma completa do factory v2 conhecido por `cellToWorldCenter`. `project/openDocument` prepara e valida antes da troca; identidade + `expectedCommandSequence` protegem o commit contra candidato/revisão obsoletos. Histórico/patches não são persistidos no documento. |
 | Fallback | Versão acima da suportada é **rejeitada** com `BlueprintDocumentError` (mensagem clara); versão sem migrador registrado é rejeitada |
 | Teste | `middleware/test/blueprint-migration.test.ts` + `project-session-manager.test.ts` + `project-templates.test.ts` (projectId v1 determinístico, semântica v2 preservada em v3, replay isolado, rollback, CAS e conversão canônica célula→mundo) |
 
@@ -174,14 +174,14 @@ coordenadas históricas remanescentes nesse caso exigem revisão assistida.
 
 | Campo | Conteúdo |
 |---|---|
-| Componente | Superfície baseline app ↔ middleware: `projectCreate/openDocument/close/status`, queries/mutations completas, `snapshot` e `eventBatch`; também destino do fallback (ADR-016/017/019/020) |
+| Componente | Superfície baseline app ↔ middleware: sessão, dispatch, `undo`/`redo`/`historyStatus`, `snapshot` e `eventBatch`; também destino do fallback (ADR-016/017/019/020/022) |
 | Formato da versão | Sem constante própria — o SDL é o contrato, versionado como arquivo único no repositório |
 | Fonte de verdade | `contracts/graphql/editor.schema.graphql` (o build do middleware copia para `dist/contracts/`; a cópia deve ser **byte-idêntica**) |
 | Regra de compatibilidade | Evolução **aditiva** (campo/valor novo não quebra cliente); o enum `CommandKind` deve espelhar `COMMAND_KINDS` (mapeamento `_` ⇄ `/` — GraphQL não aceita `/` em enum) |
 | Breaking change | Remover/renomear campo, tipo ou valor de enum — app e middleware são processos locais da mesma instalação e atualizam juntos |
 | Migração | n/a (distribuição conjunta) |
 | Continuidade | Cursor novo é `(middlewareInstanceId, projectSessionId, seq decimal uint64)`; `firstAvailableSeq`/`lastEventSeq` delimitam a partição ativa; restart, gap ou troca de projeto exigem reconstrução por `snapshot`. APIs sem identidade de sessão falham explicitamente. |
-| Concorrência | `projectCreate`, `projectOpenDocument` e `projectClose` validam `expectedProjectSessionId` + `expectedCommandSequence` no commit. Divergência de sessão ou revisão retorna `PROJECT_SESSION_CONFLICT`, sem perder comando concorrente. |
+| Concorrência | Operações de sessão validam identidade + `expectedCommandSequence`; undo/redo aceita identidade/cursor esperado e retry idempotente. `commandSequence` ordena eventos, enquanto `documentStateId` identifica o savepoint lógico. |
 | Autenticação | Bearer efêmero obrigatório. HTTP 401 é erro terminal e não aciona outro transport. |
 | Fallback | — (o GraphQL **é** o baseline completo e o fallback do caminho quente) |
 | Teste | Paridade `dist` ⇄ fonte + enum ⇄ `COMMAND_KINDS` em `middleware/test/transport-gateways.test.ts`; e2e `scripts/verify-transports.sh` |
@@ -190,7 +190,7 @@ coordenadas históricas remanescentes nesse caso exigem revisão assistida.
 
 | Campo | Conteúdo |
 |---|---|
-| Componente | App ↔ middleware — serviço `EditorHotPath` (`ProjectCreate`, `ProjectOpenDocument`, `ProjectClose`, `ProjectStatus`, `Dispatch`, `Query`, `Snapshot`, `StreamEventsV2`, `Health`; RPCs legados preservados) |
+| Componente | App ↔ middleware — serviço `EditorHotPath` (`Project*`, `Dispatch`, `Undo`, `Redo`, `HistoryStatus`, `Query`, `Snapshot`, `StreamEventsV2`, `Health`; RPCs legados preservados) |
 | Formato da versão | Package proto — `p7m.editor.v1` |
 | Fonte de verdade | `contracts/grpc/p7m_editor.proto` (cópia em `dist/contracts/` gerada pelo build; byte-idêntica) |
 | Regra de compatibilidade | Protobuf aditivo (campos novos com tags novas); os payloads de comando viajam como `payload_json` e são validados na **mesma fonte única** (`BlueprintStore` + `contracts/schemas/`) — o proto não introduz segunda fonte de validação |

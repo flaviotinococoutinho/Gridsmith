@@ -79,9 +79,74 @@ interface ProjectStatusLike {
   readonly commandSequence: string | number | bigint;
   readonly createdAt?: number;
   readonly runtimeState: "synchronized" | "deferred" | "failed";
+  readonly documentStateId?: string;
+  readonly historyCursor?: string;
+  readonly canUndo?: boolean;
+  readonly canRedo?: boolean;
 }
 
-function serializeProjectStatus(status: ProjectStatusLike): Record<string, unknown> {
+interface HistoryEntryLike {
+  readonly id: string;
+  readonly label: string;
+  readonly forward?: readonly unknown[];
+  readonly inverse?: readonly unknown[];
+  readonly actor: "human" | "agent" | "pipeline";
+  readonly transactionId: string;
+  readonly timestamp: number | string;
+  readonly barrier?: boolean;
+  readonly applied?: boolean;
+}
+
+interface HistoryStatusLike {
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+  readonly undoLabel?: string;
+  readonly redoLabel?: string;
+  readonly documentStateId: string;
+  readonly historyCursor: string;
+  readonly commandSequence: string | number | bigint;
+  readonly entries: readonly HistoryEntryLike[];
+}
+
+function serializeHistoryEntry(
+  entry: HistoryEntryLike,
+  includeCommands: boolean,
+  applied = entry.applied === true,
+): Record<string, unknown> {
+  return {
+    id: entry.id,
+    label: entry.label,
+    forward_json: includeCommands ? (entry.forward ?? []).map((command) => JSON.stringify(command)) : [],
+    inverse_json: includeCommands ? (entry.inverse ?? []).map((command) => JSON.stringify(command)) : [],
+    actor: entry.actor,
+    transaction_id: entry.transactionId,
+    timestamp_unix_ms: entry.timestamp.toString(),
+    barrier: entry.barrier === true,
+    applied,
+  };
+}
+
+function serializeHistoryStatus(status: HistoryStatusLike): Record<string, unknown> {
+  return {
+    project_session_id: status.projectSessionId,
+    project_id: status.projectId,
+    can_undo: status.canUndo,
+    can_redo: status.canRedo,
+    undo_label: status.undoLabel ?? "",
+    redo_label: status.redoLabel ?? "",
+    document_state_id: status.documentStateId,
+    history_cursor: status.historyCursor,
+    command_sequence: status.commandSequence.toString(),
+    entries: status.entries.map((entry) => serializeHistoryEntry(entry, false)),
+  };
+}
+
+function serializeProjectStatus(
+  status: ProjectStatusLike,
+  history?: HistoryStatusLike,
+): Record<string, unknown> {
   return {
     active: status.active,
     project_session_id: status.projectSessionId ?? "",
@@ -89,6 +154,11 @@ function serializeProjectStatus(status: ProjectStatusLike): Record<string, unkno
     command_sequence: status.commandSequence.toString(),
     created_at_unix_ms: status.createdAt?.toString() ?? "0",
     runtime_state: status.runtimeState,
+    document_state_id: status.documentStateId ?? "",
+    history_cursor: status.historyCursor ?? "",
+    can_undo: status.canUndo === true,
+    can_redo: status.canRedo === true,
+    ...(history ? { history: serializeHistoryStatus(history) } : {}),
   };
 }
 
@@ -97,28 +167,53 @@ function serializeProjectOperation(result: {
   summary?: { applied: number; projected: number; deferred: number; skipped: number };
   templateId?: string;
   name?: string;
-}): Record<string, unknown> {
+}, history?: HistoryStatusLike): Record<string, unknown> {
   return {
-    status: serializeProjectStatus(result.status),
+    status: serializeProjectStatus(result.status, history),
     ...(result.summary ? { summary: result.summary } : {}),
     template_id: result.templateId ?? "",
     name: result.name ?? "",
   };
 }
 
-function serializeEvent(event: EventEnvelope): {
-  seq: string;
-  project_session_id: string;
-  project_id: string;
-  command_sequence: string;
-  kind: string;
-  payload_json: string;
-} {
+function serializeHistoryOperation(result: {
+  readonly status: ProjectStatusLike;
+  readonly history: HistoryStatusLike;
+  readonly entry: HistoryEntryLike;
+  readonly events: readonly unknown[];
+}): Record<string, unknown> {
+  const action = metadataOf(result.events[0])["historyAction"];
+  return {
+    status: serializeProjectStatus(result.status, result.history),
+    history: serializeHistoryStatus(result.history),
+    entry: serializeHistoryEntry(result.entry, true, action !== "undo"),
+    events_json: result.events.map((event) => JSON.stringify(event)),
+    command_sequence: result.history.commandSequence.toString(),
+    transaction_id: result.entry.transactionId,
+    document_state_id: result.history.documentStateId,
+    history_cursor: result.history.historyCursor,
+  };
+}
+
+function metadataOf(payload: unknown): Record<string, unknown> {
+  return payload !== null && typeof payload === "object"
+    ? payload as Record<string, unknown>
+    : {};
+}
+
+function serializeEvent(event: EventEnvelope): Record<string, unknown> {
+  const metadata = metadataOf(event.payload);
   return {
     seq: event.seq.toString(),
     project_session_id: event.projectSessionId,
     project_id: event.projectId,
     command_sequence: event.commandSequence.toString(),
+    transaction_id: metadata["transactionId"] ?? "",
+    document_state_id: metadata["documentStateId"] ?? "",
+    history_entry_id: metadata["historyEntryId"] ?? "",
+    actor: metadata["actor"] ?? "",
+    history_action: metadata["historyAction"] ?? "",
+    history_cursor: metadata["historyCursor"] ?? "",
     kind: event.kind,
     payload_json: JSON.stringify(event.payload),
   };
@@ -164,6 +259,9 @@ export class GrpcGateway {
       ProjectOpenDocument: this.projectOpenDocument,
       ProjectClose: this.projectClose,
       ProjectStatus: this.projectStatus,
+      Undo: this.undo,
+      Redo: this.redo,
+      HistoryStatus: this.historyStatus,
       StreamEvents: this.streamEvents,
       StreamEventsV2: this.streamEventsV2,
     });
@@ -209,6 +307,7 @@ export class GrpcGateway {
     if (!this.authenticated(call)) return callback(authenticationError());
     try {
       const status = this.options.surface.projectStatus();
+      const history = status.active ? this.options.surface.historyStatus(0) : undefined;
       const position = this.options.journal.position;
       callback(null, {
         ok: true,
@@ -219,7 +318,10 @@ export class GrpcGateway {
         command_sequence: position.commandSequence.toString(),
         first_available_seq: position.firstAvailableSeq.toString(),
         last_event_seq: position.lastEventSeq.toString(),
-        project_status: serializeProjectStatus(status),
+        project_status: serializeProjectStatus(status, history),
+        document_state_id: status.documentStateId ?? "",
+        history_cursor: status.historyCursor ?? "",
+        ...(history ? { history: serializeHistoryStatus(history) } : {}),
       });
     } catch (error) {
       callback(toGrpcError(error));
@@ -228,7 +330,7 @@ export class GrpcGateway {
 
   private dispatch: grpc.handleUnaryCall<
     { kind?: string; payload_json?: string; request_id?: string },
-    { event_json: string; projection_json: string }
+    Record<string, unknown>
   > = (call, callback) => {
     if (!this.authenticated(call)) return callback(authenticationError());
     const { kind, payload_json, request_id } = call.request;
@@ -248,10 +350,17 @@ export class GrpcGateway {
           kind ?? "",
           payload,
           request_id || undefined,
+          "human",
         );
         callback(null, {
           event_json: JSON.stringify(result.event),
           projection_json: result.projection ? JSON.stringify(result.projection) : "",
+          command_sequence: result.commandSequence.toString(),
+          transaction_id: result.historyEntry.transactionId,
+          document_state_id: result.documentStateId,
+          history_entry_id: result.historyEntry.id,
+          history_cursor: result.historyCursor,
+          history_entry: serializeHistoryEntry(result.historyEntry, true, true),
         });
       } catch (err) {
         callback(toGrpcError(err));
@@ -278,6 +387,9 @@ export class GrpcGateway {
       // As duas leituras são síncronas, portanto formam um ponto coerente no
       // event loop: projeções completas + cursor do último evento nelas contido.
       const snapshot = this.options.surface.snapshot();
+      const history = snapshot.status.active
+        ? this.options.surface.historyStatus(0)
+        : undefined;
       const position = this.options.journal.position;
       callback(null, {
         projections_json: JSON.stringify(snapshot.projections),
@@ -287,7 +399,10 @@ export class GrpcGateway {
         command_sequence: position.commandSequence.toString(),
         first_available_seq: position.firstAvailableSeq.toString(),
         last_event_seq: position.lastEventSeq.toString(),
-        project_status: serializeProjectStatus(snapshot.status),
+        project_status: serializeProjectStatus(snapshot.status, history),
+        document_state_id: snapshot.status.documentStateId ?? "",
+        history_cursor: snapshot.status.historyCursor ?? "",
+        ...(history ? { history: serializeHistoryStatus(history) } : {}),
       });
     } catch (err) {
       callback(toGrpcError(err));
@@ -312,7 +427,8 @@ export class GrpcGateway {
           call.request.expected_project_session_id || undefined,
           call.request.expected_command_sequence || undefined,
         );
-        callback(null, serializeProjectOperation(result));
+        const history = result.status.active ? this.options.surface.historyStatus(0) : undefined;
+        callback(null, serializeProjectOperation(result, history));
       } catch (err) {
         callback(toGrpcError(err));
       }
@@ -342,7 +458,10 @@ export class GrpcGateway {
       call.request.expected_project_session_id || undefined,
       call.request.expected_command_sequence || undefined,
     ).then(
-      (result) => callback(null, serializeProjectOperation(result)),
+      (result) => {
+        const history = result.status.active ? this.options.surface.historyStatus(0) : undefined;
+        callback(null, serializeProjectOperation(result, history));
+      },
       (error: unknown) => callback(toGrpcError(error)),
     );
   };
@@ -364,10 +483,66 @@ export class GrpcGateway {
   private projectStatus: grpc.handleUnaryCall<unknown, unknown> = (call, callback) => {
     if (!this.authenticated(call)) return callback(authenticationError());
     try {
-      callback(null, serializeProjectStatus(this.options.surface.projectStatus()));
+      const status = this.options.surface.projectStatus();
+      const history = status.active ? this.options.surface.historyStatus(0) : undefined;
+      callback(null, serializeProjectStatus(status, history));
     } catch (error) {
       callback(toGrpcError(error));
     }
+  };
+
+  private historyStatus: grpc.handleUnaryCall<{ limit?: number }, unknown> = (call, callback) => {
+    if (!this.authenticated(call)) return callback(authenticationError());
+    try {
+      callback(
+        null,
+        serializeHistoryStatus(this.options.surface.historyStatus(call.request.limit ?? 0)),
+      );
+    } catch (error) {
+      callback(toGrpcError(error));
+    }
+  };
+
+  private undo: grpc.handleUnaryCall<
+    {
+      request_id?: string;
+      expected_project_session_id?: string;
+      history_cursor?: string;
+    },
+    unknown
+  > = (call, callback) => {
+    if (!this.authenticated(call)) return callback(authenticationError());
+    void this.options.surface.historyUndo({
+      ...(call.request.request_id ? { requestId: call.request.request_id } : {}),
+      ...(call.request.expected_project_session_id
+        ? { expectedProjectSessionId: call.request.expected_project_session_id }
+        : {}),
+      ...(call.request.history_cursor ? { historyCursor: call.request.history_cursor } : {}),
+    }, "human").then(
+      (result) => callback(null, serializeHistoryOperation(result)),
+      (error: unknown) => callback(toGrpcError(error)),
+    );
+  };
+
+  private redo: grpc.handleUnaryCall<
+    {
+      request_id?: string;
+      expected_project_session_id?: string;
+      history_cursor?: string;
+    },
+    unknown
+  > = (call, callback) => {
+    if (!this.authenticated(call)) return callback(authenticationError());
+    void this.options.surface.historyRedo({
+      ...(call.request.request_id ? { requestId: call.request.request_id } : {}),
+      ...(call.request.expected_project_session_id
+        ? { expectedProjectSessionId: call.request.expected_project_session_id }
+        : {}),
+      ...(call.request.history_cursor ? { historyCursor: call.request.history_cursor } : {}),
+    }, "human").then(
+      (result) => callback(null, serializeHistoryOperation(result)),
+      (error: unknown) => callback(toGrpcError(error)),
+    );
   };
 
   private streamEvents: grpc.handleServerStreamingCall<
@@ -401,15 +576,11 @@ export class GrpcGateway {
         last_event_seq: string;
         resync_required: boolean;
         resync_reason: string;
+        document_state_id?: string;
+        history_cursor?: string;
+        history?: Record<string, unknown>;
       };
-      event?: {
-        seq: string;
-        project_session_id: string;
-        project_id: string;
-        command_sequence: string;
-        kind: string;
-        payload_json: string;
-      };
+      event?: Record<string, unknown>;
     }
   > = (call) => {
     if (!this.authenticated(call)) {
@@ -421,6 +592,10 @@ export class GrpcGateway {
       call.request.project_session_id,
       call.request.after_seq,
     );
+    const projectStatus = this.options.surface.projectStatus();
+    const history = projectStatus.active
+      ? this.options.surface.historyStatus(0)
+      : undefined;
     // Frame de controle obrigatório: o cliente decide antes de aplicar eventos.
     call.write({
       status: {
@@ -432,6 +607,9 @@ export class GrpcGateway {
         last_event_seq: result.lastEventSeq.toString(),
         resync_required: result.resyncRequired,
         resync_reason: result.resyncReason ?? "",
+        document_state_id: projectStatus.documentStateId ?? "",
+        history_cursor: projectStatus.historyCursor ?? "",
+        ...(history ? { history: serializeHistoryStatus(history) } : {}),
       },
     });
     if (result.resyncRequired) {
@@ -455,6 +633,11 @@ export class GrpcGateway {
           last_event_seq: position.lastEventSeq.toString(),
           resync_required: true,
           resync_reason: "project_session_changed",
+          // `partitionChanged` é emitido dentro do commit da sessão. A
+          // surface fica deliberadamente fechada nesse instante; o cliente
+          // deve obter estes campos no Snapshot exigido pelo resync.
+          document_state_id: "",
+          history_cursor: "",
         },
       });
       call.end();

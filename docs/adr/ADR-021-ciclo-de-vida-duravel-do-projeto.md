@@ -137,8 +137,9 @@ documento materializado e são preservados pela UI.
 - Cancelamento e falha são resultados observáveis; nenhum deles é convertido
   em fechamento bem-sucedido.
 - Escrita segura e sessão transacional formam duas barreiras consecutivas.
-- Blueprint v3 elimina a ambiguidade de unidade para novos documentos e
-  preserva compatibilidade por migração encadeada.
+- Blueprint v3 eliminou a ambiguidade de unidade; v4 (ADR-022) preserva essa
+  semântica e adiciona a paleta do nível. Documentos anteriores permanecem
+  compatíveis pela migração encadeada.
 - Undo/redo, preview, assets visuais e gameplay não fazem parte desta decisão.
 
 ## Riscos e mitigação

@@ -18,6 +18,8 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as grpc from "@grpc/grpc-js";
+import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { EditorSurface } from "../src/canonical/EditorSurface.js";
 import {
   ProjectSessionManager,
@@ -31,6 +33,7 @@ import { GraphQlGateway, resolveSdlPath, graphqlKindToCanonical } from "../src/g
 import { GrpcGateway, resolveProtoPath, loadEditorProto } from "../src/grpc/GrpcGateway.js";
 import { EditorGateway } from "../src/ipc/EditorGateway.js";
 import { JsonRpcPeer } from "../src/ipc/JsonRpcPeer.js";
+import { createMcpServer } from "../src/mcp/McpFacade.js";
 import {
   JsonRpcError,
   PROTOCOL_VERSION,
@@ -178,7 +181,16 @@ interface HotPathClient {
   ): void;
   Dispatch(
     req: { kind: string; payload_json: string; request_id?: string },
-    cb: (err: grpc.ServiceError | null, reply: { event_json: string; projection_json: string }) => void,
+    cb: (err: grpc.ServiceError | null, reply: {
+      event_json: string;
+      projection_json: string;
+      command_sequence: string;
+      transaction_id: string;
+      document_state_id: string;
+      history_cursor: string;
+      history_entry_id: string;
+      history_entry: Record<string, unknown>;
+    }) => void,
   ): void;
   Query(req: { projection: string }, cb: (err: grpc.ServiceError | null, reply: { result_json: string }) => void): void;
   Snapshot(
@@ -226,6 +238,26 @@ interface HotPathClient {
     req: object,
     cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
   ): void;
+  HistoryStatus(
+    req: { limit?: number },
+    cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
+  ): void;
+  Undo(
+    req: {
+      request_id?: string;
+      expected_project_session_id?: string;
+      history_cursor?: string;
+    },
+    cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
+  ): void;
+  Redo(
+    req: {
+      request_id?: string;
+      expected_project_session_id?: string;
+      history_cursor?: string;
+    },
+    cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
+  ): void;
   close(): void;
 }
 
@@ -237,6 +269,7 @@ function grpcClient(target: string): HotPathClient {
   const authenticatedMethods = new Set([
     "Health", "Dispatch", "Query", "Snapshot", "StreamEvents", "StreamEventsV2",
     "ProjectCreate", "ProjectOpenDocument", "ProjectClose", "ProjectStatus",
+    "HistoryStatus", "Undo", "Redo",
   ]);
   return new Proxy(raw as object, {
     get(targetClient, property, receiver) {
@@ -353,6 +386,84 @@ test("EditorSurface: materialização exige identidade e opções completas", as
   }) as { projectId: string; metadata: { name: string } };
   assert.equal(document.projectId, "materialized-once");
   assert.equal(document.metadata.name, "Materializado");
+});
+
+test("histórico global: historyStatus respeita a barreira de transição da sessão", async () => {
+  let blockReset = false;
+  let announceReset!: () => void;
+  let releaseReset!: () => void;
+  const resetEntered = new Promise<void>((resolve) => { announceReset = resolve; });
+  const resetReleased = new Promise<void>((resolve) => { releaseReset = resolve; });
+  const adapter: RuntimeAdapter = {
+    ...offlineAdapter(),
+    resetSession: async () => {
+      if (blockReset) {
+        announceReset();
+        await resetReleased;
+      }
+      return {
+        status: "deferred",
+        runtimeSessionEpoch: 0,
+        reason: "no engine session connected",
+      };
+    },
+  };
+  const sessions = new ProjectSessionManager({ hooks: new HookBus(), adapter });
+  const profiles = new RuntimeProfileRegistry();
+  for (const profile of MONOGAME_PROFILES) profiles.register(profile);
+  const surface = new EditorSurface({
+    sessions,
+    governor: new ExperienceGovernor(profiles),
+    adapter,
+  });
+  await sessions.activate(sessions.createEmptySession("history-a"));
+  const sessionA = sessions.current!.sessionId;
+  blockReset = true;
+  const replacing = sessions.replaceAtomically(
+    sessions.createEmptySession("history-b"),
+    sessionA,
+  );
+  await resetEntered;
+  assert.throws(
+    () => surface.historyStatus(0),
+    /transition is in progress/,
+    "cursor de B não pode aparecer antes do commit do runtime",
+  );
+  releaseReset();
+  await replacing;
+  assert.equal(surface.historyStatus(0).projectId, "history-b");
+});
+
+test("histórico global: retry idempotente de undo não move o cursor duas vezes", async () => {
+  const rig = await makeRig();
+  await rig.surface.dispatchByKind("camera/configure", {
+    frequency: 3,
+    transactionId: "camera-gesture",
+    metadata: { actor: "agent", label: "Alterar câmera" },
+  }, "camera-dispatch", "human");
+  const before = rig.surface.historyStatus(0);
+  const options = {
+    requestId: "surface-undo-retry",
+    expectedProjectSessionId: before.projectSessionId,
+    historyCursor: before.historyCursor,
+  };
+  const first = rig.surface.historyUndo(options, "human");
+  const concurrentRetry = rig.surface.historyUndo(options, "human");
+  const [firstAck, retryAck] = await Promise.all([first, concurrentRetry]);
+  assert.equal(firstAck, retryAck);
+  assert.deepEqual(rig.store.cameraSettings, {});
+  assert.equal(firstAck.history.canRedo, true);
+  assert.equal(firstAck.events[0]?.historyAction, "undo");
+
+  const completedRetry = await rig.surface.historyUndo(options, "human");
+  assert.equal(completedRetry, firstAck);
+  assert.deepEqual(rig.store.cameraSettings, {});
+  assert.equal(rig.journal.lastSeq, 2n, "apply + um único undo");
+  await assert.rejects(
+    rig.surface.historyRedo({ ...options }, "human"),
+    /different command/,
+    "o mesmo requestId não pode ser reutilizado para a operação oposta",
+  );
 });
 
 test("GraphQL: dispatch/query/eventBatch/templates/experience na mesma superfície canônica", async () => {
@@ -703,6 +814,298 @@ test("gRPC: dispatch/query unários + StreamEventsV2 session-aware com catch-up 
   } finally {
     client.close();
     gateway.forceShutdown();
+  }
+});
+
+test("histórico global: GraphQL e gRPC compartilham ACK, cursor, undo/redo e idempotência", async () => {
+  const rig = await makeRig();
+  const pipe = `p7m-history-${process.pid}-${pipeCounter++}`;
+  const gql = new GraphQlGateway({
+    pipeName: pipe,
+    surface: rig.surface,
+    journal: rig.journal,
+    log: silent,
+    authToken: AUTH_TOKEN,
+  });
+  const hot = new GrpcGateway({
+    pipeName: pipe,
+    surface: rig.surface,
+    journal: rig.journal,
+    log: silent,
+    authToken: AUTH_TOKEN,
+  });
+  await gql.listen();
+  await hot.listen();
+  const client = grpcClient(hot.endpoint.grpcTarget);
+  try {
+    const level = {
+      levelId: "level-1",
+      width: 3,
+      height: 1,
+      tileSize: 16,
+      seed: 7,
+      intGrid: [0, 0, 0],
+      rules: [],
+      palette: [],
+    };
+    const defined = await graphqlRequest(
+      gql.endpoint.address,
+      `mutation ($payload: JSON!) {
+        dispatch(kind: level_define, payload: $payload, requestId: "define-level") {
+          commandSequence transactionId documentStateId historyCursor
+          historyEntry { id label actor transactionId barrier }
+        }
+      }`,
+      { payload: level },
+    );
+    assert.equal(defined.errors, undefined);
+    const defineAck = defined.data?.["dispatch"] as {
+      commandSequence: string;
+      historyCursor: string;
+      historyEntry: { actor: string };
+    };
+    assert.equal(defineAck.commandSequence, "1");
+    assert.equal(defineAck.historyEntry.actor, "human");
+    assert.ok(defineAck.historyCursor);
+
+    const patchAck = await new Promise<Record<string, unknown>>((resolve, reject) =>
+      client.Dispatch({
+        kind: "level/patch",
+        request_id: "paint-line",
+        payload_json: JSON.stringify({
+          levelId: "level-1",
+          changes: [
+            { index: 0, before: 0, after: 1 },
+            { index: 1, before: 0, after: 1 },
+            { index: 2, before: 0, after: 1 },
+          ],
+          transactionId: "gesture-line-1",
+          // Tentativa do payload de escolher proveniência: a borda gRPC
+          // obrigatoriamente substitui por human.
+          metadata: { actor: "agent", label: "Pintar linha" },
+        }),
+      }, (error, reply) => error ? reject(error) : resolve(reply)),
+    );
+    assert.equal(patchAck["command_sequence"], "2");
+    assert.equal(patchAck["transaction_id"], "gesture-line-1");
+    assert.ok(patchAck["document_state_id"]);
+    assert.ok(patchAck["history_cursor"]);
+    assert.equal(
+      (patchAck["history_entry"] as Record<string, unknown>)["actor"],
+      "human",
+    );
+
+    const graphStatus = await graphqlRequest(
+      gql.endpoint.address,
+      `{ historyStatus(limit: 10) {
+        projectSessionId commandSequence documentStateId historyCursor
+        canUndo canRedo undoLabel
+        entries { label actor transactionId applied }
+      } }`,
+    );
+    const beforeUndo = graphStatus.data?.["historyStatus"] as {
+      projectSessionId: string;
+      historyCursor: string;
+      canUndo: boolean;
+      canRedo: boolean;
+      undoLabel: string;
+      entries: Array<{ label: string; actor: string; applied: boolean }>;
+    };
+    assert.equal(beforeUndo.canUndo, true);
+    assert.equal(beforeUndo.canRedo, false);
+    assert.equal(beforeUndo.undoLabel, "Pintar linha");
+    assert.deepEqual(beforeUndo.entries[0], {
+      label: "Pintar linha",
+      actor: "human",
+      transactionId: "gesture-line-1",
+      applied: true,
+    });
+
+    const undone = await graphqlRequest(
+      gql.endpoint.address,
+      `mutation ($session: String!, $cursor: String!) {
+        undo(
+          requestId: "undo-cross-transport"
+          expectedProjectSessionId: $session
+          historyCursor: $cursor
+        ) {
+          commandSequence transactionId documentStateId historyCursor events
+          entry { id label actor transactionId }
+          history { canUndo canRedo redoLabel historyCursor }
+        }
+      }`,
+      { session: beforeUndo.projectSessionId, cursor: beforeUndo.historyCursor },
+    );
+    assert.equal(undone.errors, undefined);
+    const undoAck = undone.data?.["undo"] as {
+      commandSequence: string;
+      transactionId: string;
+      historyCursor: string;
+      events: Array<{ historyAction: string; actor: string }>;
+      history: { canRedo: boolean; redoLabel: string };
+    };
+    assert.equal(undoAck.commandSequence, "3");
+    assert.equal(undoAck.transactionId, "gesture-line-1");
+    assert.equal(undoAck.history.canRedo, true);
+    assert.equal(undoAck.history.redoLabel, "Pintar linha");
+    assert.equal(undoAck.events[0]?.historyAction, "undo");
+    assert.equal(undoAck.events[0]?.actor, "human");
+    assert.deepEqual(rig.store.listLevels()[0]?.intGrid, [0, 0, 0]);
+
+    const seqAfterUndo = rig.journal.lastSeq;
+    const grpcRetry = await new Promise<Record<string, unknown>>((resolve, reject) =>
+      client.Undo({
+        request_id: "undo-cross-transport",
+        expected_project_session_id: beforeUndo.projectSessionId,
+        history_cursor: beforeUndo.historyCursor,
+      }, (error, reply) => error ? reject(error) : resolve(reply)),
+    );
+    assert.equal(grpcRetry["command_sequence"], undoAck.commandSequence);
+    assert.equal(rig.journal.lastSeq, seqAfterUndo, "retry não pode executar um segundo undo");
+
+    const grpcStatus = await new Promise<Record<string, unknown>>((resolve, reject) =>
+      client.HistoryStatus({ limit: 10 }, (error, reply) =>
+        error ? reject(error) : resolve(reply)),
+    );
+    assert.equal(grpcStatus["history_cursor"], undoAck.historyCursor);
+    assert.equal(grpcStatus["can_redo"], true);
+
+    const redone = await new Promise<Record<string, unknown>>((resolve, reject) =>
+      client.Redo({
+        request_id: "redo-cross-transport",
+        expected_project_session_id: beforeUndo.projectSessionId,
+        history_cursor: undoAck.historyCursor,
+      }, (error, reply) => error ? reject(error) : resolve(reply)),
+    );
+    assert.equal(redone["command_sequence"], "4");
+    const redoEvent = JSON.parse(
+      (redone["events_json"] as string[])[0]!,
+    ) as Record<string, unknown>;
+    assert.equal(redoEvent["historyAction"], "redo");
+
+    const graphProjection = await graphqlRequest(
+      gql.endpoint.address,
+      `{ projection(name: "levels") }`,
+    );
+    const levels = (graphProjection.data?.["projection"] as {
+      levels: Array<{ intGrid: number[] }>;
+    }).levels;
+    assert.deepEqual(levels[0]?.intGrid, [1, 1, 1]);
+
+    await rig.surface.projectClose(beforeUndo.projectSessionId, "4");
+    const inactive = await graphqlRequest(
+      gql.endpoint.address,
+      `{ health { documentStateId historyCursor }
+         projectStatus { active documentStateId historyCursor canUndo canRedo }
+         snapshot {
+           status { active documentStateId historyCursor canUndo canRedo }
+           documentStateId historyCursor
+           history { projectSessionId projectId documentStateId historyCursor entries { id } }
+         }
+       }`,
+    );
+    assert.equal(inactive.errors, undefined, "campos non-null devem ter shape mesmo sem projeto");
+    assert.deepEqual(inactive.data?.["projectStatus"], {
+      active: false,
+      documentStateId: "",
+      historyCursor: "",
+      canUndo: false,
+      canRedo: false,
+    });
+    const inactiveSnapshot = inactive.data?.["snapshot"] as {
+      status: { active: boolean };
+      history: { entries: unknown[] };
+    };
+    assert.equal(inactiveSnapshot.status.active, false);
+    assert.deepEqual(inactiveSnapshot.history.entries, []);
+
+    const inactiveGrpc = await new Promise<Record<string, unknown>>((resolve, reject) =>
+      client.ProjectStatus({}, (error, reply) => error ? reject(error) : resolve(reply)),
+    );
+    assert.equal(inactiveGrpc["active"], false);
+    assert.equal(inactiveGrpc["document_state_id"], "");
+    assert.equal(inactiveGrpc["history_cursor"], "");
+    assert.equal(inactiveGrpc["can_undo"], false);
+    assert.equal(inactiveGrpc["can_redo"], false);
+  } finally {
+    client.close();
+    hot.forceShutdown();
+    await gql.close();
+  }
+});
+
+test("histórico global: MCP usa a mesma sessão e fixa proveniência agent", async () => {
+  const rig = await makeRig();
+  const server = createMcpServer(
+    {} as never,
+    { currentSession: undefined } as never,
+    undefined,
+    { surface: rig.surface } as never,
+  );
+  const client = new McpClient({ name: "history-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const call = async (name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const result = await client.callTool({ name, arguments: args });
+    const textBlock = result.content[0] as { type: string; text?: string } | undefined;
+    assert.equal(textBlock?.type, "text");
+    return JSON.parse(textBlock?.text ?? "{}") as Record<string, unknown>;
+  };
+  try {
+    await call("blueprint_command", {
+      kind: "level/define",
+      payload: {
+        levelId: "mcp-level",
+        width: 1,
+        height: 1,
+        tileSize: 16,
+        seed: 1,
+        intGrid: [0],
+        rules: [],
+        palette: [],
+      },
+    });
+    const patch = await call("blueprint_command", {
+      kind: "level/patch",
+      payload: {
+        levelId: "mcp-level",
+        changes: [{ index: 0, before: 0, after: 2 }],
+        transactionId: "mcp-gesture",
+        metadata: { actor: "human", label: "Pintura do agente" },
+      },
+    });
+    assert.equal(
+      (patch["historyEntry"] as Record<string, unknown>)["actor"],
+      "agent",
+    );
+
+    const status = await call("history_status", { limit: 10 });
+    assert.equal(status["canUndo"], true);
+    assert.equal(status["undoLabel"], "Pintura do agente");
+    const undone = await call("history_undo", {
+      expectedProjectSessionId: status["projectSessionId"],
+      historyCursor: status["historyCursor"],
+    });
+    assert.deepEqual(rig.store.listLevels()[0]?.intGrid, [0]);
+    assert.equal((undone["entry"] as Record<string, unknown>)["actor"], "agent");
+    const undoEvent = (undone["events"] as Array<Record<string, unknown>>)[0]!;
+    assert.equal(undoEvent["historyAction"], "undo");
+    assert.equal(undoEvent["actor"], "agent");
+
+    const undoHistory = undone["history"] as Record<string, unknown>;
+    const redone = await call("history_redo", {
+      expectedProjectSessionId: status["projectSessionId"],
+      historyCursor: undoHistory["historyCursor"],
+    });
+    assert.deepEqual(rig.store.listLevels()[0]?.intGrid, [2]);
+    assert.equal(
+      ((redone["events"] as Array<Record<string, unknown>>)[0]!)["historyAction"],
+      "redo",
+    );
+  } finally {
+    await client.close();
+    await server.close();
   }
 });
 

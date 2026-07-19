@@ -8,13 +8,14 @@ import { test } from "node:test";
 import { IntGridDocument } from "../src/core/intGridDocument.js";
 import {
   applyBrushAt,
+  applyBrushStroke,
   commitDrag,
   dragCells,
   hitMarker,
   nextEntityId,
 } from "../src/core/levelEditorTools.js";
 
-test("dragCells: retângulo cobre a área em qualquer ordem de cantos; linha usa Bresenham", () => {
+test("edição canônica: dragCells cobre retângulo e linha", () => {
   const rect = dragCells("rect", { x: 3, y: 2 }, { x: 1, y: 1 });
   assert.equal(rect.length, 6); // 3x2
   assert.deepEqual(rect[0], [1, 1]);
@@ -30,8 +31,9 @@ test("dragCells: retângulo cobre a área em qualquer ordem de cantos; linha usa
   assert.deepEqual(dragCells("pencil", { x: 0, y: 0 }, { x: 1, y: 1 }), []);
 });
 
-test("applyBrushAt: pencil pinta, eraser zera, flood preenche região; picker/entity são no-op", () => {
+test("edição canônica: brushes compartilham uma transação", () => {
   const doc = new IntGridDocument(4, 4);
+  doc.beginGesture("brushes", "Pintar");
   assert.equal(applyBrushAt(doc, "pencil", 1, 1, 5), true);
   assert.equal(doc.valueAt(1, 1), 5);
   assert.equal(applyBrushAt(doc, "eraser", 1, 1, 5), true);
@@ -40,20 +42,40 @@ test("applyBrushAt: pencil pinta, eraser zera, flood preenche região; picker/en
   assert.equal(doc.valueAt(3, 3), 7); // região conectada inteira
   assert.equal(applyBrushAt(doc, "picker", 0, 0, 9), false);
   assert.equal(applyBrushAt(doc, "entity", 0, 0, 9), false);
+  const gesture = doc.finishGesture();
+  assert.equal(gesture?.transactionId, "brushes");
+  assert.ok((gesture?.changes.length ?? 0) > 1);
 });
 
-test("commitDrag: rect/line viram UMA operação de undo; outras ferramentas são no-op", () => {
+test("edição canônica: rect/line viram um patch por gesto", () => {
   const doc = new IntGridDocument(6, 6);
+  doc.beginGesture("rect", "Retângulo");
   assert.equal(commitDrag(doc, "rect", { x: 0, y: 0 }, { x: 2, y: 2 }, 3), true);
-  doc.undo();
-  assert.equal(doc.snapshot().every((v) => v === 0), true); // um undo desfez tudo
+  assert.equal(doc.finishGesture()?.changes.length, 9);
+  doc.acknowledge("rect");
 
+  doc.beginGesture("line", "Linha");
   assert.equal(commitDrag(doc, "line", { x: 0, y: 5 }, { x: 5, y: 5 }, 2), true);
+  assert.equal(doc.finishGesture()?.changes.length, 6);
   assert.equal(doc.valueAt(5, 5), 2);
+  doc.beginGesture("noop", "No-op");
   assert.equal(commitDrag(doc, "pencil", { x: 0, y: 0 }, { x: 1, y: 1 }, 9), false);
+  assert.equal(doc.finishGesture(), undefined);
 });
 
-test("hitMarker: projeção injetada, raio respeitado, primeiro acerto vence", () => {
+test("edição canônica: pincel contínuo interpola e coalesce o drag", () => {
+  const doc = new IntGridDocument(6, 1);
+  doc.beginGesture("stroke", "Pintar células");
+  assert.equal(
+    applyBrushStroke(doc, "pencil", { x: 0, y: 0 }, { x: 5, y: 0 }, 4),
+    true,
+  );
+  const gesture = doc.finishGesture();
+  assert.equal(gesture?.changes.length, 6);
+  assert.equal(doc.pendingTransactionIds.length, 1);
+});
+
+test("edição canônica: hitMarker respeita projeção e raio", () => {
   const markers = [
     { entityId: "a", position: [10, 10] as const },
     { entityId: "b", position: [50, 50] as const },
@@ -64,7 +86,7 @@ test("hitMarker: projeção injetada, raio respeitado, primeiro acerto vence", (
   assert.equal(hitMarker(markers, 30, 30, identity, 6), undefined); // fora do raio
 });
 
-test("nextEntityId: incremental e pulando ids ocupados", () => {
+test("edição canônica: nextEntityId pula ids ocupados", () => {
   const existing = new Map([
     ["jogador-1", {}],
     ["jogador-2", {}],

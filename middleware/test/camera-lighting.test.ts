@@ -102,6 +102,20 @@ test("camera/configure acumula merges no AST e projeta a config na engine", asyn
   });
 });
 
+test("undo de camera/configure substitui a config da engine e remove campos posteriores", async () => {
+  await withStack(async ({ server, store, orchestrator, state }) => {
+    const engine = await connectFakeEngine(server, state);
+    await orchestrator.dispatch({ kind: "camera/configure", settings: { frequency: 3 } });
+    const changed = await orchestrator.dispatch({ kind: "camera/configure", settings: { damping: 0.5 } });
+
+    await orchestrator.undo(changed.historyCursor);
+
+    assert.deepEqual(store.cameraSettings, { frequency: 3 });
+    assert.deepEqual(state.cameraConfigs.at(-1), { frequency: 3, replace: true });
+    engine.close();
+  });
+});
+
 test("configuração inválida de câmera é rejeitada pelo AST", async () => {
   await withStack(async ({ orchestrator }) => {
     await assert.rejects(

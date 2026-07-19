@@ -104,7 +104,7 @@ graph TD
   P04["P0.4 Vertical slice de niveis 🔶"]
   P05["P0.5 Preview embutido ⬜"]
   P06["P0.6 Spawn minimo de entidades 🔶"]
-  P07["P0.7 Undo/redo global ⬜"]
+  P07["P0.7 Undo/redo global ✅"]
   P08["P0.8 Diagnosticos como funcionalidade ⬜"]
   P09(["P0.9 Empacotamento ⬜"])
   P01 --> P03
@@ -174,8 +174,9 @@ O editor começa pelo projeto, não pela conexão a um pipe.
   close → backup `.bak` → rename → flush do diretório. Cancelamento de Save As
   ou falha de escrita cancela Close e preserva sessão/dirty state
 - [x] Migração de `schemaVersion`: `migrateBlueprintDocument` + registro `MIGRATIONS`
-  encadeado (0→1→2→3) com rejeição de versão futura; v2 torna `projectId`
-  obrigatório e v3 adiciona metadata, resolução e unidade espacial explícita —
+  encadeado (0→1→2→3→4) com rejeição de versão futura; v2 torna `projectId`
+  obrigatório, v3 adiciona metadata/resolução/unidade espacial explícita e v4
+  persiste a paleta semântica dos níveis —
   `middleware/src/canonical/BlueprintSerializer.ts`, testada em
   `middleware/test/blueprint-migration.test.ts`
 - [x] Sessão explícita e substituição transacional: `ProjectSessionManager`
@@ -237,7 +238,8 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
   primeiro painel habilitado, realocação quando a governança muda, fail-safe
 - [x] Falha de conexão com ação corretiva (botão "Tentar reconectar")
 - [x] Menu nativo (Arquivo/Editar/Exibir) com atalhos: Ctrl+N/O/S/Shift+S/W
-  no main; Ctrl+Z/Shift+Z roteados ao editor ativo via `p7m:menu-action`
+  no main; Ctrl+Z/Shift+Z chamam o histórico canônico da sessão, mesmo depois
+  de trocar de painel
 - [ ] Painéis redimensionáveis e layouts salvos
 - [ ] Razões da governança traduzidas (hoje passam do perfil em inglês)
 
@@ -248,7 +250,7 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
 - [x] Vista do editor no workbench: canvas com pincel/borracha/balde
   (arrasto), paleta de significados (nome+cor+valor ativo), pan (botão do
   meio), zoom (roda), enquadrar, desfazer/refazer, coordenadas do cursor e
-  "Publicar nível" via caminho canônico (`level/define`)
+  “Recalcular arte”; cada gesto persistente envia `level/patch` imediatamente
 - [x] Preview de auto-tiling em tempo real ("Ver arte", debounce de 80 ms):
   o AutoTiler é VENDORIZADO como módulo único (a regra R5 garante zero
   dependências) — o preview usa o MESMO resolvedor da projeção, com regras
@@ -265,11 +267,10 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
 - [ ] Placement de câmera/luz com handles
 - [ ] Render/edição fora da main thread (o loader vendorizado já isola a
   mudança para o worker)
-- [x] Integração com save do projeto (nível editado ⇄ blueprint): "Publicar
-  nível" grava no Blueprint (`level/define` na primeira vez, `level/update`
-  nas seguintes, reprojetado na engine), o documento salvo carrega o nível e
-  o canvas hidrata do Blueprint ao reabrir; regras de publicação = regras do
-  preview
+- [x] Integração com save do projeto (nível exibido ⇄ Blueprint): a projeção
+  otimista confirma cada gesto no Blueprint, dirty/autosave/runtime recebem o
+  mesmo commit e Ctrl+S serializa exatamente o estado visível; o canvas aplica
+  eventos de outros clientes e resync substitui sua base confirmada
 
 ### P0.5 — Preview embutido ⬜
 Run/pause/stop/restart, live edit de câmera e iluminação, overlays (colisão/
@@ -296,10 +297,16 @@ luzes/câmera), seleção cruzada editor↔runtime, erros de projeção visívei
   remover, seleção com anel)
 - [ ] Transform/sprite/animação/colisão no archetype (hoje: posição)
 
-### P0.7 — Undo/redo global ⬜
-Histórico no nível do comando canônico com inversos explícitos, agrupamento
-por gesto, coalescing de drag, histórico legível ("Moveu Player de (10,4)
-para (12,4)"), proveniência humano/agente. (Promovido de OPP-05.)
+### P0.7 — Undo/redo global ✅
+- [x] `CommandHistory` por sessão com forward/inverse, cursor/futuro,
+  invalidação de redo, barreiras, labels e proveniência humano/agente/pipeline
+- [x] `commandSequence` monotônico separado de `documentStateId`/savepoint
+- [x] Um item por pincel/linha/retângulo/balde e drag de entidade
+- [x] Undo/redo paritário em JSON-RPC, GraphQL, gRPC e MCP, com eventos para
+  todos os clientes e reprojeção recuperável no runtime
+- [x] Replay estabelece baseline não desfazível; nenhuma pilha local por painel
+
+Decisão e invariantes: [ADR-022](adr/ADR-022-historico-global-transacional.md).
 
 ### P0.8 — Diagnósticos como funcionalidade ⬜
 Problems panel consolidando erros/warnings/compatibilidade/pipeline com as

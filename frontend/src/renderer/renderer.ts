@@ -10,15 +10,20 @@
 
 import { EventLog } from "../core/eventLog.js";
 import { WorkbenchModel, type BottomTab } from "../core/workbenchModel.js";
-import { panelLabel, projectStateLabel, serviceStateLabel } from "../core/vocabulary.js";
+import {
+  HISTORY_ACTOR_LABELS,
+  panelLabel,
+  projectStateLabel,
+  serviceStateLabel,
+} from "../core/vocabulary.js";
 import { ExperienceGate, type ResolvedExperienceLike } from "../core/experienceGate.js";
 import type { ProjectActionResult } from "../core/projectApi.js";
+import type { HistoryStatusPayload } from "../core/editorCommands.js";
+import { LevelEditorStore } from "../core/levelEditorStore.js";
+import type { LevelEditorProjectionDocument } from "../core/levelEditorProjection.js";
 import type { P7mEditorApi, ProjectStatusPayload, ServiceStatusPayload } from "../main/preload.js";
 import { mountLevelEditor } from "./levelEditorView.js";
 import { showNewProjectWizard } from "./newProjectWizard.js";
-
-/** Ações do editor ativo (menu Editar e atalhos globais roteiam para cá). */
-const activeEditor: { undo?: () => void; redo?: () => void } = {};
 
 declare global {
   interface Window {
@@ -30,6 +35,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 
 const model = new WorkbenchModel();
 const log = new EventLog(500);
+const levelStore = new LevelEditorStore();
 
 /** Gate da experiência corrente (governança por runtime); definido no boot. */
 let experienceGate: ExperienceGate | undefined;
@@ -38,6 +44,7 @@ let projectionSnapshot: unknown;
 let currentProjectStatus: ProjectStatusPayload | undefined;
 let preferredLevelId: string | undefined;
 let projectOperationBusy = false;
+let currentHistory: HistoryStatusPayload | undefined;
 
 // ---------------------------------------------------------------- toolbar
 
@@ -51,7 +58,10 @@ function wireProjectToolbar(): void {
 function applyProjectStatus(status: ProjectStatusPayload): void {
   const previousSession = currentProjectStatus?.project?.projectSessionId;
   currentProjectStatus = status;
-  if (!status.project) preferredLevelId = undefined;
+  if (!status.project) {
+    preferredLevelId = undefined;
+    currentHistory = undefined;
+  }
   $("project-title").textContent = status.project
     ? `${status.isDirty ? "● " : ""}${status.project.name}`
     : "Nenhum projeto aberto";
@@ -61,7 +71,33 @@ function applyProjectStatus(status: ProjectStatusPayload): void {
   ($("btn-close") as HTMLButtonElement).disabled = !stableProject || projectOperationBusy;
   ($("btn-new") as HTMLButtonElement).disabled = projectOperationBusy;
   ($("btn-open") as HTMLButtonElement).disabled = projectOperationBusy;
-  if (previousSession !== status.project?.projectSessionId || !status.project) renderView();
+  if (previousSession !== status.project?.projectSessionId || !status.project) {
+    if (!status.project) levelStore.replace(undefined, undefined, undefined);
+    else void refreshLevelProjection(status.project.projectSessionId);
+    renderView();
+  }
+}
+
+async function refreshLevelProjection(expectedSessionId?: string): Promise<void> {
+  try {
+    const projection = await window.p7m.query("document") as {
+      readonly document?: LevelEditorProjectionDocument;
+    };
+    const status = currentProjectStatus;
+    if (!status || expectedSessionId !== status.project?.projectSessionId) return;
+    levelStore.replace(
+      projection.document,
+      preferredLevelId,
+      expectedSessionId
+        ? {
+            projectSessionId: expectedSessionId,
+            commandSequence: status.commandSequence,
+          }
+        : undefined,
+    );
+  } catch (error) {
+    showProjectError(error);
+  }
 }
 
 async function startNewProject(): Promise<void> {
@@ -157,7 +193,7 @@ function renderView(): void {
   if (panel === "level-editor") {
     mountLevelEditor({
       host,
-      activeEditor,
+      store: levelStore,
       setCleanup: (cleanup) => {
         cleanupActiveView = cleanup;
       },
@@ -248,6 +284,27 @@ function renderBottom(): void {
   const content = $("bottom-content");
   content.replaceChildren();
   const filterText = ($("log-filter") as HTMLInputElement).value;
+
+  if (tab === "history") {
+    const entries = currentHistory?.entries ?? [];
+    for (const entry of entries) {
+      if (filterText && !`${entry.label} ${entry.actor}`.toLowerCase().includes(filterText.toLowerCase())) continue;
+      const row = document.createElement("div");
+      row.className = "log-row history-row";
+      const state = document.createElement("span");
+      state.textContent = entry.applied === false ? "↷" : "✓";
+      const label = document.createElement("strong");
+      label.textContent = entry.label;
+      const actor = document.createElement("span");
+      actor.textContent = HISTORY_ACTOR_LABELS[entry.actor];
+      const barrier = document.createElement("span");
+      barrier.textContent = entry.barrier ? "Barreira" : "";
+      row.append(state, label, actor, barrier);
+      content.append(row);
+    }
+    if (entries.length === 0) content.append(placeholder("Histórico vazio", "Nenhuma edição confirmada."));
+    return;
+  }
 
   if (tab === "problems") {
     const problems = log
@@ -346,8 +403,8 @@ async function boot(): Promise<void> {
 
   window.p7m.onProjectStatus(applyProjectStatus);
   window.p7m.onMenuAction((action) => {
-    if (action === "undo") activeEditor.undo?.();
-    else if (action === "redo") activeEditor.redo?.();
+    if (action === "undo") void runHistoryAction(() => window.p7m.undo());
+    else if (action === "redo") void runHistoryAction(() => window.p7m.redo());
     else if (action === "new") void startNewProject();
     else if (action === "open") void runProjectAction(() => window.p7m.openProject());
     else if (action === "open-example") void runProjectAction(() =>
@@ -355,16 +412,30 @@ async function boot(): Promise<void> {
   });
   window.p7m.onServiceStatus(renderServices);
   window.p7m.onBlueprintEvent((event) => {
+    levelStore.applyEvent(event);
     log.record(event as { kind: string } & Record<string, unknown>);
     refreshProblemBadge();
     renderBottom();
+    void refreshHistory();
   });
   window.p7m.onProjectionResync(({ snapshot }) => {
     projectionSnapshot = snapshot;
-    // Mantém a reconstrução separada do dirty tracking/event log. Vistas que
-    // consomem projeções leem esta referência no próximo render.
-    void projectionSnapshot;
+    const document = projectionDocument(snapshot);
+    levelStore.replace(document, preferredLevelId, projectionCursor(snapshot));
     renderView();
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+    if (!(event.ctrlKey || event.metaKey)) return;
+    const key = event.key.toLowerCase();
+    if (key === "z") {
+      event.preventDefault();
+      void runHistoryAction(() => event.shiftKey ? window.p7m.redo() : window.p7m.undo());
+    } else if (key === "y") {
+      event.preventDefault();
+      void runHistoryAction(() => window.p7m.redo());
+    }
   });
 
   renderServices(await window.p7m.serviceStatus());
@@ -374,6 +445,7 @@ async function boot(): Promise<void> {
     $("connection-dot").className = "dot online";
     $("status-connection").textContent = "Conectado ao middleware";
     applyProjectStatus(await window.p7m.projectStatus());
+    await refreshHistory();
 
     const experience = (await window.p7m.experience()) as ResolvedExperienceLike;
     experienceGate = new ExperienceGate(experience);
@@ -391,3 +463,48 @@ async function boot(): Promise<void> {
 }
 
 void boot();
+
+async function runHistoryAction(action: () => Promise<unknown>): Promise<void> {
+  try {
+    await action();
+    await refreshHistory();
+  } catch (error) {
+    showProjectError(error);
+  }
+}
+
+async function refreshHistory(): Promise<void> {
+  if (!currentProjectStatus?.project) {
+    currentHistory = undefined;
+    renderBottom();
+    return;
+  }
+  try {
+    currentHistory = await window.p7m.historyStatus(100);
+    renderBottom();
+  } catch {
+    // O event pump tentará novamente no próximo evento/resync.
+  }
+}
+
+function projectionDocument(snapshot: unknown): LevelEditorProjectionDocument | undefined {
+  if (!snapshot || typeof snapshot !== "object") return undefined;
+  const projections = (snapshot as { projections?: Record<string, unknown> }).projections;
+  const documentProjection = projections?.["document"];
+  if (!documentProjection || typeof documentProjection !== "object") return undefined;
+  return (documentProjection as { document?: LevelEditorProjectionDocument }).document;
+}
+
+function projectionCursor(snapshot: unknown):
+  { projectSessionId: string; commandSequence: string } | undefined {
+  if (!snapshot || typeof snapshot !== "object") return undefined;
+  const status = (snapshot as { status?: Record<string, unknown> }).status;
+  return status &&
+    typeof status["projectSessionId"] === "string" &&
+    typeof status["commandSequence"] === "string"
+    ? {
+        projectSessionId: status["projectSessionId"],
+        commandSequence: status["commandSequence"],
+      }
+    : undefined;
+}

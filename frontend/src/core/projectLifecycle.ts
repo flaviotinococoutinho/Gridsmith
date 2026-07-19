@@ -71,6 +71,8 @@ export class ProjectLifecycle {
   private observedCommandSequence = 0n;
   private persistedCommandSequence = 0n;
   private autosavedCommandSequence = 0n;
+  private documentStateId: string | undefined;
+  private persistedDocumentStateId: string | undefined;
   private savingFromState: "open-clean" | "open-dirty" | undefined;
   private closingFromState: "open-clean" | "open-dirty" | undefined;
   private lastSaveAtMs: number;
@@ -83,6 +85,8 @@ export class ProjectLifecycle {
         readonly observedCommandSequence: bigint;
         readonly persistedCommandSequence: bigint;
         readonly autosavedCommandSequence: bigint;
+        readonly documentStateId?: string;
+        readonly persistedDocumentStateId?: string;
         readonly lastSaveAtMs: number;
       }
     | undefined;
@@ -119,6 +123,10 @@ export class ProjectLifecycle {
   /** Watermark da revisão canônica já observada (diagnóstico/recovery). */
   get commandSequence(): string {
     return this.observedCommandSequence.toString();
+  }
+
+  get currentDocumentStateId(): string | undefined {
+    return this.documentStateId;
   }
 
   /** Título de janela pronto: "nome — P7M" com marcador de sujo. */
@@ -161,6 +169,10 @@ export class ProjectLifecycle {
       observedCommandSequence: this.observedCommandSequence,
       persistedCommandSequence: this.persistedCommandSequence,
       autosavedCommandSequence: this.autosavedCommandSequence,
+      ...(this.documentStateId ? { documentStateId: this.documentStateId } : {}),
+      ...(this.persistedDocumentStateId
+        ? { persistedDocumentStateId: this.persistedDocumentStateId }
+        : {}),
       lastSaveAtMs: this.lastSaveAtMs,
     };
     this.transition("opening");
@@ -169,7 +181,11 @@ export class ProjectLifecycle {
   /** Replay/criação concluído com sucesso. */
   opened(
     descriptor: ProjectDescriptor,
-    options: { readonly dirty?: boolean; readonly commandSequence?: string } = {},
+    options: {
+      readonly dirty?: boolean;
+      readonly commandSequence?: string;
+      readonly documentStateId?: string;
+    } = {},
   ): void {
     this.assertState("opening", "opened");
     const commandSequence = parseCommandSequence(options.commandSequence ?? "0");
@@ -179,6 +195,8 @@ export class ProjectLifecycle {
     this.observedCommandSequence = commandSequence;
     this.persistedCommandSequence = commandSequence;
     this.autosavedCommandSequence = commandSequence;
+    this.documentStateId = options.documentStateId;
+    this.persistedDocumentStateId = options.dirty ? undefined : options.documentStateId;
     this.lastSaveAtMs = this.now();
     this.pendingOpen = undefined;
     if (descriptor.filePath) this.touchRecent(descriptor.filePath, descriptor.name);
@@ -199,6 +217,8 @@ export class ProjectLifecycle {
     this.observedCommandSequence = previous.observedCommandSequence;
     this.persistedCommandSequence = previous.persistedCommandSequence;
     this.autosavedCommandSequence = previous.autosavedCommandSequence;
+    this.documentStateId = previous.documentStateId;
+    this.persistedDocumentStateId = previous.persistedDocumentStateId;
     this.lastSaveAtMs = previous.lastSaveAtMs;
     this.pendingOpen = undefined;
     this.transition(previous.previousState);
@@ -208,7 +228,7 @@ export class ProjectLifecycle {
    * Um evento de Blueprint chegou (broadcast do gateway). Retorna true se um
    * autosave ficou devido (limiar de comandos sujos atingido).
    */
-  commandApplied(commandSequence?: string): boolean {
+  commandApplied(commandSequence?: string, documentStateId?: string): boolean {
     if (!this.descriptor || this.state === "opening" || this.state === "no-project") {
       return false; // eventos de replay durante opening não sujam o documento
     }
@@ -218,13 +238,20 @@ export class ProjectLifecycle {
     if (nextSequence <= this.observedCommandSequence) return false;
     const newlyObserved = sequenceDistance(nextSequence, this.observedCommandSequence);
     this.observedCommandSequence = nextSequence;
+    if (documentStateId !== undefined) this.documentStateId = documentStateId;
     const wasDirty = this.dirty;
-    this.dirty = true;
-    this.dirtyCommands = Math.min(Number.MAX_SAFE_INTEGER, this.dirtyCommands + newlyObserved);
-    if (this.state === "open-clean") {
+    this.dirty = this.documentStateId !== undefined && this.persistedDocumentStateId !== undefined
+      ? this.documentStateId !== this.persistedDocumentStateId
+      : true;
+    this.dirtyCommands = this.dirty
+      ? Math.min(Number.MAX_SAFE_INTEGER, this.dirtyCommands + newlyObserved)
+      : 0;
+    if (this.state === "open-clean" && this.dirty) {
       this.transition("open-dirty");
+    } else if (this.state === "open-dirty" && !this.dirty) {
+      this.transition("open-clean");
     }
-    if (!wasDirty) this.emit({ kind: "dirtyChanged", state: this.state });
+    if (wasDirty !== this.dirty) this.emit({ kind: "dirtyChanged", state: this.state });
     if (this.dirtyCommands >= this.dirtyThreshold) {
       this.emit({ kind: "autosaveDue", state: this.state });
       return true;
@@ -250,7 +277,7 @@ export class ProjectLifecycle {
   }
 
   /** Save concluído. `filePath` atualiza o descritor num Save As. */
-  saved(filePath?: string, throughCommandSequence?: string): void {
+  saved(filePath?: string, throughCommandSequence?: string, documentStateId?: string): void {
     this.assertState("saving", "saved");
     const through = throughCommandSequence === undefined
       ? this.observedCommandSequence
@@ -260,6 +287,8 @@ export class ProjectLifecycle {
     }
     if (through > this.observedCommandSequence) this.observedCommandSequence = through;
     this.persistedCommandSequence = through;
+    if (documentStateId !== undefined) this.documentStateId = documentStateId;
+    this.persistedDocumentStateId = this.documentStateId;
     if (filePath && this.descriptor) {
       this.descriptor = { ...this.descriptor, filePath };
       this.touchRecent(filePath, this.descriptor.name);
@@ -300,6 +329,7 @@ export class ProjectLifecycle {
   rebindSession(
     identity: { readonly projectSessionId: string; readonly projectId: string },
     commandSequence: string,
+    documentStateId?: string,
   ): void {
     if (!this.descriptor || (this.state !== "open-clean" && this.state !== "open-dirty")) {
       throw new ProjectLifecycleError(`Cannot rebind project while state is "${this.state}"`);
@@ -309,6 +339,10 @@ export class ProjectLifecycle {
     this.observedCommandSequence = sequence;
     this.persistedCommandSequence = sequence;
     this.autosavedCommandSequence = sequence;
+    if (documentStateId !== undefined) {
+      this.documentStateId = documentStateId;
+      if (!this.dirty) this.persistedDocumentStateId = documentStateId;
+    }
     this.dirtyCommands = this.dirty ? 1 : 0;
     this.emit({ kind: "stateChanged", state: this.state });
   }
@@ -359,6 +393,8 @@ export class ProjectLifecycle {
     this.observedCommandSequence = 0n;
     this.persistedCommandSequence = 0n;
     this.autosavedCommandSequence = 0n;
+    this.documentStateId = undefined;
+    this.persistedDocumentStateId = undefined;
     this.pendingOpen = undefined;
     this.savingFromState = undefined;
     this.closingFromState = undefined;

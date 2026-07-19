@@ -163,6 +163,23 @@ test("watermark deduplica journal atrasado e mantém dirty para evento posterior
   assert.equal(lifecycle.commandSequence, "7");
 });
 
+test("edição canônica: documentStateId faz undo voltar ao savepoint e redo ficar dirty", () => {
+  const lifecycle = new ProjectLifecycle();
+  lifecycle.beginOpen();
+  lifecycle.opened({ name: "Estado", projectSessionId: "s", projectId: "p" }, {
+    commandSequence: "0",
+    documentStateId: "saved-state",
+  });
+
+  lifecycle.commandApplied("1", "edited-state");
+  assert.equal(lifecycle.currentState, "open-dirty");
+  lifecycle.commandApplied("2", "saved-state");
+  assert.equal(lifecycle.currentState, "open-clean");
+  assert.equal(lifecycle.isDirty, false);
+  lifecycle.commandApplied("3", "edited-state");
+  assert.equal(lifecycle.currentState, "open-dirty");
+});
+
 test("recentes: mais novo primeiro, sem duplicatas, máximo de 10", () => {
   const { lifecycle, tick } = makeLifecycle(1_000);
   for (let i = 0; i < 12; i++) {

@@ -1,3 +1,4 @@
+using P7m.Engine.Core.Camera;
 using P7m.Engine.Core.Lighting;
 using P7m.Engine.Ipc.Protocol;
 using P7m.Engine.Runtime;
@@ -47,6 +48,28 @@ public class EngineServiceCameraLightingTests : IAsyncLifetime
         // campos não enviados preservam o default
         Assert.Equal(0.25f, result.GetProperty("anticipationSeconds").GetSingle());
         Assert.Equal(3.5f, _service.Camera.Config.Frequency);
+    }
+
+    [Fact]
+    public async Task Camera_configure_replace_restores_defaults_before_applying_fields()
+    {
+        await _middleware.RequestAsync("camera/configure", new
+        {
+            frequency = 4f,
+            damping = 0.35f,
+            response = 2f,
+        }, _cts.Token);
+
+        var result = await _middleware.RequestAsync("camera/configure", new
+        {
+            frequency = 3f,
+            replace = true,
+        }, _cts.Token);
+
+        Assert.Equal(3f, result.GetProperty("frequency").GetSingle());
+        Assert.Equal(CameraConfig.Default.Damping, result.GetProperty("damping").GetSingle());
+        Assert.Equal(CameraConfig.Default.Response, result.GetProperty("response").GetSingle());
+        Assert.Equal(CameraConfig.Default.Damping, _service.Camera.Config.Damping);
     }
 
     [Fact]

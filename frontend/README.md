@@ -18,6 +18,7 @@ governança de runtime.
 | `src/core/projectApi.ts` | Contratos tipados compartilhados por main/preload/renderer para New/Open/Save/Save As/Close/Recovery/Recentes |
 | `src/core/projectWizardModel.ts` | Estado e validação puros do wizard de projeto, alimentado pelos templates reais do middleware |
 | `src/core/levelEditorTools.ts` | Ferramentas puras do editor de níveis (brush/rect/line/picker, drag de células, hit-test de marcadores) |
+| `src/core/intGridDocument.ts` | Projeção otimista do IntGrid: agrega um patch por gesto, confirma ack/evento e recompõe/reverte rejeições sem histórico paralelo |
 | `src/core/logging.ts` | Logger puro com escopo hierárquico e sink injetável (`P7M_VERBOSITY`) |
 | `src/main/transport/` | Clientes dos transports (`GrpcTransport`, `GraphQlTransport`) — os **únicos** módulos com SDKs de transporte (regra F5) |
 | `src/main/EditorClient.ts` | Cliente do middleware: gRPC quente/fallback GraphQL, cursor `(middlewareInstanceId, projectSessionId, seq)`, snapshot integral em resync e operações transacionais de projeto |
@@ -108,6 +109,20 @@ o arquivo à janela ativa. Rebind após restart exige documento e watermark
 iguais ao cache; `projectId` sozinho nunca associa conteúdo remoto ao caminho
 local. Decisão completa:
 [ADR-021](../docs/adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md).
+
+## Edição canônica e histórico
+
+Pincel contínuo, borracha, linha, retângulo e balde aplicam feedback local e
+enviam um único `level/patch` no fim do gesto. O patch carrega
+`transactionId`, label e mudanças `{index,before,after}`; ack confirma a camada
+otimista e rejeição a recompõe com mensagem acionável. Não existe “Publicar
+nível”: “Recalcular arte” recalcula somente a projeção derivada.
+
+Undo/redo é global e pertence à `ProjectSession`. Menu, toolbar e atalhos
+chamam a operação canônica mesmo quando outro painel está ativo. Eventos de
+outros clientes atualizam a mesma projeção; resync substitui a base inteira.
+Save/autosave/Close não capturam gesto pendente. Decisão:
+[ADR-022](../docs/adr/ADR-022-historico-global-transacional.md).
 
 ## Regras da casa
 

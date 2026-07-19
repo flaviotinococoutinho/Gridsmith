@@ -71,9 +71,14 @@ graph LR
 |---|---|
 | Envelope de artefato versionável | [`schemas/artifact.envelope.schema.json`](schemas/artifact.envelope.schema.json) |
 | Perfil versionado de runtime | [`schemas/runtime.profile.schema.json`](schemas/runtime.profile.schema.json) |
+| Todos os envelopes estruturais de `BlueprintCommand` | [`schemas/blueprint.commands.schema.json`](schemas/blueprint.commands.schema.json) |
+| Documento de projeto v4 | [`schemas/blueprint.document.schema.json`](schemas/blueprint.document.schema.json) |
+| Histórico global da ProjectSession | [`schemas/command-history.schema.json`](schemas/command-history.schema.json) |
 
 O desenho completo (comandos, eventos, hooks, filters, pipelines, adapters e
 governança da experiência) está em [`../docs/CANONICAL-MODEL.md`](../docs/CANONICAL-MODEL.md).
+O schema de histórico descreve as formas JSON diretas do gateway legado/MCP;
+SDL e proto declaram as conversões de timestamp/`uint64` próprias de cada wire.
 
 O mapa abaixo liga cada subsistema ao(s) arquivo(s) de esquema em `contracts/schemas`
 que definem seus contratos — a mesma partição das tabelas acima, vista por subsistema.
@@ -120,13 +125,13 @@ graph LR
 A borda app ↔ middleware **não** usa o plano JSON-RPC acima: usa GraphQL
 (superfície baseline completa + destino do fallback) e gRPC (caminho quente
 prioritário) — decisões em [`../docs/adr/`](../docs/adr/README.md)
-(ADR-016/017/018/019/020). O lifecycle de arquivo do Electron é tratado
+(ADR-016/017/018/019/020/022). O lifecycle de arquivo do Electron é tratado
 separadamente pela ADR-021.
 
 | Contrato | Arquivo | Papel | Operações |
 |---|---|---|---|
-| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | queries de projeto/templates/materialização/projeção/snapshot/eventos · mutations `projectCreate`, `projectOpenDocument`, `projectClose`, `dispatch` + aliases legados |
-| gRPC proto | [`grpc/p7m_editor.proto`](grpc/p7m_editor.proto) — `p7m.editor.v1.EditorHotPath` | caminho quente condicionado pela ADR-019 | `ProjectCreate`, `ProjectOpenDocument`, `ProjectClose`, `ProjectStatus`, dispatch/query/snapshot + `StreamEventsV2` |
+| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | sessão/projeção/snapshot/eventos, `dispatch`, `historyStatus`, `undo` e `redo` + aliases legados |
+| gRPC proto | [`grpc/p7m_editor.proto`](grpc/p7m_editor.proto) — `p7m.editor.v1.EditorHotPath` | caminho quente condicionado pela ADR-019 | `Project*`, `Dispatch`, `HistoryStatus`, `Undo`, `Redo`, query/snapshot + `StreamEventsV2` |
 
 Regras de evolução:
 
@@ -136,9 +141,20 @@ Regras de evolução:
 - O enum `CommandKind` do SDL espelha `COMMAND_KINDS` do modelo canônico, com
   `_` no lugar da primeira `/` (GraphQL não aceita `/` em valores de enum).
 - Os payloads de comando viajam como JSON (`payload` no GraphQL,
-  `payload_json` no proto) e são validados na **mesma fonte única**
-  (`BlueprintStore` + [`schemas/`](schemas/)) — os transports não introduzem
-  segunda fonte de validação.
+  `payload_json` no proto). A validação semântica autoritativa ocorre somente
+  no `BlueprintStore`; [`blueprint.commands.schema.json`](schemas/blueprint.commands.schema.json)
+  espelha todos os envelopes para documentação/validação estrutural e tem sua
+  cobertura comparada a `COMMAND_KINDS` pelo gate anti-drift. Os transports não
+  executam uma segunda validação de domínio.
+- O proto conserva `DispatchRequest.kind` como `string` para compatibilidade de
+  wire; a lista fechada pertence ao registry canônico e o middleware rejeita
+  qualquer valor fora dele. Portanto não existe um segundo enum protobuf para
+  evoluir fora de sincronia.
+- A borda autenticada injeta `actor`; metadata recebida do cliente pode trazer
+  label/barreira, mas nunca escolhe a proveniência efetiva.
+- `commandSequence` é monotônico; `documentStateId`/`historyCursor` identifica
+  o estado lógico e permite que undo volte exatamente ao savepoint sem fingir
+  que a sequência de eventos retrocedeu.
 - Clientes novos usam cursor composto `(middlewareInstanceId, projectSessionId, seq)` e strings
   decimais para `uint64`. `resyncRequired` obriga snapshot completo; APIs
   legadas sem identidade de sessão falham explicitamente em vez de misturar projetos.

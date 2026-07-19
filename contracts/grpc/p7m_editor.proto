@@ -4,7 +4,7 @@
 //
 // Decisão de modelagem (ADR-017): envelope TIPADO + payload JSON. Os comandos
 // canônicos já têm validação única no BlueprintStore e schemas JSON em
-// contracts/schemas/ — duplicar os 14 comandos como messages protobuf criaria
+// contracts/schemas/ — duplicar cada comando como messages protobuf criaria
 // uma segunda fonte de verdade de validação. Canal HTTP/2 persistente e
 // STREAMING são hipóteses medidas pelo benchmark da ADR-019; o proto não
 // presume ganho de desempenho nem re-tipa payloads que a borda não valida.
@@ -30,6 +30,10 @@ service EditorHotPath {
   rpc ProjectOpenDocument(ProjectOpenDocumentRequest) returns (ProjectOperationReply);
   rpc ProjectClose(ProjectCloseRequest) returns (ProjectStatusReply);
   rpc ProjectStatus(ProjectStatusRequest) returns (ProjectStatusReply);
+  // Histórico global da sessão. O actor é definido pela borda, nunca pelo request.
+  rpc Undo(HistoryMutationRequest) returns (HistoryOperationReply);
+  rpc Redo(HistoryMutationRequest) returns (HistoryOperationReply);
+  rpc HistoryStatus(HistoryStatusRequest) returns (HistoryStatusReply);
   // Stream legado mantido até clientes migrarem para o cursor composto.
   rpc StreamEvents(StreamEventsRequest) returns (stream EventEnvelope) {
     option deprecated = true;
@@ -50,6 +54,9 @@ message HealthReply {
   string project_id = 7;
   uint64 command_sequence = 8;
   ProjectStatusReply project_status = 9;
+  string document_state_id = 10;
+  HistoryStatusReply history = 11;
+  string history_cursor = 12;
 }
 
 message DispatchRequest {
@@ -67,6 +74,13 @@ message DispatchReply {
   string event_json = 1;
   // ProjectionResult (JSON UTF-8); vazio quando não há adapter.
   string projection_json = 2;
+  // ACK do mesmo commit que produziu event_json.
+  uint64 command_sequence = 3;
+  string transaction_id = 4;
+  string document_state_id = 5;
+  string history_entry_id = 6;
+  string history_cursor = 7;
+  HistoryEntry history_entry = 8;
 }
 
 message QueryRequest {
@@ -90,6 +104,9 @@ message SnapshotReply {
   string project_id = 6;
   uint64 command_sequence = 7;
   ProjectStatusReply project_status = 8;
+  string document_state_id = 9;
+  HistoryStatusReply history = 10;
+  string history_cursor = 11;
 }
 
 message ProjectCreateRequest {
@@ -135,6 +152,65 @@ message ProjectStatusReply {
   uint64 created_at_unix_ms = 5;
   // synchronized|deferred|failed
   string runtime_state = 6;
+  // Identidade do conteúdo no cursor do histórico; não é o relógio monotônico.
+  string document_state_id = 7;
+  string history_cursor = 8;
+  bool can_undo = 9;
+  bool can_redo = 10;
+  HistoryStatusReply history = 11;
+}
+
+message HistoryMutationRequest {
+  // Idempotência de retry/fallback desta operação.
+  string request_id = 1;
+  // Recusa operar depois que o projeto observado foi substituído.
+  string expected_project_session_id = 2;
+  // Cursor/documentStateId observado; recusa undo/redo obsoleto de outro cliente.
+  string history_cursor = 3;
+}
+
+message HistoryStatusRequest {
+  // Zero retorna somente o status; 1..500 inclui as entradas mais recentes.
+  uint32 limit = 1;
+}
+
+message HistoryEntry {
+  string id = 1;
+  string label = 2;
+  repeated string forward_json = 3;
+  repeated string inverse_json = 4;
+  // human|agent|pipeline; valor confiável atribuído pela borda.
+  string actor = 5;
+  string transaction_id = 6;
+  uint64 timestamp_unix_ms = 7;
+  bool barrier = 8;
+  // true quando a entrada está no passado aplicado; false quando está no futuro de redo.
+  bool applied = 9;
+}
+
+message HistoryStatusReply {
+  string project_session_id = 1;
+  string project_id = 2;
+  bool can_undo = 3;
+  bool can_redo = 4;
+  string undo_label = 5;
+  string redo_label = 6;
+  string document_state_id = 7;
+  string history_cursor = 8;
+  uint64 command_sequence = 9;
+  // Preenchido quando HistoryStatusRequest.limit > 0; mais recente primeiro.
+  repeated HistoryEntry entries = 10;
+}
+
+message HistoryOperationReply {
+  ProjectStatusReply status = 1;
+  HistoryStatusReply history = 2;
+  HistoryEntry entry = 3;
+  repeated string events_json = 4;
+  uint64 command_sequence = 5;
+  string transaction_id = 6;
+  string document_state_id = 7;
+  string history_cursor = 8;
 }
 
 message ProjectOperationReply {
@@ -165,6 +241,13 @@ message EventEnvelope {
   string project_session_id = 4;
   string project_id = 5;
   uint64 command_sequence = 6;
+  string transaction_id = 7;
+  string document_state_id = 8;
+  string history_entry_id = 9;
+  // human|agent|pipeline e apply|undo|redo.
+  string actor = 10;
+  string history_action = 11;
+  string history_cursor = 12;
 }
 
 message EventStreamStatus {
@@ -178,6 +261,9 @@ message EventStreamStatus {
   string project_session_id = 6;
   string project_id = 7;
   uint64 command_sequence = 8;
+  string document_state_id = 9;
+  HistoryStatusReply history = 10;
+  string history_cursor = 11;
 }
 
 message EventStreamFrame {

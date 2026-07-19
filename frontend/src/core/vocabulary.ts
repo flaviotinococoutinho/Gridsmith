@@ -33,17 +33,35 @@ export const EVENT_LABELS: Readonly<Record<string, string>> = {
   meshBound: "Malha vinculada",
   cameraConfigured: "Câmera configurada",
   lightAdded: "Luz adicionada",
+  lightUpdated: "Luz alterada",
   lightRemoved: "Luz removida",
   entityDefDefined: "Definição de entidade criada",
+  entityDefUpdated: "Definição de entidade alterada",
+  entityDefRemoved: "Definição de entidade removida",
   entityPlaced: "Entidade posicionada",
   entityMoved: "Entidade movida",
+  entityPropertiesChanged: "Propriedades da entidade alteradas",
   entityRemoved: "Entidade removida",
   levelDefined: "Nível definido",
   levelUpdated: "Nível atualizado",
+  levelPatched: "Nível editado",
+  levelPaletteChanged: "Paleta do nível alterada",
   levelRemoved: "Nível removido",
   worldLevelPlaced: "Nível posicionado no mapa-múndi",
   worldLevelUnplaced: "Nível removido do mapa-múndi",
 };
+
+export const HISTORY_ACTOR_LABELS = {
+  human: "Pessoa",
+  agent: "Agente",
+  pipeline: "Pipeline",
+} as const;
+
+export const HISTORY_ACTION_LABELS = {
+  apply: "Edição",
+  undo: "Desfeito",
+  redo: "Refeito",
+} as const;
 
 /** Status de projeção no runtime. */
 export const PROJECTION_LABELS: Readonly<Record<string, string>> = {

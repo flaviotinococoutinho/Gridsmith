@@ -155,6 +155,10 @@ graph TD
   `ProjectSession` possui store, orquestrador e histórico próprios; comandos
   imutáveis são validados e aplicados ao Blueprint ativo, e leituras são
   projeções congeladas.
+- **Histórico global** (`src/canonical/CommandHistory.ts`): entradas por
+  transação com inversos, labels, proveniência, futuro e barreiras. O relógio
+  monotônico de eventos é separado do `documentStateId` usado como savepoint;
+  replay estabelece baseline e `level/patch` nunca substitui o grid inteiro.
 - **Ponte da engine** (`src/domain/EngineBridge.ts`): diagnósticos da sessão viva
   (ping/inspeções); mutações, reset e reidratação passam pelo adapter e pelo
   `ProjectSessionManager`.
@@ -174,11 +178,12 @@ graph TD
   ativado com `--assets <dir>`).
 - **Fachada MCP** (`src/mcp/McpFacade.ts`): expõe a agentes de IA, via stdio,
   o comando genérico `blueprint_command` (TODOS os kinds canônicos de
-  `COMMAND_KINDS` — inclusive `level/update` e `entity/move`) + ferramentas
+  `COMMAND_KINDS` — inclusive `level/patch` e `entity/move`) + ferramentas
   curadas por domínio (`camera_*`, `light_*`, `level_define/update/remove`,
   `entitydef_define`, `entity_place/move/remove`, `world_*`), diagnóstico
   operações da mesma sessão (`project_create`, `project_open_document`,
-  `project_close`, `project_status`), diagnóstico
+  `project_close`, `project_status`) e histórico (`history_status`,
+  `history_undo`, `history_redo`), diagnóstico
   (`engine_status`, `engine_ping`, `mesh_inspect`, `engine_capabilities`,
   `editor_concepts`, `runtime_*`, `hooks_list`, `artifact_get`) e assets
   (`asset_*`, com `--assets <dir>`).

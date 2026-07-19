@@ -1,0 +1,489 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/blueprint.commands",
+  "title": "Envelopes estruturais de BlueprintCommand",
+  "description": "Cobertura estrutural de COMMAND_KINDS para documentação e validação de contrato. Regras dependentes do estado (IDs, before/CAS, unicidade, limites derivados e relações) permanecem exclusivamente no BlueprintStore. actor recebido do cliente não é confiável e é sobrescrito pela borda autenticada.",
+  "oneOf": [
+    { "$ref": "#/$defs/skeletonDefine" },
+    { "$ref": "#/$defs/meshBind" },
+    { "$ref": "#/$defs/cameraConfigure" },
+    { "$ref": "#/$defs/lightAdd" },
+    { "$ref": "#/$defs/lightUpdate" },
+    { "$ref": "#/$defs/lightRemove" },
+    { "$ref": "#/$defs/entityDefinitionDefine" },
+    { "$ref": "#/$defs/entityDefinitionUpdate" },
+    { "$ref": "#/$defs/entityDefinitionRemove" },
+    { "$ref": "#/$defs/entityPlace" },
+    { "$ref": "#/$defs/entityMove" },
+    { "$ref": "#/$defs/entityProperties" },
+    { "$ref": "#/$defs/entityRemove" },
+    { "$ref": "#/$defs/levelDefine" },
+    { "$ref": "#/$defs/levelUpdate" },
+    { "$ref": "#/$defs/levelPatch" },
+    { "$ref": "#/$defs/levelPalette" },
+    { "$ref": "#/$defs/levelRemove" },
+    { "$ref": "#/$defs/worldPlace" },
+    { "$ref": "#/$defs/worldUnplace" }
+  ],
+  "$defs": {
+    "transactionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Identidade do gesto para agrupamento/coalescing; não é requestId de idempotência."
+    },
+    "commandMetadata": {
+      "type": "object",
+      "description": "Metadata declarada pelo caller. actor é opcional no wire e, quando presente, sempre é sobrescrito pela borda confiável.",
+      "properties": {
+        "actor": { "enum": ["human", "agent", "pipeline"] },
+        "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "barrier": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "finitePair": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "bone": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "parentId": { "type": "integer", "minimum": -1 },
+        "inverseBindMatrix": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 6,
+          "maxItems": 6
+        }
+      },
+      "required": ["id", "parentId", "inverseBindMatrix"],
+      "additionalProperties": false
+    },
+    "skeleton": {
+      "type": "object",
+      "properties": {
+        "skeletonId": { "type": "string", "minLength": 1 },
+        "bones": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/bone" }
+        }
+      },
+      "required": ["skeletonId", "bones"],
+      "additionalProperties": false
+    },
+    "mesh": {
+      "type": "object",
+      "properties": {
+        "meshId": { "type": "string", "minLength": 1 },
+        "skeletonId": { "type": "string", "minLength": 1 },
+        "sharedMemoryMapName": { "type": "string", "minLength": 1 },
+        "vertexCount": { "type": "integer", "minimum": 1 },
+        "strideInBytes": { "type": "integer", "minimum": 4 }
+      },
+      "required": ["meshId", "skeletonId", "sharedMemoryMapName", "vertexCount", "strideInBytes"],
+      "additionalProperties": false
+    },
+    "camera": {
+      "type": "object",
+      "properties": {
+        "frequency": { "type": "number", "exclusiveMinimum": 0 },
+        "damping": { "type": "number", "minimum": 0 },
+        "response": { "type": "number" },
+        "anticipationSeconds": { "type": "number", "minimum": 0 },
+        "shakeFrequencyHz": { "type": "number", "exclusiveMinimum": 0 },
+        "shakeMaxOffset": { "type": "number", "minimum": 0 },
+        "shakeMaxRotationRadians": { "type": "number", "minimum": 0 },
+        "shakeTraumaDecayPerSecond": { "type": "number", "exclusiveMinimum": 0 },
+        "shakeSeed": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "light": {
+      "type": "object",
+      "properties": {
+        "lightId": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["directional", "point", "spot"] },
+        "position": { "$ref": "#/$defs/finitePair" },
+        "height": { "type": "number" },
+        "direction": { "$ref": "#/$defs/finitePair" },
+        "color": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "intensity": { "type": "number", "exclusiveMinimum": 0 },
+        "radius": { "type": "number", "exclusiveMinimum": 0 },
+        "innerConeDegrees": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 180 },
+        "outerConeDegrees": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 180 }
+      },
+      "required": ["lightId", "type", "color", "intensity"],
+      "additionalProperties": false
+    },
+    "entityField": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["int", "float", "bool", "string", "enum", "point", "color"] },
+        "default": {},
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "options": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      },
+      "required": ["name", "type"],
+      "additionalProperties": false
+    },
+    "entityDefinition": {
+      "type": "object",
+      "properties": {
+        "entityDefId": { "type": "string", "minLength": 1 },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/entityField" } },
+        "archetypeId": { "type": "string", "minLength": 1 },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "editor": {
+          "type": "object",
+          "properties": {
+            "color": { "type": "string" },
+            "icon": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": ["entityDefId", "fields"],
+      "additionalProperties": false
+    },
+    "entity": {
+      "type": "object",
+      "properties": {
+        "entityId": { "type": "string", "minLength": 1 },
+        "entityDefId": { "type": "string", "minLength": 1 },
+        "position": { "$ref": "#/$defs/finitePair" },
+        "fields": { "type": "object" }
+      },
+      "required": ["entityId", "entityDefId", "position", "fields"],
+      "additionalProperties": false
+    },
+    "autoTileRule": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "patternSize": { "enum": [1, 3, 5] },
+        "pattern": { "type": "array", "items": { "type": ["integer", "null"] } },
+        "tileIds": { "type": "array", "minItems": 1, "items": { "type": "integer" } },
+        "chance": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      },
+      "required": ["patternSize", "pattern", "tileIds"],
+      "additionalProperties": false
+    },
+    "paletteEntry": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "integer", "minimum": 1, "maximum": 32767 },
+        "name": { "type": "string", "minLength": 1 },
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+      },
+      "required": ["value", "name", "color"],
+      "additionalProperties": false
+    },
+    "level": {
+      "type": "object",
+      "properties": {
+        "levelId": { "type": "string", "minLength": 1 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "tileSize": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "seed": { "type": "integer" },
+        "intGrid": {
+          "type": "array",
+          "maxItems": 65536,
+          "items": { "type": "integer", "minimum": 0, "maximum": 32767 }
+        },
+        "rules": { "type": "array", "items": { "$ref": "#/$defs/autoTileRule" } },
+        "palette": { "type": "array", "items": { "$ref": "#/$defs/paletteEntry" } }
+      },
+      "required": ["levelId", "width", "height", "tileSize", "seed", "intGrid", "rules"],
+      "additionalProperties": false
+    },
+    "worldPlacement": {
+      "type": "object",
+      "properties": {
+        "levelId": { "type": "string", "minLength": 1 },
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["levelId", "x", "y"],
+      "additionalProperties": false
+    },
+    "cellChange": {
+      "type": "object",
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "before": { "type": "integer", "minimum": 0, "maximum": 32767 },
+        "after": { "type": "integer", "minimum": 0, "maximum": 32767 }
+      },
+      "required": ["index", "before", "after"],
+      "additionalProperties": false
+    },
+    "paletteChange": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "integer", "minimum": 1, "maximum": 32767 },
+        "before": { "oneOf": [{ "$ref": "#/$defs/paletteEntry" }, { "type": "null" }] },
+        "after": { "oneOf": [{ "$ref": "#/$defs/paletteEntry" }, { "type": "null" }] }
+      },
+      "required": ["value", "before", "after"],
+      "additionalProperties": false
+    },
+    "propertyChange": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "before": {},
+        "after": {}
+      },
+      "required": ["name", "before", "after"],
+      "additionalProperties": false
+    },
+    "skeletonDefine": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "skeleton/define" },
+        "skeleton": { "$ref": "#/$defs/skeleton" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "skeleton"],
+      "additionalProperties": false
+    },
+    "meshBind": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "mesh/bind" },
+        "binding": { "$ref": "#/$defs/mesh" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "binding"],
+      "additionalProperties": false
+    },
+    "cameraConfigure": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "camera/configure" },
+        "settings": { "$ref": "#/$defs/camera" },
+        "replace": { "type": "boolean" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "settings"],
+      "additionalProperties": false
+    },
+    "lightAdd": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "light/add" },
+        "light": { "$ref": "#/$defs/light" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "light"],
+      "additionalProperties": false
+    },
+    "lightUpdate": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "light/update" },
+        "light": { "$ref": "#/$defs/light" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "light"],
+      "additionalProperties": false
+    },
+    "lightRemove": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "light/remove" },
+        "lightId": { "type": "string", "minLength": 1 },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "lightId"],
+      "additionalProperties": false
+    },
+    "entityDefinitionDefine": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "entitydef/define" },
+        "definition": { "$ref": "#/$defs/entityDefinition" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "definition"],
+      "additionalProperties": false
+    },
+    "entityDefinitionUpdate": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "entitydef/update" },
+        "definition": { "$ref": "#/$defs/entityDefinition" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "definition"],
+      "additionalProperties": false
+    },
+    "entityDefinitionRemove": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "entitydef/remove" },
+        "entityDefId": { "type": "string", "minLength": 1 },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "entityDefId"],
+      "additionalProperties": false
+    },
+    "entityPlace": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "entity/place" },
+        "entity": { "$ref": "#/$defs/entity" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "entity"],
+      "additionalProperties": false
+    },
+    "entityMove": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "entity/move" },
+        "entityId": { "type": "string", "minLength": 1 },
+        "position": { "$ref": "#/$defs/finitePair" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "entityId", "position"],
+      "additionalProperties": false
+    },
+    "entityProperties": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "entity/properties" },
+        "entityId": { "type": "string", "minLength": 1 },
+        "changes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/propertyChange" } },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "entityId", "changes"],
+      "additionalProperties": false
+    },
+    "entityRemove": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "entity/remove" },
+        "entityId": { "type": "string", "minLength": 1 },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "entityId"],
+      "additionalProperties": false
+    },
+    "levelDefine": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "level/define" },
+        "level": { "$ref": "#/$defs/level" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "level"],
+      "additionalProperties": false
+    },
+    "levelUpdate": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "level/update" },
+        "level": { "$ref": "#/$defs/level" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "level"],
+      "additionalProperties": false
+    },
+    "levelPatch": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "level/patch" },
+        "levelId": { "type": "string", "minLength": 1 },
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 65536,
+          "items": { "$ref": "#/$defs/cellChange" }
+        },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "levelId", "changes", "transactionId", "metadata"],
+      "additionalProperties": false
+    },
+    "levelPalette": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "level/palette" },
+        "levelId": { "type": "string", "minLength": 1 },
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32767,
+          "items": { "$ref": "#/$defs/paletteChange" }
+        },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "levelId", "changes"],
+      "additionalProperties": false
+    },
+    "levelRemove": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "level/remove" },
+        "levelId": { "type": "string", "minLength": 1 },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "levelId"],
+      "additionalProperties": false
+    },
+    "worldPlace": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "world/place" },
+        "placement": { "$ref": "#/$defs/worldPlacement" },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "placement"],
+      "additionalProperties": false
+    },
+    "worldUnplace": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "world/unplace" },
+        "levelId": { "type": "string", "minLength": 1 },
+        "transactionId": { "$ref": "#/$defs/transactionId" },
+        "metadata": { "$ref": "#/$defs/commandMetadata" }
+      },
+      "required": ["kind", "levelId"],
+      "additionalProperties": false
+    }
+  }
+}

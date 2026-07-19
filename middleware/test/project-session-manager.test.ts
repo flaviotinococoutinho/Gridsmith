@@ -27,6 +27,7 @@ class SessionRuntime implements RuntimeAdapter {
   readonly family = "test";
   isConnected = true;
   failNextProject = false;
+  failNextLightUpdateAfterRemove = false;
   failNextRehydrate = false;
   failResetAt: number | undefined;
   blockNextReset: Promise<void> | undefined;
@@ -34,6 +35,7 @@ class SessionRuntime implements RuntimeAdapter {
   blockNextProject: Promise<void> | undefined;
   onProjectBlocked: (() => void) | undefined;
   readonly rehydrated: BlueprintStore[] = [];
+  readonly runtimeLights = new Map<string, LightSpec>();
   lastSuccessfulStore: BlueprintStore | undefined;
   resetCount = 0;
   runtimeSessionEpoch = 1;
@@ -55,6 +57,7 @@ class SessionRuntime implements RuntimeAdapter {
       await barrier;
     }
     this.assertEpoch(runtimeSessionEpoch);
+    if (this.isConnected) this.runtimeLights.clear();
     return this.isConnected
       ? { status: "reset", runtimeSessionEpoch }
       : { status: "deferred", runtimeSessionEpoch, reason: "engine disconnected" };
@@ -69,6 +72,11 @@ class SessionRuntime implements RuntimeAdapter {
       this.failNextProject = false;
       throw new Error("fault injected while projecting live event");
     }
+    if (this.failNextLightUpdateAfterRemove && event.kind === "lightUpdated") {
+      this.failNextLightUpdateAfterRemove = false;
+      this.runtimeLights.delete(event.light.lightId);
+      throw new Error("fault injected after removing the previous runtime light");
+    }
     if (this.blockNextProject) {
       const barrier = this.blockNextProject;
       this.blockNextProject = undefined;
@@ -76,6 +84,11 @@ class SessionRuntime implements RuntimeAdapter {
       await barrier;
     }
     this.assertEpoch(expectedRuntimeSessionEpoch);
+    if (event.kind === "lightAdded" || event.kind === "lightUpdated") {
+      this.runtimeLights.set(event.light.lightId, event.light);
+    } else if (event.kind === "lightRemoved") {
+      this.runtimeLights.delete(event.lightId);
+    }
     return this.isConnected
       ? { event: event.kind, status: "projected" }
       : { event: event.kind, status: "deferred", reason: "engine disconnected" };
@@ -328,7 +341,7 @@ test("supersession B → C no meio da reidratação aborta candidato e restaura 
   assert.equal(changes, 0, "candidate from the obsolete epoch was never published");
 });
 
-test("falha de projeção após commit vira deferred sem esconder store, history ou evento", async () => {
+test("falha de projeção após commit preserva store/history/evento e repara runtime conectado", async () => {
   const { sessions, runtime } = manager();
   await sessions.replaceAtomically(sessions.createEmptySession("live-failure"));
   const events: unknown[] = [];
@@ -342,7 +355,32 @@ test("falha de projeção após commit vira deferred sem esconder store, history
   assert.deepEqual(sessions.current!.store.listLights().map((item) => item.lightId), ["light-1"]);
   assert.equal(sessions.current!.history.lastSequence, 1n);
   assert.equal(events.length, 1);
-  assert.equal(sessions.status.runtimeState, "deferred");
+  assert.equal(sessions.status.runtimeState, "synchronized");
+  assert.equal(runtime.runtimeLights.get("light-1")?.intensity, 1);
+  assert.equal(runtime.rehydrated.at(-1), sessions.current!.store);
+});
+
+test("projeção parcial remove+add é reparada por reset e replay integral sem desfazer commit", async () => {
+  const { sessions, runtime } = manager();
+  await sessions.replaceAtomically(
+    await sessions.prepareFromDocument(document("partial-runtime", [light(1)])),
+  );
+  const resetCount = runtime.resetCount;
+  const events: BlueprintEvent[] = [];
+  sessions.on("event", (event) => events.push(event));
+  runtime.failNextLightUpdateAfterRemove = true;
+
+  const updated = { ...light(1), intensity: 2 };
+  const result = await sessions.dispatch({ kind: "light/update", light: updated });
+
+  assert.equal(result.projection?.status, "deferred", "the original consequence remains diagnosable");
+  assert.match(result.projection?.status === "deferred" ? result.projection.reason : "", /after removing/);
+  assert.equal(sessions.current!.store.getLight("light-1")?.intensity, 2);
+  assert.equal(sessions.current!.history.lastSequence, 2n);
+  assert.equal(events.length, 1, "canonical event is published exactly once after repair");
+  assert.equal(runtime.resetCount, resetCount + 1);
+  assert.equal(runtime.runtimeLights.get("light-1")?.intensity, 2);
+  assert.equal(sessions.status.runtimeState, "synchronized");
 });
 
 test("BlueprintStore não publica antes do commit de history/session event", async () => {

@@ -152,6 +152,7 @@ export class EditorGateway extends EventEmitter {
         p?.kind as string,
         p?.payload,
         p?.requestId as string | undefined,
+        "human",
       );
       return {
         ...result,
@@ -262,6 +263,44 @@ export class EditorGateway extends EventEmitter {
       return this.surface.projectStatus();
     });
 
+    peer.registerMethod("history/status", (params) => {
+      this.requireHandshake(session);
+      const p = (params ?? {}) as { limit?: unknown };
+      return this.surface.historyStatus(p.limit === undefined ? 50 : p.limit as number);
+    });
+
+    peer.registerMethod("history/undo", (params) => {
+      this.requireHandshake(session);
+      const p = (params ?? {}) as {
+        requestId?: unknown;
+        expectedProjectSessionId?: unknown;
+        historyCursor?: unknown;
+      };
+      return this.surface.historyUndo({
+        ...(p.requestId !== undefined ? { requestId: p.requestId as string } : {}),
+        ...(p.expectedProjectSessionId !== undefined
+          ? { expectedProjectSessionId: p.expectedProjectSessionId as string }
+          : {}),
+        ...(p.historyCursor !== undefined ? { historyCursor: p.historyCursor as string } : {}),
+      }, "human");
+    });
+
+    peer.registerMethod("history/redo", (params) => {
+      this.requireHandshake(session);
+      const p = (params ?? {}) as {
+        requestId?: unknown;
+        expectedProjectSessionId?: unknown;
+        historyCursor?: unknown;
+      };
+      return this.surface.historyRedo({
+        ...(p.requestId !== undefined ? { requestId: p.requestId as string } : {}),
+        ...(p.expectedProjectSessionId !== undefined
+          ? { expectedProjectSessionId: p.expectedProjectSessionId as string }
+          : {}),
+        ...(p.historyCursor !== undefined ? { historyCursor: p.historyCursor as string } : {}),
+      }, "human");
+    });
+
     peer.registerMethod("experience/resolve", (params) => {
       this.requireHandshake(session);
       const p = (params ?? {}) as { family?: string; version?: string };
@@ -287,11 +326,20 @@ export class EditorGateway extends EventEmitter {
 }
 
 function serializeEvent(event: EventEnvelope): Record<string, unknown> {
+  const metadata = event.payload !== null && typeof event.payload === "object"
+    ? event.payload as Record<string, unknown>
+    : {};
   return {
     seq: event.seq.toString(),
     projectSessionId: event.projectSessionId,
     projectId: event.projectId,
     commandSequence: event.commandSequence.toString(),
+    transactionId: metadata["transactionId"] ?? null,
+    documentStateId: metadata["documentStateId"] ?? null,
+    historyEntryId: metadata["historyEntryId"] ?? null,
+    actor: metadata["actor"] ?? null,
+    historyAction: metadata["historyAction"] ?? null,
+    historyCursor: metadata["historyCursor"] ?? null,
     kind: event.kind,
     payload: event.payload,
   };

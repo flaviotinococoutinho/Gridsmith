@@ -340,14 +340,17 @@ test("abrir novamente o mesmo caminho não cria edição/sessão concorrente", a
   assert.equal(h.editor.openCalls, 1);
 });
 
-test("dispatch confirmado marca dirty antes de qualquer evento atrasado do journal", async () => {
+test("edição canônica: pintar marca dirty e Close alerta antes do evento atrasado do journal", async () => {
   const h = harness();
   const document = createPlatformer2DDocument({ projectId: "dirty-now", name: "Dirty agora" });
   h.fileSystem.seed("/projects/dirty-now.p7m.json", JSON.stringify(document));
   await h.controller.openRecent("/projects/dirty-now.p7m.json");
 
-  const committed = await h.controller.dispatch("camera/configure", {
-    settings: { response: 7 },
+  const committed = await h.controller.dispatch("level/patch", {
+    levelId: "level-1",
+    changes: [{ index: 1, before: 0, after: 1 }],
+    transactionId: "paint-dirty",
+    metadata: { label: "Pintar células" },
   });
 
   assert.equal(committed.outcome.event.commandSequence, "1");
@@ -356,6 +359,148 @@ test("dispatch confirmado marca dirty antes de qualquer evento atrasado do journ
   const close = await h.controller.closeProject();
   assert.equal(close.outcome, "cancelled");
   assert.equal(h.editor.closeCalls, 0);
+});
+
+test("edição canônica: Save e autosave não capturam no meio do gesto", async () => {
+  const h = harness();
+  const filePath = "/projects/gesture-save.p7m.json";
+  const document = createPlatformer2DDocument({ projectId: "gesture-save", name: "Gesture" });
+  h.fileSystem.seed(filePath, JSON.stringify(document));
+  await h.controller.openRecent(filePath);
+
+  h.controller.beginEditGesture("paint-gesture");
+  assert.equal(await h.controller.autosave(), false);
+  let saved = false;
+  const pendingSave = h.controller.saveProject().then((result) => {
+    saved = true;
+    return result;
+  });
+  await Promise.resolve();
+  assert.equal(saved, false);
+
+  await h.controller.dispatch("level/patch", {
+    levelId: "level-1",
+    changes: [{ index: 1, before: 0, after: 2 }],
+    transactionId: "paint-gesture",
+    metadata: { label: "Pintar linha" },
+  });
+  h.controller.endEditGesture("paint-gesture");
+  await pendingSave;
+
+  assert.equal(saved, true);
+  assert.equal(h.lifecycle.currentState, "open-clean");
+  const persisted = JSON.parse(h.fileSystem.content(filePath)!) as {
+    levels: Array<{ intGrid: number[] }>;
+  };
+  assert.equal(persisted.levels[0]?.intGrid[1], 2);
+});
+
+test("edição canônica: resync/queda do renderer libera Save aguardando gesture-end", async () => {
+  const h = harness();
+  const filePath = "/projects/renderer-crash.p7m.json";
+  const document = createPlatformer2DDocument({ projectId: "renderer-crash", name: "Crash" });
+  h.fileSystem.seed(filePath, JSON.stringify(document));
+  await h.controller.openRecent(filePath);
+
+  h.controller.beginEditGesture("orphan-gesture");
+  let settled = false;
+  const pendingSave = h.controller.saveProject().finally(() => { settled = true; });
+  await Promise.resolve();
+  assert.equal(settled, false);
+
+  h.controller.clearEditGestures();
+  await pendingSave;
+  assert.equal(settled, true);
+});
+
+test("edição canônica: Save aguarda confirmação incerta até o evento do journal", async () => {
+  const h = harness();
+  const filePath = "/projects/uncertain-event.p7m.json";
+  const document = createPlatformer2DDocument({ projectId: "uncertain", name: "Incerto" });
+  h.fileSystem.seed(filePath, JSON.stringify(document));
+  await h.controller.openRecent(filePath);
+
+  const transactionId = "uncertain-paint";
+  h.controller.beginEditGesture(transactionId);
+  const committed = h.editor.commitExternalCommand("level/patch", {
+    levelId: "level-1",
+    changes: [{ index: 1, before: 0, after: 3 }],
+    transactionId,
+    metadata: { label: "Pintar células" },
+  });
+
+  let saved = false;
+  const pendingSave = h.controller.saveProject().then((result) => {
+    saved = true;
+    return result;
+  });
+  await Promise.resolve();
+  assert.equal(saved, false, "snapshot não pode ultrapassar confirmação pendente");
+
+  const observation = h.controller.observeCommittedCommand(committed.event);
+  h.controller.endEditGesture(committed.event.transactionId!);
+  await observation;
+  await pendingSave;
+
+  const persisted = JSON.parse(h.fileSystem.content(filePath)!) as {
+    levels: Array<{ intGrid: number[] }>;
+  };
+  assert.equal(persisted.levels[0]?.intGrid[1], 3);
+  assert.equal(h.lifecycle.currentState, "open-clean");
+});
+
+test("edição canônica: Save revalida gesto iniciado ao encerrar o anterior", async () => {
+  const h = harness();
+  const filePath = "/projects/consecutive-gestures.p7m.json";
+  const document = createPlatformer2DDocument({ projectId: "consecutive", name: "Gestos" });
+  h.fileSystem.seed(filePath, JSON.stringify(document));
+  await h.controller.openRecent(filePath);
+
+  h.controller.beginEditGesture("gesture-a");
+  let saved = false;
+  const pendingSave = h.controller.saveProject().finally(() => { saved = true; });
+  h.controller.endEditGesture("gesture-a");
+  h.controller.beginEditGesture("gesture-b");
+  await Promise.resolve();
+  assert.equal(saved, false);
+
+  h.controller.endEditGesture("gesture-b");
+  await pendingSave;
+  assert.equal(saved, true);
+});
+
+test("edição canônica: Open aguarda o brush canônico antes de substituir a sessão", async () => {
+  const h = harness();
+  const documentA = createPlatformer2DDocument({ projectId: "brush-a", name: "A" });
+  const documentB = createPlatformer2DDocument({ projectId: "brush-b", name: "B" });
+  h.fileSystem.seed("/projects/brush-a.p7m.json", JSON.stringify(documentA));
+  h.fileSystem.seed("/projects/brush-b.p7m.json", JSON.stringify(documentB));
+  await h.controller.openRecent("/projects/brush-a.p7m.json");
+
+  const transactionId = "brush-before-open";
+  h.controller.beginEditGesture(transactionId);
+  let opened = false;
+  const pendingOpen = h.controller.openRecent("/projects/brush-b.p7m.json").then((result) => {
+    opened = true;
+    return result;
+  });
+  await Promise.resolve();
+  assert.equal(opened, false);
+  assert.equal(h.lifecycle.project?.projectId, "brush-a");
+
+  const committed = h.editor.commitExternalCommand("level/patch", {
+    levelId: "level-1",
+    changes: [{ index: 1, before: 0, after: 2 }],
+    transactionId,
+    metadata: { label: "Pintar células" },
+  });
+  const observation = h.controller.observeCommittedCommand(committed.event);
+  h.controller.endEditGesture(transactionId);
+  await observation;
+  await pendingOpen;
+
+  assert.equal(opened, true);
+  assert.equal(h.lifecycle.project?.projectId, "brush-b");
 });
 
 test("evento entre snapshot e rename mantém projeto dirty depois do Save", async () => {

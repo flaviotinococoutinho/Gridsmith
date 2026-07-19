@@ -76,6 +76,8 @@ export interface RuntimeAdapter {
   project(
     event: BlueprintEvent,
     expectedRuntimeSessionEpoch?: RuntimeSessionEpoch,
+    /** Snapshot canônico já confirmado, para eventos incrementais sem payload completo. */
+    canonicalStore?: BlueprintStore,
   ): Promise<ProjectionResult>;
 
   /**

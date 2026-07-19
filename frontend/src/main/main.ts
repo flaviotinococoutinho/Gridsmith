@@ -378,6 +378,16 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
     return result.outcome;
   });
   ipcMain.handle("p7m:query", (_event, projection: string) => client.query(projection));
+  ipcMain.handle("p7m:history-undo", () => controller.undo());
+  ipcMain.handle("p7m:history-redo", () => controller.redo());
+  ipcMain.handle("p7m:history-status", (_event, limit?: number) =>
+    controller.historyStatus(limit));
+  ipcMain.on("p7m:gesture-begin", (_event, transactionId: string) => {
+    controller.beginEditGesture(transactionId);
+  });
+  ipcMain.on("p7m:gesture-end", (_event, transactionId: string) => {
+    controller.endEditGesture(transactionId);
+  });
   ipcMain.handle("p7m:experience", (_event, family?: string, version?: string) =>
     client.resolveExperience(family, version),
   );
@@ -408,6 +418,7 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
   // (sandbox, navegação bloqueada), estado persistido entre sessões
   window = new BrowserWindow(hardenedWindowOptions(path.join(dirname, "preload.js")));
   mainWindow = window;
+  window.webContents.on("render-process-gone", () => controller.clearEditGestures());
   if (loadWindowState().maximized) window.maximize();
   trackWindowState(window);
   hardenNavigation(window);
@@ -452,8 +463,8 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
       {
         label: "Editar",
         submenu: [
-          { label: "Desfazer", accelerator: "CmdOrCtrl+Z", click: sendMenuAction("undo") },
-          { label: "Refazer", accelerator: "CmdOrCtrl+Shift+Z", click: sendMenuAction("redo") },
+          { label: "Desfazer", accelerator: "CmdOrCtrl+Z", click: runNative(() => controller.undo()) },
+          { label: "Refazer", accelerator: "CmdOrCtrl+Shift+Z", click: runNative(() => controller.redo()) },
         ],
       },
       {
@@ -494,7 +505,11 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
   client.onBlueprintEvent((event) => {
     // Um callback atrasado de A nunca suja nem chega ao renderer de B.
     if (event.projectSessionId !== lifecycle.project?.projectSessionId) return;
-    void controller.observeCommittedCommand(event).then((autosaveDue) => {
+    const observation = controller.observeCommittedCommand(event);
+    // Se a resposta do dispatch se perdeu, o evento é a confirmação que
+    // encerra o gate sem permitir Save de uma projeção ainda incerta.
+    if (event.transactionId) controller.endEditGesture(event.transactionId);
+    void observation.then((autosaveDue) => {
       if (autosaveDue) {
         void controller.autosave().catch((error) => console.error("[project-autosave]", error));
       }
@@ -504,6 +519,9 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
     }
   });
   client.onResynchronized((snapshot, record) => {
+    // O snapshot completo decide qualquer comando de entrega incerta. A
+    // projeção do renderer será substituída abaixo antes de um Save enfileirado.
+    controller.clearEditGestures();
     void controller.reconcileRemoteSnapshot(snapshot).then((outcome) => {
       // Um snapshot vazio que acaba de ser compensado nunca substitui a UI;
       // a reabertura emite em seguida o snapshot completo da nova sessão.

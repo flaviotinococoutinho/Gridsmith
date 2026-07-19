@@ -26,6 +26,11 @@ export interface ProjectStatusPayload {
   readonly state: ProjectState;
   readonly windowTitle: string;
   readonly isDirty: boolean;
+  readonly commandSequence: string;
+  readonly documentStateId?: string;
+  readonly historyCursor?: string;
+  readonly canUndo?: boolean;
+  readonly canRedo?: boolean;
   readonly project?: {
     readonly filePath?: string;
     readonly name: string;

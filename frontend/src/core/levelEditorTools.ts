@@ -32,7 +32,7 @@ export function dragCells(
   return cells;
 }
 
-/** Pincéis pontuais (pencil/eraser/flood). Retorna true se o documento mudou. */
+/** Pincéis pontuais (pencil/eraser/flood) dentro do gesto já aberto. */
 export function applyBrushAt(
   doc: IntGridDocument,
   tool: LevelTool,
@@ -46,7 +46,25 @@ export function applyBrushAt(
   return false;
 }
 
-/** Commit de um arrasto rect/line como UMA operação de undo. */
+/**
+ * Segmento contínuo de pincel/borracha. Interpolar evita buracos quando o SO
+ * entrega pointermoves espaçados; o IntGrid agrega tudo na mesma transação.
+ */
+export function applyBrushStroke(
+  doc: IntGridDocument,
+  tool: "pencil" | "eraser",
+  from: CellPoint,
+  to: CellPoint,
+  activeValue: number,
+): boolean {
+  let changed = false;
+  for (const [x, y] of lineCells(from.x, from.y, to.x, to.y)) {
+    changed = doc.paint(x, y, tool === "eraser" ? 0 : activeValue) || changed;
+  }
+  return changed;
+}
+
+/** Commit de um arrasto rect/line dentro da transação corrente. */
 export function commitDrag(
   doc: IntGridDocument,
   tool: LevelTool,

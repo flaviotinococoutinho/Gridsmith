@@ -77,10 +77,13 @@ quadrantChart
 | OPP-02 | **Preview embutido do MonoGame** no painel do editor | Alto — feedback imediato | M/A | perfil 3.8.2 já governa `preview.embedded`; `DeferredRenderer` pronto; falta host de janela acoplado |
 | OPP-03 | **Live edit generalizado** (tunables por subsistema, estilo FlatRedBall) | Alto | M | padrão provado em `camera/configure` (merge parcial); manifesto já declara `properties` com tipo/faixa |
 | OPP-04 | **Preview de regras de auto-tiling em tempo real** no pincel de IntGrid | Médio | B | `resolveAutoTiles` é puro e rápido; `IntGridDocument` já entrega snapshots |
-| OPP-05 | **Undo/redo global do Blueprint** (não só IntGrid) | Alto | M | todo evento carrega dados de inverso em potencial; o orquestrador é o ponto único para capturar |
+| OPP-05 | **Undo/redo global do Blueprint** (não só IntGrid) — **realizada na ADR-022** | Alto | M | histórico por sessão, patches incrementais, inversos, provenance e savepoint entregues |
 | OPP-06 | **Templates de projeto** ("plataforma 2D pronto para tocar") | Médio | B | `BlueprintDocument` é o formato de template natural (replay canônico valida tudo) |
 
-O alicerce de **OPP-05** (undo/redo global) é o fluxo canônico de mutação: como toda mutação passa por um único caminho, o `store.apply(filtered)` é o ponto único onde capturar o inverso de cada evento — não há mutação fora dele.
+**OPP-05 foi materializada pela [ADR-022](adr/ADR-022-historico-global-transacional.md).**
+O comando já filtrado é planejado contra o estado anterior; store e histórico
+confirmam a operação antes de qualquer publicação. Undo/redo conserva o mesmo
+caminho de eventos e projeção, sem uma segunda fonte de verdade no renderer.
 
 ```mermaid
 graph TD

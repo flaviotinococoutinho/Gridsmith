@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "projectId": "example-platformer-2d",
   "metadata": {
     "name": "Exemplo Plataforma 2D",
@@ -227,6 +227,23 @@
         1,
         1,
         1
+      ],
+      "palette": [
+        {
+          "value": 1,
+          "name": "Chão",
+          "color": "#7a5230"
+        },
+        {
+          "value": 2,
+          "name": "Parede",
+          "color": "#5a6a7a"
+        },
+        {
+          "value": 3,
+          "name": "Perigo",
+          "color": "#b8433a"
+        }
       ],
       "rules": [
         {

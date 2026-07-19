@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "p7m://contracts/command-history",
+  "title": "Wire JSON do histórico global de uma ProjectSession",
+  "description": "Formas JSON canônicas expostas por history/status e history/undo|redo no gateway legado/MCP. GraphQL e gRPC aplicam somente suas conversões escalares declaradas no SDL/proto.",
+  "oneOf": [
+    { "$ref": "#/$defs/status" },
+    { "$ref": "#/$defs/operation" }
+  ],
+  "$defs": {
+    "decimalSequence": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "actor": {
+      "enum": ["human", "agent", "pipeline"]
+    },
+    "entry": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "forward": { "type": "array", "items": { "type": "object" } },
+        "inverse": { "type": "array", "items": { "type": "object" } },
+        "actor": { "$ref": "#/$defs/actor" },
+        "transactionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "timestamp": { "type": "number", "minimum": 0 },
+        "barrier": { "type": "boolean" },
+        "applied": { "type": "boolean" }
+      },
+      "required": [
+        "id",
+        "label",
+        "forward",
+        "inverse",
+        "actor",
+        "transactionId",
+        "timestamp"
+      ],
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "actor": { "$ref": "#/$defs/actor" },
+        "transactionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "timestamp": { "type": "number", "minimum": 0 },
+        "barrier": { "type": "boolean" },
+        "applied": { "type": "boolean" }
+      },
+      "required": ["id", "label", "actor", "transactionId", "timestamp", "applied"],
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "projectSessionId": { "type": "string", "minLength": 1 },
+        "projectId": { "type": "string", "minLength": 1 },
+        "canUndo": { "type": "boolean" },
+        "canRedo": { "type": "boolean" },
+        "undoLabel": { "type": ["string", "null"] },
+        "redoLabel": { "type": ["string", "null"] },
+        "documentStateId": { "type": "string", "minLength": 1 },
+        "historyCursor": { "type": "string", "minLength": 1 },
+        "commandSequence": { "$ref": "#/$defs/decimalSequence" },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/summary" } }
+      },
+      "required": [
+        "projectSessionId",
+        "projectId",
+        "canUndo",
+        "canRedo",
+        "documentStateId",
+        "historyCursor",
+        "commandSequence",
+        "entries"
+      ],
+      "additionalProperties": false
+    },
+    "projectStatus": {
+      "type": "object",
+      "properties": {
+        "active": { "type": "boolean" },
+        "projectSessionId": { "type": "string", "minLength": 1 },
+        "projectId": { "type": "string", "minLength": 1 },
+        "commandSequence": { "$ref": "#/$defs/decimalSequence" },
+        "documentStateId": { "type": "string", "minLength": 1 },
+        "historyCursor": { "type": "string", "minLength": 1 },
+        "canUndo": { "type": "boolean" },
+        "canRedo": { "type": "boolean" },
+        "createdAt": { "type": "number", "minimum": 0 },
+        "runtimeState": { "enum": ["synchronized", "deferred", "failed"] }
+      },
+      "required": ["active", "commandSequence", "runtimeState"],
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "status": { "$ref": "#/$defs/projectStatus" },
+        "history": { "$ref": "#/$defs/status" },
+        "entry": { "$ref": "#/$defs/entry" },
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "object" }
+        }
+      },
+      "required": ["status", "history", "entry", "events"],
+      "additionalProperties": false
+    }
+  }
+}

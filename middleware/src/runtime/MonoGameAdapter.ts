@@ -84,6 +84,7 @@ export class MonoGameAdapter implements RuntimeAdapter {
   async project(
     event: BlueprintEvent,
     expectedRuntimeSessionEpoch = this.server.currentRuntimeSessionEpoch,
+    canonicalStore?: BlueprintStore,
   ): Promise<ProjectionResult> {
     const session = this.sessionAtEpoch(expectedRuntimeSessionEpoch);
     if (!session) {
@@ -119,12 +120,32 @@ export class MonoGameAdapter implements RuntimeAdapter {
           session,
           expectedRuntimeSessionEpoch,
           "camera/configure",
-          event.settings,
+          event.replace ? { ...event.settings, replace: true } : event.settings,
         );
         return { event: event.kind, status: "projected", detail };
       }
 
       case "lightAdded": {
+        const { lightId } = await this.requestAtEpoch<{ lightId: number }>(
+          session,
+          expectedRuntimeSessionEpoch,
+          "lighting/add",
+          toEngineLight(event.light),
+        );
+        this.engineLightIds.set(event.light.lightId, lightId);
+        return { event: event.kind, status: "projected" };
+      }
+
+      case "lightUpdated": {
+        const previousId = this.engineLightIds.get(event.light.lightId);
+        if (previousId !== undefined) {
+          await this.requestAtEpoch(
+            session,
+            expectedRuntimeSessionEpoch,
+            "lighting/remove",
+            { lightId: previousId },
+          );
+        }
         const { lightId } = await this.requestAtEpoch<{ lightId: number }>(
           session,
           expectedRuntimeSessionEpoch,
@@ -171,8 +192,8 @@ export class MonoGameAdapter implements RuntimeAdapter {
       }
 
       case "levelUpdated": {
-        // Edição incremental: a engine não faz diff de tilemaps — remove e
-        // redefine com os tiles re-resolvidos (mesma semântica do define).
+        // A engine ainda recebe tilemaps completos; o evento de substituição
+        // já contém o nível consolidado.
         await this.requestAtEpoch(
           session,
           expectedRuntimeSessionEpoch,
@@ -188,6 +209,34 @@ export class MonoGameAdapter implements RuntimeAdapter {
         return { event: event.kind, status: "projected", detail };
       }
 
+      case "levelPatched":
+      case "levelPaletteChanged": {
+        // O journal e os transports carregam somente o delta. Como a engine
+        // ainda não faz diff de tilemaps, a fronteira de runtime lê o snapshot
+        // canônico já confirmado e o reprojeta sem inflar o evento público.
+        const level = canonicalStore?.getLevel(event.levelId);
+        if (!level) {
+          return {
+            event: event.kind,
+            status: "deferred",
+            reason: `canonical level "${event.levelId}" is unavailable for full runtime projection`,
+          };
+        }
+        await this.requestAtEpoch(
+          session,
+          expectedRuntimeSessionEpoch,
+          "tilemap/remove",
+          { tilemapId: level.levelId },
+        );
+        const detail = await this.requestAtEpoch(
+          session,
+          expectedRuntimeSessionEpoch,
+          "tilemap/define",
+          toEngineTilemap(level),
+        );
+        return { event: event.kind, status: "projected", detail };
+      }
+
       case "levelRemoved":
         await this.requestAtEpoch(
           session,
@@ -198,6 +247,8 @@ export class MonoGameAdapter implements RuntimeAdapter {
         return { event: event.kind, status: "projected" };
 
       case "entityDefDefined":
+      case "entityDefUpdated":
+      case "entityDefRemoved":
         return {
           event: event.kind,
           status: "skipped",
@@ -264,6 +315,13 @@ export class MonoGameAdapter implements RuntimeAdapter {
         return { event: event.kind, status: "projected", detail };
       }
 
+      case "entityPropertiesChanged":
+        return {
+          event: event.kind,
+          status: "skipped",
+          reason: `entity fields are editorial until runtime tunable properties are declared`,
+        };
+
       case "entityRemoved": {
         if (!this.spawnedEntityIds.has(event.entityId)) {
           return {
@@ -306,7 +364,7 @@ export class MonoGameAdapter implements RuntimeAdapter {
     const results: ProjectionResult[] = [];
     const projectAll = async (events: BlueprintEvent[]): Promise<void> => {
       for (const event of events) {
-        results.push(await this.project(event, expectedRuntimeSessionEpoch));
+        results.push(await this.project(event, expectedRuntimeSessionEpoch, store));
       }
     };
 

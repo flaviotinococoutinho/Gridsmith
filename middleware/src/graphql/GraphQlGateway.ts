@@ -71,19 +71,127 @@ export function graphqlKindToCanonical(kind: string): string {
   return kind.replace("_", "/");
 }
 
-function serializeEvent(event: EventEnvelope): {
-  seq: string;
-  projectSessionId: string;
-  projectId: string;
-  commandSequence: string;
-  kind: string;
-  payload: unknown;
-} {
+interface HistoryEntryLike {
+  readonly id: string;
+  readonly label: string;
+  readonly forward?: readonly unknown[];
+  readonly inverse?: readonly unknown[];
+  readonly actor: "human" | "agent" | "pipeline";
+  readonly transactionId: string;
+  readonly timestamp: number | string;
+  readonly barrier?: boolean;
+  readonly applied?: boolean;
+}
+
+interface HistoryStatusLike {
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+  readonly undoLabel?: string;
+  readonly redoLabel?: string;
+  readonly documentStateId: string;
+  readonly historyCursor: string;
+  readonly commandSequence: string | number | bigint;
+  readonly entries: readonly HistoryEntryLike[];
+}
+
+interface ProjectStatusLike {
+  readonly active: boolean;
+  readonly projectSessionId?: string;
+  readonly projectId?: string;
+  readonly commandSequence: string | number | bigint;
+  readonly documentStateId?: string;
+  readonly historyCursor?: string;
+  readonly canUndo?: boolean;
+  readonly canRedo?: boolean;
+  readonly createdAt?: number | string;
+  readonly runtimeState: string;
+}
+
+function serializeHistoryEntry(
+  entry: HistoryEntryLike,
+  includeCommands: boolean,
+): Record<string, unknown> {
+  return {
+    id: entry.id,
+    label: entry.label,
+    ...(includeCommands
+      ? { forward: entry.forward ?? [], inverse: entry.inverse ?? [] }
+      : {}),
+    actor: entry.actor,
+    transactionId: entry.transactionId,
+    timestamp: entry.timestamp.toString(),
+    barrier: entry.barrier === true,
+    ...(!includeCommands ? { applied: entry.applied === true } : {}),
+  };
+}
+
+function serializeHistoryStatus(status: HistoryStatusLike): Record<string, unknown> {
+  return {
+    projectSessionId: status.projectSessionId,
+    projectId: status.projectId,
+    canUndo: status.canUndo,
+    canRedo: status.canRedo,
+    undoLabel: status.undoLabel ?? null,
+    redoLabel: status.redoLabel ?? null,
+    documentStateId: status.documentStateId,
+    historyCursor: status.historyCursor,
+    commandSequence: status.commandSequence.toString(),
+    entries: status.entries.map((entry) => serializeHistoryEntry(entry, false)),
+  };
+}
+
+function serializeHistoryOperation(result: {
+  readonly status: ProjectStatusLike;
+  readonly history: HistoryStatusLike;
+  readonly entry: HistoryEntryLike;
+  readonly events: readonly unknown[];
+}): Record<string, unknown> {
+  const history = serializeHistoryStatus(result.history);
+  return {
+    status: serializeProjectStatus(result.status),
+    history,
+    entry: serializeHistoryEntry(result.entry, true),
+    events: result.events,
+    commandSequence: result.history.commandSequence.toString(),
+    transactionId: result.entry.transactionId,
+    documentStateId: result.history.documentStateId,
+    historyCursor: result.history.historyCursor,
+  };
+}
+
+function serializeProjectStatus(status: ProjectStatusLike): Record<string, unknown> {
+  return {
+    ...status,
+    commandSequence: status.commandSequence.toString(),
+    documentStateId: status.documentStateId ?? "",
+    historyCursor: status.historyCursor ?? "",
+    canUndo: status.canUndo === true,
+    canRedo: status.canRedo === true,
+    createdAt: status.createdAt === undefined ? null : String(status.createdAt),
+  };
+}
+
+function metadataOf(payload: unknown): Record<string, unknown> {
+  return payload !== null && typeof payload === "object"
+    ? payload as Record<string, unknown>
+    : {};
+}
+
+function serializeEvent(event: EventEnvelope): Record<string, unknown> {
+  const metadata = metadataOf(event.payload);
   return {
     seq: event.seq.toString(),
     projectSessionId: event.projectSessionId,
     projectId: event.projectId,
     commandSequence: event.commandSequence.toString(),
+    transactionId: metadata["transactionId"] ?? null,
+    documentStateId: metadata["documentStateId"] ?? null,
+    historyEntryId: metadata["historyEntryId"] ?? null,
+    actor: metadata["actor"] ?? null,
+    historyCursor: metadata["historyCursor"] ?? null,
+    historyAction: metadata["historyAction"] ?? null,
     kind: event.kind,
     payload: event.payload,
   };
@@ -209,6 +317,7 @@ export class GraphQlGateway {
     return {
       health: () => {
         const position = journal.position;
+        const status = surface.projectStatus();
         return {
           ok: true,
           engineConnected: surface.isEngineConnected,
@@ -216,6 +325,8 @@ export class GraphQlGateway {
           projectSessionId: position.projectSessionId,
           projectId: position.projectId,
           commandSequence: position.commandSequence.toString(),
+          documentStateId: status.documentStateId ?? "",
+          historyCursor: status.historyCursor ?? "",
           firstAvailableSeq: position.firstAvailableSeq.toString(),
           lastEventSeq: position.lastEventSeq.toString(),
         };
@@ -226,13 +337,31 @@ export class GraphQlGateway {
         // intercalada no event loop entre a projeção e o cursor carimbado.
         const snapshot = surface.snapshot();
         const position = journal.position;
+        const status = serializeProjectStatus(snapshot.status);
+        const history = snapshot.status.active
+          ? serializeHistoryStatus(surface.historyStatus(0))
+          : {
+              projectSessionId: position.projectSessionId,
+              projectId: position.projectId,
+              canUndo: false,
+              canRedo: false,
+              undoLabel: null,
+              redoLabel: null,
+              documentStateId: String(status["documentStateId"] ?? ""),
+              historyCursor: String(status["historyCursor"] ?? ""),
+              commandSequence: String(status["commandSequence"] ?? "0"),
+              entries: [],
+            };
         return {
           projections: snapshot.projections,
-          status: snapshot.status,
+          status,
           middlewareInstanceId: position.middlewareInstanceId,
           projectSessionId: position.projectSessionId,
           projectId: position.projectId,
           commandSequence: position.commandSequence.toString(),
+          documentStateId: status["documentStateId"],
+          historyCursor: status["historyCursor"],
+          history,
           firstAvailableSeq: position.firstAvailableSeq.toString(),
           lastEventSeq: position.lastEventSeq.toString(),
         };
@@ -242,7 +371,13 @@ export class GraphQlGateway {
       templates: () => surface.listTemplates(),
       projectTemplateDocument: (args: { templateId: string; options: unknown }) =>
         surface.materializeProjectTemplate(args.templateId, args.options),
-      projectStatus: () => surface.projectStatus(),
+      projectStatus: () => serializeProjectStatus(surface.projectStatus()),
+      historyStatus: (args: { limit?: number }) =>
+        serializeHistoryStatus(surface.historyStatus(args.limit ?? 0)),
+      history: (args: { limit?: number }) => {
+        const status = serializeHistoryStatus(surface.historyStatus(args.limit ?? 100));
+        return { status, entries: status["entries"] };
+      },
       eventBatch: (args: {
         middlewareInstanceId: string;
         projectSessionId?: string;
@@ -263,12 +398,44 @@ export class GraphQlGateway {
           graphqlKindToCanonical(args.kind),
           args.payload,
           args.requestId,
+          "human",
         );
+        const event = metadataOf(result.event);
         return {
           event: result.event,
           projection: result.projection ?? null,
+          commandSequence: result.commandSequence.toString(),
+          transactionId:
+            result.historyEntry?.transactionId ?? event["transactionId"] ?? "",
+          documentStateId: result.documentStateId,
+          historyCursor: result.historyCursor,
+          historyEntry: result.historyEntry
+            ? serializeHistoryEntry(result.historyEntry, true)
+            : null,
         };
       },
+      undo: async (args: {
+        requestId?: string | null;
+        expectedProjectSessionId?: string | null;
+        historyCursor?: string | null;
+      }) => serializeHistoryOperation(await surface.historyUndo({
+        ...(args.requestId != null ? { requestId: args.requestId } : {}),
+        ...(args.expectedProjectSessionId != null
+          ? { expectedProjectSessionId: args.expectedProjectSessionId }
+          : {}),
+        ...(args.historyCursor != null ? { historyCursor: args.historyCursor } : {}),
+      }, "human")),
+      redo: async (args: {
+        requestId?: string | null;
+        expectedProjectSessionId?: string | null;
+        historyCursor?: string | null;
+      }) => serializeHistoryOperation(await surface.historyRedo({
+        ...(args.requestId != null ? { requestId: args.requestId } : {}),
+        ...(args.expectedProjectSessionId != null
+          ? { expectedProjectSessionId: args.expectedProjectSessionId }
+          : {}),
+        ...(args.historyCursor != null ? { historyCursor: args.historyCursor } : {}),
+      }, "human")),
       projectCreate: (args: {
         projectId?: string | null;
         templateId?: string | null;

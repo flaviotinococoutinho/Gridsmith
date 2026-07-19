@@ -13,6 +13,7 @@
     "test": "node --import tsx --test test/*.test.ts",
     "test:project-lifecycle-product": "node --import tsx --test test/project-lifecycle.test.ts test/project-controller.test.ts test/project-file-service.test.ts test/project-wizard.test.ts test/project-artifacts.test.ts test/project-launch-routing.test.ts",
     "test:project-session": "node --import tsx --test --test-name-pattern=\"^sessão de projeto:\" test/editor-client.integration.test.ts",
+    "test:canonical-editing": "node --import tsx --test --test-name-pattern=\"^edição canônica:\" test/canonical-command-feedback.test.ts test/intgrid-document.test.ts test/level-editor-tools.test.ts test/level-editor-store.test.ts test/project-lifecycle.test.ts test/project-controller.test.ts test/editor-client.integration.test.ts",
     "test:transport-fallback": "node --import tsx --test --test-name-pattern=\"^resiliência: fallback gRPC → GraphQL mantém chamadas e eventos$\" test/editor-client.integration.test.ts",
     "test:transport-repromotion": "node --import tsx --test --test-name-pattern=\"^resiliência: repromoção GraphQL → gRPC exige sondas saudáveis consecutivas$\" test/editor-client.integration.test.ts",
     "test:transport-auth": "node --import tsx --test --test-name-pattern=\"^resiliência: autenticação gRPC inválida não faz fallback para GraphQL$\" test/editor-client.integration.test.ts",

@@ -14,6 +14,12 @@ import type {
   ProjectTemplateDescriptor,
   RestoreAutosaveRequest,
 } from "../core/projectApi.js";
+import type {
+  BlueprintEventPayload,
+  DispatchOutcome,
+  HistoryOperationResult,
+  HistoryStatusPayload,
+} from "../core/editorCommands.js";
 
 export type { ProjectStatusPayload } from "../core/projectApi.js";
 
@@ -30,16 +36,11 @@ export interface ServiceStatusPayload {
 
 export interface P7mEditorApi {
   connect(): Promise<{ sessionId: string }>;
-  dispatch(kind: string, payload: Record<string, unknown>): Promise<unknown>;
+  dispatch(kind: string, payload: Record<string, unknown>): Promise<DispatchOutcome>;
   query(projection: string): Promise<unknown>;
   experience(family?: string, version?: string): Promise<unknown>;
   onBlueprintEvent(
-    listener: (event: {
-      kind: string;
-      projectSessionId: string;
-      projectId: string;
-      commandSequence: string;
-    }) => void,
+    listener: (event: BlueprintEventPayload) => void,
   ): void;
   /** Snapshot completo após restart/gap; substitui o estado projetado local. */
   onProjectionResync(
@@ -59,6 +60,13 @@ export interface P7mEditorApi {
   onProjectStatus(listener: (status: ProjectStatusPayload) => void): void;
   /** Ações do menu nativo roteadas ao renderer (undo/redo do editor ativo). */
   onMenuAction(listener: (action: ProjectMenuAction) => void): void;
+  /** Histórico global da sessão, independente do painel ativo. */
+  undo(): Promise<HistoryOperationResult>;
+  redo(): Promise<HistoryOperationResult>;
+  historyStatus(limit?: number): Promise<HistoryStatusPayload>;
+  /** Gate de Save/autosave/Close enquanto um pointer gesture está aberto. */
+  beginEditGesture(transactionId: string): void;
+  endEditGesture(transactionId: string): void;
   // ---- supervisão de processos (ALPHA-0.1 P0.1) ----
   serviceStatus(): Promise<ServiceStatusPayload[]>;
   /** Reinicia um serviço isolado (engine caída → projeto preservado). */
@@ -96,6 +104,11 @@ const api: P7mEditorApi = {
   onMenuAction: (listener) => {
     ipcRenderer.on("p7m:menu-action", (_event, action) => listener(action));
   },
+  undo: () => ipcRenderer.invoke("p7m:history-undo"),
+  redo: () => ipcRenderer.invoke("p7m:history-redo"),
+  historyStatus: (limit) => ipcRenderer.invoke("p7m:history-status", limit),
+  beginEditGesture: (transactionId) => ipcRenderer.send("p7m:gesture-begin", transactionId),
+  endEditGesture: (transactionId) => ipcRenderer.send("p7m:gesture-end", transactionId),
   serviceStatus: () => ipcRenderer.invoke("p7m:service-status"),
   serviceRestart: (serviceId) => ipcRenderer.invoke("p7m:service-restart", serviceId),
   onServiceStatus: (listener) => {

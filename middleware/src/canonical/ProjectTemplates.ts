@@ -85,6 +85,11 @@ export function createPlatformer2DDocument(
     tileSize,
     seed: 1,
     intGrid: platformerIntGrid(),
+    palette: [
+      { value: 1, name: "Chão", color: "#7a5230" },
+      { value: 2, name: "Parede", color: "#5a6a7a" },
+      { value: 3, name: "Perigo", color: "#b8433a" },
+    ],
     // Regra default: célula sólida (1) → tile 1. O editor refina depois.
     rules: [{ patternSize: 1, pattern: [SOLID], tileIds: [1] }],
   };

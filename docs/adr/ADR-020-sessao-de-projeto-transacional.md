@@ -75,8 +75,10 @@ observáveis enquanto o runtime está parcialmente reconstruído.
   como `failed` e bloqueia novas mutações até uma reidratação integral concluir.
 - APIs incrementais sem identidade de sessão permanecem nominalmente para
   compatibilidade, mas falham de forma explícita.
-- `CommandHistory` nesta decisão é append-only e fornece relógio lógico; undo e
-  redo continuam fora do escopo.
+- A separação original entre sessão e relógio tornou possível adicionar o
+  histórico reversível da [ADR-022](ADR-022-historico-global-transacional.md).
+  `commandSequence` continua monotônico; cursor lógico, futuro e savepoint são
+  conceitos distintos e permanecem confinados à sessão.
 
 ## Riscos e mitigação
 
@@ -93,6 +95,6 @@ observáveis enquanto o runtime está parcialmente reconstruído.
 ## Critérios de revisão
 
 Revisar esta decisão se o runtime passar a oferecer transação/snapshot nativo,
-se a sessão precisar persistir histórico de undo/redo, ou quando a remoção dos
+se a sessão precisar persistir histórico entre execuções, ou quando a remoção dos
 aliases legados for compatível com todos os clientes. Nenhuma dessas condições
 autoriza reintroduzir replay no estado publicado ou eventos parciais.

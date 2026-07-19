@@ -16,6 +16,8 @@ import {
 import type {
   CapturedProjectSnapshot,
   DispatchOutcome,
+  HistoryOperationResult,
+  HistoryStatusPayload,
   ProjectOperationResult,
   ProjectRevisionExpectation,
   ProjectStatus,
@@ -37,6 +39,9 @@ export interface EditorProjectPort {
   ): Promise<ProjectOperationResult>;
   captureProjectSnapshot(expectedProjectSessionId?: string): Promise<CapturedProjectSnapshot>;
   closeProject(expectation?: ProjectRevisionExpectation): Promise<ProjectStatus>;
+  undo(): Promise<HistoryOperationResult>;
+  redo(): Promise<HistoryOperationResult>;
+  historyStatus(limit?: number): Promise<HistoryStatusPayload>;
 }
 
 export type UnsavedDecision = "save" | "discard" | "cancel";
@@ -84,6 +89,8 @@ export class ProjectController {
   private activeLease: ProjectFileLease | undefined;
   private lastKnownDocument: unknown;
   private lastKnownCommandSequence: string | undefined;
+  private readonly activeGestures = new Set<string>();
+  private readonly gestureWaiters = new Set<() => void>();
 
   constructor(private readonly options: ProjectControllerOptions) {}
 
@@ -109,6 +116,7 @@ export class ProjectController {
   observeCommittedCommand(event: {
     readonly projectSessionId: string;
     readonly commandSequence: string;
+    readonly documentStateId?: string;
   }): Promise<boolean> {
     return this.enqueue(() => this.observeCommittedCommandUnlocked(event));
   }
@@ -123,37 +131,70 @@ export class ProjectController {
   createProjectFromTemplate(
     request: CreateProjectFromTemplateRequest,
   ): Promise<ProjectActionResult> {
-    return this.enqueue(() => this.createProjectFromTemplateUnlocked(request));
+    return this.afterGestures(() =>
+      this.enqueue(() => this.createProjectFromTemplateUnlocked(request)));
   }
 
   openProject(request: OpenProjectRequest = {}): Promise<ProjectActionResult> {
-    return this.enqueue(() => this.openProjectUnlocked(request));
+    return this.afterGestures(() => this.enqueue(() => this.openProjectUnlocked(request)));
   }
 
   openRecent(filePath: string): Promise<ProjectActionResult> {
-    return this.enqueue(async () => {
+    return this.afterGestures(() => this.enqueue(async () => {
       if (!(await this.options.files.exists(filePath))) {
         this.options.lifecycle.removeRecent(filePath);
         throw new Error(`O projeto recente não existe mais: ${filePath}`);
       }
       return this.openPathUnlocked(filePath);
-    });
+    }));
   }
 
   saveProject(): Promise<ProjectActionResult> {
-    return this.enqueue(() => this.saveUnlocked(false));
+    return this.afterGestures(() => this.enqueue(() => this.saveUnlocked(false)));
   }
 
   saveProjectAs(): Promise<ProjectActionResult> {
-    return this.enqueue(() => this.saveUnlocked(true));
+    return this.afterGestures(() => this.enqueue(() => this.saveUnlocked(true)));
   }
 
   closeProject(): Promise<ProjectActionResult> {
-    return this.enqueue(() => this.closeUnlocked());
+    return this.afterGestures(() => this.enqueue(() => this.closeUnlocked()));
+  }
+
+  beginEditGesture(transactionId: string): void {
+    if (!transactionId.trim()) throw new Error("transactionId is required");
+    this.activeGestures.add(transactionId);
+  }
+
+  endEditGesture(transactionId: string): void {
+    if (!this.activeGestures.delete(transactionId) || this.activeGestures.size > 0) return;
+    for (const resolve of this.gestureWaiters) resolve();
+    this.gestureWaiters.clear();
+  }
+
+  /** Libera operações se o renderer terminar antes de enviar `gesture-end`. */
+  clearEditGestures(): void {
+    if (this.activeGestures.size === 0) return;
+    this.activeGestures.clear();
+    for (const resolve of this.gestureWaiters) resolve();
+    this.gestureWaiters.clear();
+  }
+
+  historyStatus(limit = 100): Promise<HistoryStatusPayload> {
+    return this.enqueue(() => this.options.editor.historyStatus(limit));
+  }
+
+  undo(): Promise<HistoryOperationResult> {
+    return this.historyOperation("undo");
+  }
+
+  redo(): Promise<HistoryOperationResult> {
+    return this.historyOperation("redo");
   }
 
   restoreAutosave(request: RestoreAutosaveRequest): Promise<ProjectActionResult> {
-    return this.enqueue(() => this.restoreAutosaveUnlocked(request));
+    return this.afterGestures(() =>
+      this.enqueue(() => this.restoreAutosaveUnlocked(request)));
   }
 
   discardAutosave(request: DiscardAutosaveRequest): Promise<ProjectActionResult> {
@@ -164,6 +205,7 @@ export class ProjectController {
   }
 
   autosave(): Promise<boolean> {
+    if (this.activeGestures.size > 0) return Promise.resolve(false);
     return this.enqueue(async () => {
       const descriptor = this.options.lifecycle.project;
       if (
@@ -182,6 +224,27 @@ export class ProjectController {
       this.options.lifecycle.autosaveCompleted(snapshot.status.commandSequence);
       return true;
     });
+  }
+
+  private historyOperation(action: "undo" | "redo"): Promise<HistoryOperationResult> {
+    return this.afterGestures(() => this.enqueue(async () => {
+      const result = await this.options.editor[action]();
+      for (const event of result.events) await this.observeCommittedCommandUnlocked(event);
+      const descriptor = this.options.lifecycle.project;
+      if (!this.options.lifecycle.isDirty && descriptor?.filePath) {
+        await this.options.files.discardAutosave(descriptor.filePath).catch(() => undefined);
+      }
+      return result;
+    }));
+  }
+
+  private async afterGestures<T>(operation: () => Promise<T>): Promise<T> {
+    // Um segundo pointer gesture pode começar no mesmo turno em que o
+    // primeiro resolve os waiters; revalidar evita atravessar esse intervalo.
+    while (this.activeGestures.size > 0) {
+      await new Promise<void>((resolve) => this.gestureWaiters.add(resolve));
+    }
+    return operation();
   }
 
   pruneMissingRecents(): Promise<void> {
@@ -368,7 +431,11 @@ export class ProjectController {
       const snapshot = await this.options.editor.captureProjectSnapshot(expectedSessionId);
       await this.options.files.writeProject(canonicalPath, snapshot.document);
       this.rememberDocument(snapshot.document, snapshot.status.commandSequence);
-      this.options.lifecycle.saved(canonicalPath, snapshot.status.commandSequence);
+      this.options.lifecycle.saved(
+        canonicalPath,
+        snapshot.status.commandSequence,
+        snapshot.status.documentStateId,
+      );
       if (candidateLease !== this.activeLease) await this.swapLease(candidateLease);
     } catch (error) {
       this.options.lifecycle.saveFailed();
@@ -491,6 +558,9 @@ export class ProjectController {
       lifecycle.opened(descriptorFromStatus(result.status, descriptor), {
         dirty,
         commandSequence: result.status.commandSequence,
+        ...(result.status.documentStateId
+          ? { documentStateId: result.status.documentStateId }
+          : {}),
       });
       this.rememberDocument(document, result.status.commandSequence);
       return this.completed();
@@ -509,6 +579,9 @@ export class ProjectController {
           lifecycle.opened(descriptorFromStatus(snapshot.status, descriptor), {
             dirty,
             commandSequence: snapshot.status.commandSequence,
+            ...(snapshot.status.documentStateId
+              ? { documentStateId: snapshot.status.documentStateId }
+              : {}),
           });
           this.rememberDocument(snapshot.document, snapshot.status.commandSequence);
           return this.completed();
@@ -545,15 +618,22 @@ export class ProjectController {
   private async observeCommittedCommandUnlocked(event: {
     readonly projectSessionId: string;
     readonly commandSequence: string;
+    readonly documentStateId?: string;
   }): Promise<boolean> {
     const descriptor = this.options.lifecycle.project;
     if (!descriptor || descriptor.projectSessionId !== event.projectSessionId) return false;
-    let autosaveDue = this.options.lifecycle.commandApplied(event.commandSequence);
+    let autosaveDue = this.options.lifecycle.commandApplied(
+      event.commandSequence,
+      event.documentStateId,
+    );
     try {
       const snapshot = await this.options.editor.captureProjectSnapshot(event.projectSessionId);
       if (this.options.lifecycle.project?.projectSessionId === event.projectSessionId) {
         this.rememberDocument(snapshot.document, snapshot.status.commandSequence);
-        autosaveDue = this.options.lifecycle.commandApplied(snapshot.status.commandSequence) || autosaveDue;
+        autosaveDue = this.options.lifecycle.commandApplied(
+          snapshot.status.commandSequence,
+          snapshot.status.documentStateId,
+        ) || autosaveDue;
       }
     } catch {
       // O comando já foi confirmado e o dirty watermark já avançou. Uma queda
@@ -580,7 +660,10 @@ export class ProjectController {
         name: documentName(remoteDocument, `Projeto ${remote.projectId}`),
         projectSessionId: remote.projectSessionId,
         projectId: remote.projectId,
-      }, { commandSequence: remote.commandSequence });
+      }, {
+        commandSequence: remote.commandSequence,
+        ...(remote.documentStateId ? { documentStateId: remote.documentStateId } : {}),
+      });
       this.rememberDocument(remoteDocument, remote.commandSequence);
       await this.releaseActiveLease();
       return "applied";
@@ -588,7 +671,7 @@ export class ProjectController {
 
     if (remote.active && remote.projectSessionId && remote.projectId) {
       if (remote.projectSessionId === local.projectSessionId) {
-        lifecycle.commandApplied(remote.commandSequence);
+        lifecycle.commandApplied(remote.commandSequence, remote.documentStateId);
         if (remoteDocument) this.rememberDocument(remoteDocument, remote.commandSequence);
         return "applied";
       }
@@ -601,7 +684,7 @@ export class ProjectController {
         lifecycle.rebindSession({
           projectSessionId: remote.projectSessionId,
           projectId: remote.projectId,
-        }, remote.commandSequence);
+        }, remote.commandSequence, remote.documentStateId);
         if (remoteDocument) this.rememberDocument(remoteDocument, remote.commandSequence);
         return "applied";
       }
@@ -611,7 +694,10 @@ export class ProjectController {
           name: documentName(remoteDocument, `Projeto ${remote.projectId}`),
           projectSessionId: remote.projectSessionId,
           projectId: remote.projectId,
-        }, { commandSequence: remote.commandSequence });
+        }, {
+          commandSequence: remote.commandSequence,
+          ...(remote.documentStateId ? { documentStateId: remote.documentStateId } : {}),
+        });
         this.rememberDocument(remoteDocument, remote.commandSequence);
         await this.releaseActiveLease();
         return "applied";
@@ -637,7 +723,7 @@ export class ProjectController {
       lifecycle.rebindSession({
         projectSessionId: restored.status.projectSessionId,
         projectId: restored.status.projectId,
-      }, restored.status.commandSequence);
+      }, restored.status.commandSequence, restored.status.documentStateId);
       this.lastKnownCommandSequence = restored.status.commandSequence;
       return "recovered";
     }
@@ -691,6 +777,10 @@ export function statusOf(lifecycle: ProjectLifecycle): ProjectStatusPayload {
     state: lifecycle.currentState,
     windowTitle: lifecycle.windowTitle,
     isDirty: lifecycle.isDirty,
+    commandSequence: lifecycle.commandSequence,
+    ...(lifecycle.currentDocumentStateId
+      ? { documentStateId: lifecycle.currentDocumentStateId }
+      : {}),
     ...(lifecycle.project ? { project: lifecycle.project } : {}),
     recents: lifecycle.recentProjects,
   };

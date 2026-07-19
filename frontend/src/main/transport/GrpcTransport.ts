@@ -16,6 +16,12 @@ import {
 } from "@p7m/middleware/dist/transport/auth.js";
 import { resolveProtoPath } from "@p7m/middleware/dist/grpc/GrpcGateway.js";
 import type { Logger } from "../../core/logging.js";
+import type {
+  DispatchOutcome,
+  HistoryEntryPayload,
+  HistoryOperationResult,
+  HistoryStatusPayload,
+} from "../../core/editorCommands.js";
 
 interface RawJournalStatus {
   middleware_instance_id: string;
@@ -34,7 +40,62 @@ interface RawEvent {
   project_session_id: string;
   project_id: string;
   command_sequence: string;
+  transaction_id: string;
+  document_state_id: string;
+  history_entry_id: string;
+  actor: "human" | "agent" | "pipeline" | "";
+  history_cursor: string;
+  history_action: "apply" | "undo" | "redo" | "";
   payload_json: string;
+}
+
+interface RawHistoryEntry {
+  id: string;
+  label: string;
+  forward_json: string[];
+  inverse_json: string[];
+  actor: "human" | "agent" | "pipeline";
+  transaction_id: string;
+  timestamp_unix_ms: string;
+  barrier: boolean;
+  applied: boolean;
+}
+
+interface RawHistoryStatus {
+  project_session_id: string;
+  project_id: string;
+  can_undo: boolean;
+  can_redo: boolean;
+  undo_label: string;
+  redo_label: string;
+  document_state_id: string;
+  history_cursor: string;
+  command_sequence: string;
+  entries: RawHistoryEntry[];
+}
+
+interface RawProjectStatus {
+  active: boolean;
+  project_session_id: string;
+  project_id: string;
+  command_sequence: string;
+  created_at_unix_ms: string;
+  runtime_state: string;
+  document_state_id: string;
+  history_cursor: string;
+  can_undo: boolean;
+  can_redo: boolean;
+}
+
+interface RawHistoryOperation {
+  status: RawProjectStatus;
+  history: RawHistoryStatus;
+  entry: RawHistoryEntry;
+  events_json: string[];
+  command_sequence: string;
+  transaction_id: string;
+  document_state_id: string;
+  history_cursor: string;
 }
 
 interface HotPathClient extends grpc.Client {
@@ -53,6 +114,8 @@ interface HotPathClient extends grpc.Client {
         command_sequence: string;
         first_available_seq: string;
         last_event_seq: string;
+        document_state_id: string;
+        history_cursor: string;
       },
     ) => void,
   ): void;
@@ -60,7 +123,15 @@ interface HotPathClient extends grpc.Client {
     req: { kind: string; payload_json: string; request_id: string },
     metadata: grpc.Metadata,
     options: grpc.CallOptions,
-    cb: (err: grpc.ServiceError | null, reply: { event_json: string; projection_json: string }) => void,
+    cb: (err: grpc.ServiceError | null, reply: {
+      event_json: string;
+      projection_json: string;
+      command_sequence: string;
+      transaction_id: string;
+      document_state_id: string;
+      history_cursor: string;
+      history_entry?: RawHistoryEntry;
+    }) => void,
   ): void;
   Query(
     req: { projection: string },
@@ -82,8 +153,28 @@ interface HotPathClient extends grpc.Client {
         command_sequence: string;
         first_available_seq: string;
         last_event_seq: string;
+        document_state_id: string;
+        history_cursor: string;
       },
     ) => void,
+  ): void;
+  Undo(
+    req: { request_id: string; expected_project_session_id: string; history_cursor: string },
+    metadata: grpc.Metadata,
+    options: grpc.CallOptions,
+    cb: (err: grpc.ServiceError | null, reply: RawHistoryOperation) => void,
+  ): void;
+  Redo(
+    req: { request_id: string; expected_project_session_id: string; history_cursor: string },
+    metadata: grpc.Metadata,
+    options: grpc.CallOptions,
+    cb: (err: grpc.ServiceError | null, reply: RawHistoryOperation) => void,
+  ): void;
+  HistoryStatus(
+    req: { limit: number },
+    metadata: grpc.Metadata,
+    options: grpc.CallOptions,
+    cb: (err: grpc.ServiceError | null, reply: RawHistoryStatus) => void,
   ): void;
   StreamEventsV2(
     req: { middleware_instance_id: string; project_session_id: string; after_seq: string },
@@ -103,6 +194,8 @@ export interface HotHealth extends HotCursor {
   readonly ok: boolean;
   readonly engineConnected: boolean;
   readonly firstAvailableSeq: string;
+  readonly documentStateId: string;
+  readonly historyCursor: string;
 }
 
 export interface HotJournalStatus extends HotCursor {
@@ -113,6 +206,8 @@ export interface HotJournalStatus extends HotCursor {
 
 export interface HotSnapshot extends HotCursor {
   readonly firstAvailableSeq: string;
+  readonly documentStateId: string;
+  readonly historyCursor: string;
   readonly projections: Readonly<Record<string, unknown>>;
 }
 
@@ -122,6 +217,12 @@ export interface HotEvent {
   readonly projectSessionId: string;
   readonly projectId: string;
   readonly commandSequence: string;
+  readonly transactionId?: string;
+  readonly documentStateId?: string;
+  readonly historyEntryId?: string;
+  readonly actor?: "human" | "agent" | "pipeline";
+  readonly historyCursor?: string;
+  readonly historyAction?: "apply" | "undo" | "redo";
   readonly payload: unknown;
 }
 
@@ -179,6 +280,8 @@ export class GrpcTransport {
           commandSequence: reply.command_sequence,
           firstAvailableSeq: reply.first_available_seq,
           lastEventSeq: reply.last_event_seq,
+          documentStateId: reply.document_state_id,
+          historyCursor: reply.history_cursor,
         });
       });
     });
@@ -188,7 +291,7 @@ export class GrpcTransport {
     kind: string,
     payload: unknown,
     requestId: string,
-  ): Promise<{ event: unknown; projection?: unknown }> {
+  ): Promise<DispatchOutcome> {
     this.log.trace("grpc dispatch", { kind });
     return new Promise((resolve, reject) => {
       this.client.Dispatch(
@@ -197,9 +300,74 @@ export class GrpcTransport {
         this.deadline(),
         (err, reply) => {
           if (err) return reject(err);
+          const projection = reply.projection_json
+            ? JSON.parse(reply.projection_json) as NonNullable<DispatchOutcome["projection"]>
+            : undefined;
           resolve({
-            event: JSON.parse(reply.event_json),
-            ...(reply.projection_json ? { projection: JSON.parse(reply.projection_json) } : {}),
+            event: JSON.parse(reply.event_json) as DispatchOutcome["event"],
+            ...(projection ? { projection } : {}),
+            documentStateId: reply.document_state_id,
+            historyCursor: reply.history_cursor,
+            ...(reply.history_entry?.id
+              ? { historyEntry: historyEntry(reply.history_entry, false) }
+              : {}),
+          });
+        },
+      );
+    });
+  }
+
+  undo(
+    requestId: string,
+    expectedProjectSessionId: string,
+    historyCursor: string,
+  ): Promise<HistoryOperationResult> {
+    return this.historyMutation("Undo", requestId, expectedProjectSessionId, historyCursor);
+  }
+
+  redo(
+    requestId: string,
+    expectedProjectSessionId: string,
+    historyCursor: string,
+  ): Promise<HistoryOperationResult> {
+    return this.historyMutation("Redo", requestId, expectedProjectSessionId, historyCursor);
+  }
+
+  historyStatus(limit = 100): Promise<HistoryStatusPayload> {
+    return new Promise((resolve, reject) => {
+      this.client.HistoryStatus({ limit }, this.metadata(), this.deadline(), (err, reply) => {
+        if (err) return reject(err);
+        resolve(historyStatus(reply));
+      });
+    });
+  }
+
+  private historyMutation(
+    method: "Undo" | "Redo",
+    requestId: string,
+    expectedProjectSessionId: string,
+    cursor: string,
+  ): Promise<HistoryOperationResult> {
+    return new Promise((resolve, reject) => {
+      this.client[method](
+        {
+          request_id: requestId,
+          expected_project_session_id: expectedProjectSessionId,
+          history_cursor: cursor,
+        },
+        this.metadata(),
+        this.deadline(),
+        (err, reply) => {
+          if (err) return reject(err);
+          resolve({
+            status: projectStatus(reply.status),
+            history: historyStatus(reply.history),
+            entry: historyEntry(reply.entry, false),
+            events: reply.events_json.map((event) => JSON.parse(event) as HistoryOperationResult["events"][number]),
+            commandSequence: reply.command_sequence,
+            transactionId: reply.transaction_id,
+            documentStateId: reply.document_state_id,
+            historyCursor: reply.history_cursor,
           });
         },
       );
@@ -228,6 +396,8 @@ export class GrpcTransport {
           commandSequence: reply.command_sequence,
           firstAvailableSeq: reply.first_available_seq,
           lastEventSeq: reply.last_event_seq,
+          documentStateId: reply.document_state_id,
+          historyCursor: reply.history_cursor,
         });
       });
     });
@@ -276,6 +446,12 @@ export class GrpcTransport {
         projectSessionId: frame.event.project_session_id,
         projectId: frame.event.project_id,
         commandSequence: frame.event.command_sequence,
+        ...(frame.event.transaction_id ? { transactionId: frame.event.transaction_id } : {}),
+        ...(frame.event.document_state_id ? { documentStateId: frame.event.document_state_id } : {}),
+        ...(frame.event.history_entry_id ? { historyEntryId: frame.event.history_entry_id } : {}),
+        ...(frame.event.actor ? { actor: frame.event.actor } : {}),
+        ...(frame.event.history_cursor ? { historyCursor: frame.event.history_cursor } : {}),
+        ...(frame.event.history_action ? { historyAction: frame.event.history_action } : {}),
         payload: JSON.parse(frame.event.payload_json),
       });
     });
@@ -292,4 +468,50 @@ export class GrpcTransport {
   close(): void {
     this.client.close();
   }
+}
+
+function historyEntry(raw: RawHistoryEntry, summary: boolean): HistoryEntryPayload {
+  return {
+    id: raw.id,
+    label: raw.label,
+    actor: raw.actor,
+    transactionId: raw.transaction_id,
+    timestamp: raw.timestamp_unix_ms,
+    barrier: raw.barrier,
+    ...(summary ? { applied: raw.applied } : {}),
+    ...(!summary
+      ? {
+          forward: raw.forward_json.map((value) => JSON.parse(value) as unknown),
+          inverse: raw.inverse_json.map((value) => JSON.parse(value) as unknown),
+        }
+      : {}),
+  };
+}
+
+function historyStatus(raw: RawHistoryStatus): HistoryStatusPayload {
+  return {
+    projectSessionId: raw.project_session_id,
+    projectId: raw.project_id,
+    commandSequence: raw.command_sequence,
+    documentStateId: raw.document_state_id,
+    historyCursor: raw.history_cursor,
+    canUndo: raw.can_undo,
+    canRedo: raw.can_redo,
+    ...(raw.undo_label ? { undoLabel: raw.undo_label } : {}),
+    ...(raw.redo_label ? { redoLabel: raw.redo_label } : {}),
+    entries: raw.entries.map((entry) => historyEntry(entry, true)),
+  };
+}
+
+function projectStatus(raw: RawProjectStatus): HistoryOperationResult["status"] {
+  return {
+    active: raw.active,
+    ...(raw.project_session_id ? { projectSessionId: raw.project_session_id } : {}),
+    ...(raw.project_id ? { projectId: raw.project_id } : {}),
+    commandSequence: raw.command_sequence,
+    documentStateId: raw.document_state_id,
+    historyCursor: raw.history_cursor,
+    canUndo: raw.can_undo,
+    canRedo: raw.can_redo,
+  };
 }

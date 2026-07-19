@@ -5,6 +5,8 @@ import type {
 import type {
   CapturedProjectSnapshot,
   DispatchOutcome,
+  HistoryOperationResult,
+  HistoryStatusPayload,
   ProjectOperationResult,
   ProjectRevisionExpectation,
   ProjectStatus,
@@ -163,6 +165,7 @@ export class FakeEditorProjectPort implements EditorProjectPort {
   afterNextCapture: ((snapshot: CapturedProjectSnapshot) => void) | undefined;
   private session = 0;
   private commandSequence = 0;
+  private documentStateId = "state-0";
 
   constructor(
     private readonly templateFactory: (options: ProjectTemplateCreationOptions) => unknown,
@@ -180,9 +183,24 @@ export class FakeEditorProjectPort implements EditorProjectPort {
   commitExternalCommand(kind: string, payload: Record<string, unknown>): DispatchOutcome {
     if (!this.activeProjectSessionId) throw new Error("no active project");
     this.commandSequence++;
+    this.documentStateId = `state-${this.commandSequence}`;
     if (kind === "camera/configure") {
       const document = this.currentDocument as { camera?: Record<string, unknown> };
       document.camera = { ...document.camera, ...(payload["settings"] as object | undefined) };
+    }
+    if (kind === "level/patch") {
+      const levelId = payload["levelId"];
+      const changes = payload["changes"];
+      const document = this.currentDocument as {
+        levels?: Array<{ levelId: string; intGrid: number[] }>;
+      };
+      const level = document.levels?.find((candidate) => candidate.levelId === levelId);
+      if (!level || !Array.isArray(changes)) throw new Error("invalid level patch");
+      for (const raw of changes) {
+        const change = raw as { index: number; before: number; after: number };
+        if (level.intGrid[change.index] !== change.before) throw new Error("level patch conflict");
+        level.intGrid[change.index] = change.after;
+      }
     }
     return {
       event: {
@@ -190,13 +208,21 @@ export class FakeEditorProjectPort implements EditorProjectPort {
         projectSessionId: this.activeProjectSessionId,
         projectId: (this.currentDocument as { projectId?: string })?.projectId ?? "project",
         commandSequence: String(this.commandSequence),
+        ...(typeof payload["transactionId"] === "string"
+          ? { transactionId: payload["transactionId"] }
+          : {}),
+        documentStateId: this.documentStateId,
+        historyCursor: `cursor-${this.commandSequence}`,
       },
+      documentStateId: this.documentStateId,
+      historyCursor: `cursor-${this.commandSequence}`,
     };
   }
 
   restartMiddleware(): void {
     this.activeProjectSessionId = undefined;
     this.commandSequence = 0;
+    this.documentStateId = "state-0";
   }
 
   async materializeProjectTemplate(
@@ -216,6 +242,7 @@ export class FakeEditorProjectPort implements EditorProjectPort {
     this.currentDocument = structuredClone(document);
     this.activeProjectSessionId = `session-${++this.session}`;
     this.commandSequence = 0;
+    this.documentStateId = "state-0";
     if (this.failOpenAfterCommit) {
       this.failOpenAfterCommit = false;
       throw new Error("response lost after remote commit");
@@ -253,6 +280,45 @@ export class FakeEditorProjectPort implements EditorProjectPort {
     return this.status(false);
   }
 
+  async historyStatus(): Promise<HistoryStatusPayload> {
+    return {
+      projectSessionId: this.activeProjectSessionId,
+      projectId: (this.currentDocument as { projectId?: string })?.projectId,
+      commandSequence: String(this.commandSequence),
+      documentStateId: this.documentStateId,
+      historyCursor: `cursor-${this.commandSequence}`,
+      canUndo: this.commandSequence > 0,
+      canRedo: false,
+      entries: [],
+    };
+  }
+
+  async undo(): Promise<HistoryOperationResult> {
+    if (this.commandSequence < 1) throw new Error("nothing to undo");
+    this.commandSequence++;
+    this.documentStateId = "state-0";
+    const event = {
+      kind: "cameraConfigured",
+      projectSessionId: this.activeProjectSessionId!,
+      projectId: (this.currentDocument as { projectId?: string })?.projectId ?? "project",
+      commandSequence: String(this.commandSequence),
+      documentStateId: this.documentStateId,
+      historyCursor: "cursor-0",
+      historyAction: "undo" as const,
+    };
+    return {
+      status: this.status(true),
+      history: await this.historyStatus(),
+      events: [event],
+      documentStateId: this.documentStateId,
+      historyCursor: "cursor-0",
+    };
+  }
+
+  async redo(): Promise<HistoryOperationResult> {
+    throw new Error("nothing to redo");
+  }
+
   private assertExpectation(expectation?: ProjectRevisionExpectation): void {
     if (!expectation) return;
     if (expectation.projectSessionId !== undefined) {
@@ -282,6 +348,10 @@ export class FakeEditorProjectPort implements EditorProjectPort {
         createdAt: "1",
       } : {}),
       commandSequence: String(this.commandSequence),
+      documentStateId: this.documentStateId,
+      historyCursor: `cursor-${this.commandSequence}`,
+      canUndo: this.commandSequence > 0,
+      canRedo: false,
       runtimeState: "synchronized",
     };
   }

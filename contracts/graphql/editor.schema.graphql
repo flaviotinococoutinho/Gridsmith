@@ -26,11 +26,88 @@ enum CommandKind {
   entity_place
   entity_move
   entity_remove
+  entity_properties
+  entitydef_update
+  entitydef_remove
   level_define
   level_update
+  level_patch
+  level_palette
   level_remove
+  light_update
   world_place
   world_unplace
+}
+
+"Proveniência confiável atribuída pela borda; nunca aceita do payload do cliente."
+enum HistoryActor {
+  human
+  agent
+  pipeline
+}
+
+"Motivo pelo qual os comandos de uma entrada estão sendo publicados."
+enum HistoryAction {
+  apply
+  undo
+  redo
+}
+
+"Uma transação reversível do histórico global da sessão."
+type HistoryEntry {
+  id: String!
+  label: String!
+  forward: [JSON!]!
+  inverse: [JSON!]!
+  actor: HistoryActor!
+  transactionId: String!
+  "Decimal unix-ms para não perder precisão."
+  timestamp: String!
+  barrier: Boolean!
+}
+
+"Resumo seguro para menus/listas; os comandos completos ficam no ACK da operação."
+type HistoryEntrySummary {
+  id: String!
+  label: String!
+  actor: HistoryActor!
+  transactionId: String!
+  timestamp: String!
+  barrier: Boolean!
+  applied: Boolean!
+}
+
+"Cursor do histórico e identidade do documento materializado nesse cursor."
+type HistoryStatus {
+  projectSessionId: String!
+  projectId: String!
+  canUndo: Boolean!
+  canRedo: Boolean!
+  undoLabel: String
+  redoLabel: String
+  "Hash/id estável do estado, independente do relógio monotônico de comandos."
+  documentStateId: String!
+  "Cursor opaco de compare-and-swap para undo/redo concorrente."
+  historyCursor: String!
+  commandSequence: String!
+  entries: [HistoryEntrySummary!]!
+}
+
+type HistoryList {
+  status: HistoryStatus!
+  entries: [HistoryEntrySummary!]!
+}
+
+"ACK de undo/redo; todos os eventos já foram confirmados antes deste retorno."
+type HistoryOperationResult {
+  status: ProjectStatus!
+  history: HistoryStatus!
+  entry: HistoryEntry!
+  events: [JSON!]!
+  commandSequence: String!
+  transactionId: String!
+  documentStateId: String!
+  historyCursor: String!
 }
 
 "Status de projeção no runtime (ProjectionResult do RuntimeAdapter)."
@@ -52,6 +129,12 @@ type DispatchResult {
   event: JSON!
   "Resultado da projeção no runtime; null quando não há adapter."
   projection: Projection
+  "Relógio monotônico confirmado no mesmo ACK."
+  commandSequence: String!
+  transactionId: String!
+  documentStateId: String!
+  historyCursor: String!
+  historyEntry: HistoryEntry
 }
 
 type BlueprintEventEnvelope {
@@ -60,6 +143,12 @@ type BlueprintEventEnvelope {
   projectSessionId: String!
   projectId: String!
   commandSequence: String!
+  transactionId: String
+  documentStateId: String
+  historyEntryId: String
+  actor: HistoryActor
+  historyCursor: String
+  historyAction: HistoryAction
   kind: String!
   payload: JSON!
 }
@@ -70,6 +159,12 @@ type CursorEventEnvelope {
   projectSessionId: String!
   projectId: String!
   commandSequence: String!
+  transactionId: String
+  documentStateId: String
+  historyEntryId: String
+  actor: HistoryActor
+  historyCursor: String
+  historyAction: HistoryAction
   kind: String!
   payload: JSON!
 }
@@ -97,6 +192,9 @@ type EditorSnapshot {
   projectSessionId: String!
   projectId: String!
   commandSequence: String!
+  documentStateId: String!
+  historyCursor: String!
+  history: HistoryStatus!
   firstAvailableSeq: String!
   lastEventSeq: String!
 }
@@ -164,6 +262,10 @@ type ProjectStatus {
   projectSessionId: String
   projectId: String
   commandSequence: String!
+  documentStateId: String!
+  historyCursor: String!
+  canUndo: Boolean!
+  canRedo: Boolean!
   createdAt: String
   "synchronized|deferred|failed"
   runtimeState: String!
@@ -185,6 +287,8 @@ type Health {
   projectSessionId: String!
   projectId: String!
   commandSequence: String!
+  documentStateId: String!
+  historyCursor: String!
   "Primeiro seq ainda disponível para catch-up (decimal uint64)."
   firstAvailableSeq: String!
   "Último seq publicado no EventJournal (decimal uint64)."
@@ -204,6 +308,10 @@ type Query {
   projectTemplateDocument(templateId: String!, options: ProjectTemplateOptionsInput!): JSON!
   "Sessão de projeto observada por todos os transports."
   projectStatus: ProjectStatus!
+  "Estado pequeno usado por menus/atalhos globais, independente do painel ativo."
+  historyStatus(limit: Int = 0): HistoryStatus!
+  "Histórico legível da sessão ativa, mais recente primeiro."
+  history(limit: Int = 100): HistoryList!
   "Janela segura; projectSessionId opcional só para compatibilidade, omiti-lo exige resync."
   eventBatch(middlewareInstanceId: String!, projectSessionId: String, afterSeq: String!): EventBatch!
   "Compatibilidade nominal; falha explicitamente porque não identifica processo nem sessão."
@@ -214,6 +322,10 @@ type Query {
 type Mutation {
   "Despacha um comando canônico pelo orquestrador (filters → AST → actions → projeção)."
   dispatch(kind: CommandKind!, payload: JSON!, requestId: String): DispatchResult!
+  "Desfaz a entrada reversível mais recente; actor é atribuído pela borda."
+  undo(requestId: String, expectedProjectSessionId: String, historyCursor: String): HistoryOperationResult!
+  "Refaz a próxima entrada; actor é atribuído pela borda."
+  redo(requestId: String, expectedProjectSessionId: String, historyCursor: String): HistoryOperationResult!
   "Cria e ativa atomicamente; identidade + sequência formam o compare-and-swap."
   projectCreate(projectId: String, templateId: String, expectedProjectSessionId: String, expectedCommandSequence: String): ProjectOperationResult!
   "Prepara fora da sessão ativa e substitui somente a identidade/revisão observada."

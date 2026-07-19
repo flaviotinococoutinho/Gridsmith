@@ -17,6 +17,7 @@ import type {
   EntityDefinition,
   EntityInstance,
   LevelSpec,
+  LevelPaletteEntry,
   LightSpec,
   MeshBinding,
   SkeletonBlueprint,
@@ -31,7 +32,7 @@ import {
   cellToWorldCenter,
 } from "../leveldesign/GridCoordinates.js";
 
-export const BLUEPRINT_DOCUMENT_VERSION = 3;
+export const BLUEPRINT_DOCUMENT_VERSION = 4;
 
 export interface ProjectMetadata {
   readonly name: string;
@@ -158,6 +159,18 @@ const MIGRATIONS = new Map<number, BlueprintMigration>([
         schemaVersion: 3,
       };
     },
+  ],
+  // 3 → 4: a paleta deixa de ser constante local do renderer e passa a
+  // pertencer a cada nível. Valores já pintados recebem entradas determinísticas.
+  [
+    3,
+    (document) => ({
+      ...document,
+      levels: Array.isArray(document["levels"])
+        ? document["levels"].map((level) => migrateLevelPalette(level))
+        : document["levels"],
+      schemaVersion: 4,
+    }),
   ],
 ]);
 
@@ -318,6 +331,32 @@ function normalizeLegacyMetadata(
   });
 }
 
+function migrateLevelPalette(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  if (Array.isArray(value["palette"])) return value;
+  // O renderer v3 oferecia estes três significados para TODO nível, mesmo
+  // quando ainda não apareciam no IntGrid. Preservá-los evita que migrar um
+  // documento parcialmente pintado remova ferramentas que o usuário tinha.
+  // Valores customizados já usados também ganham uma entrada determinística.
+  const used = new Set<number>([1, 2, 3]);
+  if (Array.isArray(value["intGrid"])) {
+    for (const cell of value["intGrid"]) {
+      if (typeof cell === "number" && Number.isInteger(cell) && cell > 0 && cell <= 32767) used.add(cell);
+    }
+  }
+  const palette = [...used].sort((a, b) => a - b).map(defaultPaletteEntry);
+  return { ...value, palette };
+}
+
+function defaultPaletteEntry(value: number): LevelPaletteEntry {
+  if (value === 1) return { value, name: "Chão", color: "#7a5230" };
+  if (value === 2) return { value, name: "Parede", color: "#5a6a7a" };
+  if (value === 3) return { value, name: "Perigo", color: "#b8433a" };
+  // Cor determinística e suficientemente distinta para documentos legados.
+  const rgb = (Math.imul(value, 2654435761) >>> 8) & 0xffffff;
+  return { value, name: `Valor ${value}`, color: `#${rgb.toString(16).padStart(6, "0")}` };
+}
+
 /**
  * O único documento v2 publicado pelo repositório com coordenadas em célula
  * foi o factory inicial de Plataforma 2D. O fluxo histórico substituía seu
@@ -326,7 +365,21 @@ function normalizeLegacyMetadata(
  * fora da impressão digital e permanecem numericamente intactos.
  */
 function isKnownLegacyPlatformerTemplate(document: Record<string, unknown>): boolean {
-  return LEGACY_PLATFORMER_V2_FINGERPRINTS.has(stableJson(document));
+  // Fixtures/factories correntes podem carregar `palette` ao simular v2; o
+  // campo não existia no wire v2 e não participa da impressão histórica.
+  return LEGACY_PLATFORMER_V2_FINGERPRINTS.has(stableJson(withoutLevelPalettes(document)));
+}
+
+function withoutLevelPalettes(document: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(document["levels"])) return document;
+  return {
+    ...document,
+    levels: document["levels"].map((level) => {
+      if (!isRecord(level)) return level;
+      const { palette: _palette, ...legacy } = level;
+      return legacy;
+    }),
+  };
 }
 
 function migrateKnownLegacyTemplateCoordinates(

@@ -11,6 +11,9 @@
  *  - NÃO há referências transitórias a branches/sessões de geração;
  *  - todo comando `npm run <x>` documentado existe em algum package.json;
  *  - o workflow de CI executa os gates de transports e de documentação;
+ *  - schemas JSON têm sintaxe/refs locais coerentes e `required` declarado;
+ *  - `COMMAND_KINDS`, enum GraphQL e schema de comandos têm cobertura idêntica;
+ *  - o proto mantém o dispatch genérico e as RPCs explícitas de histórico;
  *  - NÃO há contagens de teste fixadas manualmente (devem vir do CI).
  *
  * Uso: `npm run docs:verify` (ou `node scripts/verify-docs.mjs`) na raiz.
@@ -48,10 +51,14 @@ const REQUIRED = [
   "docs/adr/ADR-019-freeze-medido-dos-transports.md",
   "docs/adr/ADR-020-sessao-de-projeto-transacional.md",
   "docs/adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md",
+  "docs/adr/ADR-022-historico-global-transacional.md",
   "contracts/README.md",
   "contracts/shared-memory-layout.md",
   "contracts/schemas/error-codes.md",
   "contracts/schemas/engine.reset_session.schema.json",
+  "contracts/schemas/blueprint.commands.schema.json",
+  "contracts/schemas/blueprint.document.schema.json",
+  "contracts/schemas/command-history.schema.json",
   "contracts/graphql/editor.schema.graphql",
   "contracts/grpc/p7m_editor.proto",
   ".github/workflows/ci.yml",
@@ -92,6 +99,128 @@ const scripts = packageScripts();
 for (const rel of REQUIRED) {
   if (!fs.existsSync(path.join(root, rel))) {
     errors.push(`arquivo obrigatório ausente: ${rel}`);
+  }
+}
+
+function jsonPointer(document, pointer) {
+  if (!pointer.startsWith("#/")) return undefined;
+  return pointer
+    .slice(2)
+    .split("/")
+    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))
+    .reduce((value, key) => value?.[key], document);
+}
+
+function inspectSchemaNode(node, document, rel, location = "#") {
+  if (!node || typeof node !== "object") return;
+  if (typeof node.$ref === "string" && node.$ref.startsWith("#/") && jsonPointer(document, node.$ref) === undefined) {
+    errors.push(`${rel}: $ref local inexistente em ${location} -> ${node.$ref}`);
+  }
+  if (Array.isArray(node.required)) {
+    const properties = node.properties && typeof node.properties === "object"
+      ? node.properties
+      : {};
+    for (const key of node.required) {
+      if (!Object.hasOwn(properties, key)) {
+        errors.push(`${rel}: required "${key}" não declarado em properties (${location})`);
+      }
+    }
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "$ref") continue;
+    if (Array.isArray(value)) {
+      value.forEach((child, index) => inspectSchemaNode(child, document, rel, `${location}/${key}/${index}`));
+    } else {
+      inspectSchemaNode(value, document, rel, `${location}/${key}`);
+    }
+  }
+}
+
+const schemaDocuments = new Map();
+const schemaDir = path.join(root, "contracts", "schemas");
+if (fs.existsSync(schemaDir)) {
+  for (const name of fs.readdirSync(schemaDir).filter((candidate) => candidate.endsWith(".json"))) {
+    const rel = `contracts/schemas/${name}`;
+    try {
+      const document = JSON.parse(fs.readFileSync(path.join(schemaDir, name), "utf8"));
+      schemaDocuments.set(rel, document);
+      inspectSchemaNode(document, document, rel);
+    } catch (error) {
+      errors.push(`${rel}: JSON inválido -> ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+function setDifference(left, right) {
+  return [...left].filter((value) => !right.has(value)).sort();
+}
+
+const commandShapePath = path.join(root, "middleware", "src", "canonical", "commandShape.ts");
+const graphqlContractPath = path.join(root, "contracts", "graphql", "editor.schema.graphql");
+const protoContractPath = path.join(root, "contracts", "grpc", "p7m_editor.proto");
+const commandSchema = schemaDocuments.get("contracts/schemas/blueprint.commands.schema.json");
+if (
+  fs.existsSync(commandShapePath) &&
+  fs.existsSync(graphqlContractPath) &&
+  commandSchema
+) {
+  const commandSource = fs.readFileSync(commandShapePath, "utf8");
+  const registryBody = commandSource.match(/export const COMMAND_KINDS\s*=\s*\[([\s\S]*?)\]\s*as const/)?.[1];
+  const graphqlSource = fs.readFileSync(graphqlContractPath, "utf8");
+  const graphqlBody = graphqlSource.match(/enum\s+CommandKind\s*\{([\s\S]*?)\}/)?.[1];
+  if (!registryBody) errors.push("commandShape.ts: não foi possível ler COMMAND_KINDS");
+  if (!graphqlBody) errors.push("editor.schema.graphql: enum CommandKind ausente/inilegível");
+  if (registryBody && graphqlBody) {
+    const registry = new Set([...registryBody.matchAll(/"([a-z]+\/[a-z]+)"/g)].map((match) => match[1]));
+    const graphql = new Set(
+      graphqlBody
+        .split(/\s+/)
+        .filter((value) => /^[a-z]+_[a-z]+$/.test(value))
+        .map((value) => value.replace("_", "/")),
+    );
+    const schemaKinds = new Set(
+      (Array.isArray(commandSchema.oneOf) ? commandSchema.oneOf : [])
+        .map((branch) => jsonPointer(commandSchema, branch?.$ref))
+        .map((definition) => definition?.properties?.kind?.const)
+        .filter((value) => typeof value === "string"),
+    );
+    for (const [label, candidate] of [["GraphQL", graphql], ["blueprint.commands.schema.json", schemaKinds]]) {
+      const missing = setDifference(registry, candidate);
+      const extra = setDifference(candidate, registry);
+      if (missing.length || extra.length || candidate.size !== registry.size) {
+        errors.push(
+          `COMMAND_KINDS ↔ ${label}: paridade quebrada ` +
+          `(ausentes: ${missing.join(", ") || "—"}; extras: ${extra.join(", ") || "—"})`,
+        );
+      }
+    }
+  }
+}
+
+if (fs.existsSync(protoContractPath)) {
+  const proto = fs.readFileSync(protoContractPath, "utf8");
+  for (const rpc of ["Dispatch", "HistoryStatus", "Undo", "Redo"]) {
+    if (!new RegExp(`\\brpc\\s+${rpc}\\s*\\(`).test(proto)) {
+      errors.push(`p7m_editor.proto: RPC obrigatória ausente -> ${rpc}`);
+    }
+  }
+  const dispatchRequest = proto.match(/message\s+DispatchRequest\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+  if (!/\bstring\s+kind\s*=\s*1\s*;/.test(dispatchRequest)) {
+    errors.push("p7m_editor.proto: DispatchRequest.kind deve permanecer string no campo 1");
+  }
+}
+
+const explicitTestCases = [
+  ["middleware/test/editor-gateway.test.ts", "histórico global: gateway legado"],
+  ["middleware/test/transport-gateways.test.ts", "histórico global: GraphQL e gRPC"],
+  ["middleware/test/transport-gateways.test.ts", "histórico global: MCP"],
+  ["frontend/test/project-controller.test.ts", "edição canônica: pintar marca dirty"],
+  ["frontend/test/project-controller.test.ts", "edição canônica: Save e autosave não capturam no meio do gesto"],
+];
+for (const [rel, marker] of explicitTestCases) {
+  const file = path.join(root, rel);
+  if (!fs.existsSync(file) || !fs.readFileSync(file, "utf8").includes(marker)) {
+    errors.push(`${rel}: caso explícito ausente -> ${marker}`);
   }
 }
 
@@ -143,12 +272,24 @@ if (fs.existsSync(ciPath)) {
       pattern: /^\s*run:\s+npm run test:project-session-transports\s*$/m,
     },
     {
+      label: "middleware npm run test:command-history",
+      pattern: /^\s*run:\s+npm run test:command-history\s*$/m,
+    },
+    {
+      label: "middleware npm run test:history-transports",
+      pattern: /^\s*run:\s+npm run test:history-transports\s*$/m,
+    },
+    {
       label: "frontend npm run test:project-lifecycle-product",
       pattern: /^\s*run:\s+cd frontend && npm run test:project-lifecycle-product\s*$/m,
     },
     {
       label: "frontend npm run test:project-session",
       pattern: /^\s*run:\s+cd frontend && npm run test:project-session\s*$/m,
+    },
+    {
+      label: "frontend npm run test:canonical-editing",
+      pattern: /^\s*run:\s+cd frontend && npm run test:canonical-editing\s*$/m,
     },
     {
       label: "EngineSessionResetTests",

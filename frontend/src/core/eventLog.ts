@@ -22,6 +22,9 @@ export interface LogEntry {
   readonly projectionStatus?: "projected" | "skipped" | "deferred";
   readonly projectionLabel?: string;
   readonly projectionReason?: string;
+  readonly actor?: "human" | "agent" | "pipeline";
+  readonly historyAction?: "apply" | "undo" | "redo";
+  readonly transactionId?: string;
 }
 
 export interface LogFilter {
@@ -62,6 +65,9 @@ export class EventLog {
     projection?: { status: "projected" | "skipped" | "deferred"; reason?: string },
   ): LogEntry {
     const subject = subjectOf(event);
+    const actor = event["actor"];
+    const historyAction = event["historyAction"];
+    const transactionId = event["transactionId"];
     const entry: LogEntry = {
       sequence: ++this.sequence,
       timestampMs: this.now(),
@@ -69,6 +75,11 @@ export class EventLog {
       label: eventLabel(event.kind),
       ...(subject !== undefined ? { subject } : {}),
       summary: subject !== undefined ? `${eventLabel(event.kind)}: ${subject}` : eventLabel(event.kind),
+      ...(actor === "human" || actor === "agent" || actor === "pipeline" ? { actor } : {}),
+      ...(historyAction === "apply" || historyAction === "undo" || historyAction === "redo"
+        ? { historyAction }
+        : {}),
+      ...(typeof transactionId === "string" ? { transactionId } : {}),
       ...(projection !== undefined
         ? {
             projectionStatus: projection.status,

@@ -252,7 +252,7 @@ public sealed class EngineService : IDisposable
             CameraConfig config;
             lock (_gate)
             {
-                config = MergeConfig(Camera.Config, p);
+                config = MergeConfig(p.Replace ? CameraConfig.Default : Camera.Config, p);
                 Camera.Reconfigure(config);
             }
 
@@ -938,7 +938,8 @@ public sealed class EngineService : IDisposable
         float? ShakeMaxOffset,
         float? ShakeMaxRotationRadians,
         float? ShakeTraumaDecayPerSecond,
-        uint? ShakeSeed);
+        uint? ShakeSeed,
+        bool Replace = false);
 
     public sealed record CameraShakeParams(float Trauma);
 

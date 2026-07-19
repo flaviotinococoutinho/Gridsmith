@@ -54,6 +54,12 @@ interface SessionEventEnvelope {
   readonly projectSessionId: string;
   readonly projectId: string;
   readonly commandSequence: string;
+  readonly transactionId?: string;
+  readonly documentStateId?: string;
+  readonly historyEntryId?: string;
+  readonly actor?: "human" | "agent" | "pipeline";
+  readonly historyAction?: "apply" | "undo" | "redo";
+  readonly historyCursor?: string;
   readonly kind: string;
   readonly payload: BlueprintEvent | ProjectSessionChangedEvent;
 }
@@ -439,6 +445,126 @@ test("sessão de projeto: dois clientes observam a troca atômica pela mesma par
     assert.equal(event.projectId, "project-b");
     assert.equal(event.projectSessionId, activation.status.projectSessionId);
     assert.equal((event.payload as ProjectSessionChangedEvent).action, "activated");
+
+    editorA.close();
+    editorB.close();
+  } finally {
+    await h.close();
+  }
+});
+
+test("histórico global: gateway legado aplica patch e sincroniza undo/redo entre dois clientes", async () => {
+  const h = await makeHarness();
+  try {
+    const editorA = await h.connectEditor("history-editor-a");
+    const editorB = await h.connectEditor("history-editor-b");
+    let resolveUndo!: (event: SessionEventEnvelope) => void;
+    let resolveRedo!: (event: SessionEventEnvelope) => void;
+    const undoObserved = new Promise<SessionEventEnvelope>((resolve) => { resolveUndo = resolve; });
+    const redoObserved = new Promise<SessionEventEnvelope>((resolve) => { resolveRedo = resolve; });
+    editorB.registerMethod("blueprint/event", (params) => {
+      const event = params as SessionEventEnvelope;
+      if (event.historyAction === "undo") resolveUndo(event);
+      if (event.historyAction === "redo") resolveRedo(event);
+    });
+
+    await editorA.request("blueprint/dispatch", {
+      kind: "level/define",
+      payload: {
+        levelId: "level-1",
+        width: 2,
+        height: 1,
+        tileSize: 16,
+        seed: 1,
+        intGrid: [0, 0],
+        rules: [],
+        palette: [],
+      },
+      requestId: "legacy-level-define",
+    });
+    const patch = await editorA.request("blueprint/dispatch", {
+      kind: "level/patch",
+      payload: {
+        levelId: "level-1",
+        changes: [
+          { index: 0, before: 0, after: 1 },
+          { index: 1, before: 0, after: 1 },
+        ],
+        transactionId: "legacy-brush-gesture",
+        metadata: { actor: "agent", label: "Pintar corredor" },
+      },
+      requestId: "legacy-level-patch",
+    }) as {
+      commandSequence: string;
+      documentStateId: string;
+      historyCursor: string;
+      historyEntry: { id: string; actor: string; transactionId: string; label: string };
+    };
+    assert.equal(patch.commandSequence, "2");
+    assert.ok(patch.documentStateId);
+    assert.ok(patch.historyCursor);
+    assert.deepEqual(
+      {
+        actor: patch.historyEntry.actor,
+        transactionId: patch.historyEntry.transactionId,
+        label: patch.historyEntry.label,
+      },
+      {
+        actor: "human",
+        transactionId: "legacy-brush-gesture",
+        label: "Pintar corredor",
+      },
+    );
+
+    const status = await editorB.request("history/status", { limit: 10 }) as {
+      projectSessionId: string;
+      historyCursor: string;
+      canUndo: boolean;
+      canRedo: boolean;
+      undoLabel: string;
+      entries: Array<{ label: string; actor: string; applied: boolean }>;
+    };
+    assert.equal(status.canUndo, true);
+    assert.equal(status.canRedo, false);
+    assert.equal(status.undoLabel, "Pintar corredor");
+    assert.equal(status.entries[0]?.actor, "human");
+
+    const undo = await editorA.request("history/undo", {
+      requestId: "legacy-undo",
+      expectedProjectSessionId: status.projectSessionId,
+      historyCursor: status.historyCursor,
+    }) as {
+      history: { historyCursor: string; canRedo: boolean; redoLabel: string };
+      events: SessionEventEnvelope[];
+      entry: { actor: string; label: string };
+    };
+    assert.equal(undo.entry.actor, "human");
+    assert.equal(undo.history.canRedo, true);
+    assert.equal(undo.history.redoLabel, "Pintar corredor");
+    assert.deepEqual(h.store.listLevels()[0]?.intGrid, [0, 0]);
+    const undoEvent = await undoObserved;
+    assert.equal(undoEvent.historyAction, "undo");
+    assert.equal(undoEvent.actor, "human");
+    assert.equal(undoEvent.documentStateId, undo.history.historyCursor);
+
+    const retry = await editorB.request("history/undo", {
+      requestId: "legacy-undo",
+      expectedProjectSessionId: status.projectSessionId,
+      historyCursor: status.historyCursor,
+    }) as { history: { historyCursor: string } };
+    assert.equal(retry.history.historyCursor, undo.history.historyCursor);
+    assert.deepEqual(h.store.listLevels()[0]?.intGrid, [0, 0]);
+
+    const redo = await editorA.request("history/redo", {
+      requestId: "legacy-redo",
+      expectedProjectSessionId: status.projectSessionId,
+      historyCursor: undo.history.historyCursor,
+    }) as { history: { canRedo: boolean }; events: SessionEventEnvelope[] };
+    assert.equal(redo.history.canRedo, false);
+    assert.deepEqual(h.store.listLevels()[0]?.intGrid, [1, 1]);
+    const redoEvent = await redoObserved;
+    assert.equal(redoEvent.historyAction, "redo");
+    assert.equal(redo.events[0]?.historyAction, "redo");
 
     editorA.close();
     editorB.close();

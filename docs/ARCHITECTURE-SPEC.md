@@ -703,7 +703,7 @@ Componentes versionados hoje (CONFIRMADO):
 | Componente | Versão | Regra de compatibilidade | Evidência |
 |---|---|---|---|
 | **Protocolo de controle** | `PROTOCOL_VERSION="1.0"` (string) | **MAJOR deve coincidir** no handshake | `jsonrpc.ts:9`; `EnginePipeServer` |
-| **Documento Blueprint** | `schemaVersion` inteiro (=3) + `projectId` e metadata persistentes | migração explícita (§20) | `BlueprintSerializer.ts` |
+| **Documento Blueprint** | `schemaVersion` inteiro (=4) + `projectId`, metadata e paleta persistentes | migração explícita (§20) | `BlueprintSerializer.ts` |
 | **Artefato** | `schemaVersion` inteiro + `revision` | leitura histórica; dedup por `(hash, schemaVersion)` | `ArtifactStore` |
 | **Perfil de runtime** | `família + versão` | match exato, senão maior `≤` (fallback governado); imutável | `RuntimeProfile.ts:82-103` |
 | **Layout de shared memory** | `layoutVersion` (=1) | compatibilidade **binária estrita** | `shared-memory-layout.md` |
@@ -714,7 +714,7 @@ Componentes versionados hoje (CONFIRMADO):
 | Componente | Chave | Compatibilidade |
 |---|---|---|
 | Protocolo | major.minor | MAJOR idêntico |
-| Blueprint document | schemaVersion + projectId + metadata | migração explícita antes do replay; v2 persiste identidade e v3 explicita resolução/unidades espaciais |
+| Blueprint document | schemaVersion + projectId + metadata + paleta | migração explícita antes do replay; v2 persiste identidade, v3 explicita resolução/unidades e v4 persiste paleta semântica |
 | Artifact | schemaVersion + revision | leitura de revisões antigas preservada |
 | Runtime profile | família + versão | exato ou fallback descendente governado |
 | Shared memory | layoutVersion | binária estrita (divergência = `InvalidBinaryLayout`) |
@@ -724,8 +724,8 @@ política de bump de cada eixo (hoje dispersa entre docs).
 
 ## 20. Persistência, replay e migração
 
-**Modelo (CONFIRMADO):** o Blueprint é salvo como documento declarativo v3
-(`schemaVersion`, `projectId`, `metadata` e domínios). `metadata.spatial` fixa
+**Modelo (CONFIRMADO):** o Blueprint é salvo como documento declarativo v4
+(`schemaVersion`, `projectId`, `metadata`, paleta de nível e domínios). `metadata.spatial` fixa
 posições em `world-pixel`, origem `top-left`, eixo Y `down` e âncora `center`.
 O load reproduz comandos em ordem de
 dependência numa `ProjectSession` temporária. Filters e validações do store são
@@ -735,8 +735,9 @@ preservados; actions, journal e runtime são suprimidos até o commit (ADR-020).
 `migrateBlueprintDocument(raw)` (`BlueprintSerializer.ts`) detecta a versão (documentos
 sem `schemaVersion` = versão 0), **rejeita** versões acima da suportada com erro claro,
 e **migra encadeado** `v(n)→v(n+1)` por um `MIGRATIONS: Map<number, BlueprintMigration>`
-(hoje: `0→1→2→3`; v2 introduz `projectId` persistente e v3 metadata/unidades
-explícitas; somente o factory v2 conhecido do template tem suas coordenadas de
+(hoje: `0→1→2→3→4`; v2 introduz `projectId` persistente, v3 explicita
+metadata/unidades e v4 adiciona a paleta semântica de cada nível; somente o
+factory v2 conhecido do template tem suas coordenadas de
 célula convertidas deterministicamente). `documentToCommands` chama a migração **transparentemente**, de modo
 que projetos salvos por builds anteriores continuam abrindo (P0.2 "migração de
 schemaVersion"). Testado em `middleware/test/blueprint-migration.test.ts` (upgrade v0/
@@ -744,13 +745,13 @@ legacy, v0 explícito, rejeição de versão futura, rejeição de não-objeto).
 
 ```mermaid
 graph TD
-  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v3<br/>schemaVersion + projectId + metadata + dominios")]
+  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v4<br/>schemaVersion + projectId + metadata + paleta + dominios")]
   DOC -.-> RAW["raw carregado"]
   subgraph LOAD["LOAD"]
     RAW --> MIG["migrateBlueprintDocument(raw)<br/>(sem schemaVersion = versao 0)"]
     MIG --> V{"versao > suportada?"}
     V -->|"sim"| REJ(["REJEITA (erro claro)"])
-    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2->3)"]
+    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2->3->4)"]
     CHAIN --> TMP["sessao temporaria + replay prepare"]
     TMP --> SEM["validacao semantica + projecao preparada"]
     SEM --> COMMIT["reset e rehydrate<br/>commit ou rollback para A"]
@@ -1260,7 +1261,7 @@ broadcast); subsistema de engine (manifesto+hints); perfil (nova versão+razões
 - *(R-06 migradores de `schemaVersion`: já entregue em `af83a66`.)*
 
 **Fase E — Produto (a milestone ALPHA-0.1):** P0.5 preview embutido (maior buraco
-funcional), P0.7 undo/redo global canônico, P0.8 diagnósticos, P0.9 empacotamento.
+funcional), P0.7 undo/redo global canônico (ADR-022, entregue), P0.8 diagnósticos, P0.9 empacotamento.
 
 ## 37. Riscos
 
@@ -1369,7 +1370,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 2. Caminho de mutação único (P-1) — auditável e extensível por hooks.
 3. Adapter como única tradução (P-3) — troca de runtime sem tocar o núcleo.
 4. Contratos como fonte de verdade + fitness functions (P-4, §33).
-5. Sessão transacional por replay (P-10/ADR-020) — documento v3 é preparado em store
+5. Sessão transacional por replay (P-10/ADR-020) — documento v4 é preparado em store
    privado e publicado por troca atômica, sem exigir Blueprint vazio.
 6. Governança de experiência por perfil+manifesto com fail-safe (§3.6).
 7. Zero-GC verificado por teste (P-5) — alocação nos hot loops não regride

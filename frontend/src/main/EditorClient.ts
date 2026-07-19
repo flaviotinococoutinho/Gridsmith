@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { isAvailabilityError } from "../core/canonicalCommandFeedback.js";
 import {
   TransportRouter,
   classifyTransportError,
@@ -27,22 +28,27 @@ import {
 } from "./transport/GrpcTransport.js";
 import type { ResolvedExperienceLike } from "../core/experienceGate.js";
 import type { ProjectTemplateDescriptor } from "../core/projectApi.js";
+import type {
+  BlueprintEventPayload,
+  DispatchOutcome,
+  HistoryEntryPayload,
+  HistoryOperationResult,
+  HistoryStatusPayload,
+} from "../core/editorCommands.js";
 
-export interface BlueprintEventPayload {
-  readonly kind: string;
-  readonly projectSessionId: string;
-  readonly projectId: string;
-  readonly commandSequence: string;
-  readonly [key: string]: unknown;
-}
-
-export interface DispatchOutcome {
-  readonly event: BlueprintEventPayload;
-  readonly projection?: { status: string; reason?: string };
-}
+export type {
+  BlueprintEventPayload,
+  DispatchOutcome,
+  HistoryEntryPayload,
+  HistoryOperationResult,
+  HistoryStatusPayload,
+} from "../core/editorCommands.js";
 
 export interface ProjectionSnapshot extends HotCursor {
   readonly firstAvailableSeq: string;
+  readonly documentStateId: string;
+  readonly historyCursor: string;
+  readonly history?: HistoryStatusPayload;
   readonly projections: Readonly<Record<string, unknown>>;
   readonly status: ProjectStatus;
 }
@@ -54,6 +60,10 @@ export interface ProjectStatus {
   /** Decimal unix-ms no wire (GraphQL String evita perda de precisão). */
   readonly createdAt?: string;
   readonly commandSequence: string;
+  readonly documentStateId?: string;
+  readonly historyCursor?: string;
+  readonly canUndo?: boolean;
+  readonly canRedo?: boolean;
   readonly runtimeState: "synchronized" | "deferred" | "failed";
 }
 
@@ -133,8 +143,8 @@ const EXPERIENCE_QUERY = `query ($family: String, $version: String) {
 
 const SNAPSHOT_QUERY = `query EditorSnapshot {
   snapshot {
-    projections middlewareInstanceId projectSessionId projectId commandSequence firstAvailableSeq lastEventSeq
-    status { active projectSessionId projectId createdAt commandSequence runtimeState }
+    projections middlewareInstanceId projectSessionId projectId commandSequence documentStateId historyCursor firstAvailableSeq lastEventSeq
+    status { active projectSessionId projectId createdAt commandSequence documentStateId historyCursor canUndo canRedo runtimeState }
   }
 }`;
 
@@ -152,12 +162,25 @@ const EVENT_BATCH_QUERY = `query EventBatch($instance: String!, $projectSessionI
   ) {
     middlewareInstanceId projectSessionId projectId commandSequence firstAvailableSeq lastEventSeq
     resyncRequired resyncReason
-    events { seq kind projectSessionId projectId commandSequence payload }
+    events {
+      seq kind projectSessionId projectId commandSequence transactionId documentStateId
+      historyEntryId actor historyCursor historyAction payload
+    }
   }
 }`;
 
 const PROJECT_STATUS_FIELDS = `
-  active projectSessionId projectId createdAt commandSequence runtimeState
+  active projectSessionId projectId createdAt commandSequence documentStateId historyCursor canUndo canRedo runtimeState
+`;
+
+const HISTORY_ENTRY_FIELDS = `
+  id label actor transactionId timestamp barrier applied
+`;
+
+const HISTORY_STATUS_FIELDS = `
+  projectSessionId projectId commandSequence documentStateId historyCursor
+  canUndo canRedo undoLabel redoLabel
+  entries { ${HISTORY_ENTRY_FIELDS} }
 `;
 
 export interface EditorClientOptions {
@@ -338,25 +361,30 @@ export class EditorClient {
 
   async dispatch(kind: string, payload: Record<string, unknown>): Promise<DispatchOutcome> {
     const requestId = randomUUID();
-    const outcome = await this.hotCall(
-      async () => (await this.grpc.dispatch(kind, payload, requestId)) as DispatchOutcome,
-      async () => {
-        const data = await this.graphql.execute<{
-          dispatch: { event: BlueprintEventPayload; projection: { status: string } | null };
-        }>(
-          `mutation ($kind: CommandKind!, $payload: JSON!, $requestId: String!) {
-            dispatch(kind: $kind, payload: $payload, requestId: $requestId) {
-              event projection { status reason detail }
-            }
-          }`,
-          { kind: kind.replace("/", "_"), payload, requestId },
-        );
-        return {
-          event: data.dispatch.event,
-          ...(data.dispatch.projection ? { projection: data.dispatch.projection } : {}),
-        } as DispatchOutcome;
-      },
-    );
+    let outcome: DispatchOutcome;
+    try {
+      outcome = await this.hotCall(
+        async () => (await this.grpc.dispatch(kind, payload, requestId)) as DispatchOutcome,
+        async () => {
+          const data = await this.graphql.execute<{
+            dispatch: DispatchOutcome;
+          }>(
+            `mutation ($kind: CommandKind!, $payload: JSON!, $requestId: String!) {
+              dispatch(kind: $kind, payload: $payload, requestId: $requestId) {
+                event projection { status reason detail }
+                commandSequence transactionId documentStateId historyCursor
+                historyEntry { id label forward inverse actor transactionId timestamp barrier }
+              }
+            }`,
+            { kind: kind.replace("/", "_"), payload, requestId },
+          );
+          return data.dispatch;
+        },
+      );
+    } catch (error) {
+      if (isAvailabilityError(error)) this.requestResync("dispatch_confirmation_uncertain");
+      throw error;
+    }
     // A resposta de dispatch já confirma o commit. O stream/poll pode chegar
     // depois; manter a revisão observada aqui evita um falso CAS conflict se
     // uma operação de sessão for solicitada nesse intervalo.
@@ -364,7 +392,31 @@ export class EditorClient {
       outcome.event.projectSessionId,
       outcome.event.commandSequence,
     );
+    this.advanceObservedState(outcome.documentStateId, outcome.historyCursor);
     return outcome;
+  }
+
+  historyStatus(limit = 100): Promise<HistoryStatusPayload> {
+    return this.hotCall(
+      () => this.grpc.historyStatus(limit),
+      async () => {
+        const data = await this.graphql.execute<{ historyStatus: HistoryStatusPayload }>(
+          `query HistoryStatus($limit: Int!) {
+            historyStatus(limit: $limit) { ${HISTORY_STATUS_FIELDS} }
+          }`,
+          { limit },
+        );
+        return data.historyStatus;
+      },
+    );
+  }
+
+  undo(): Promise<HistoryOperationResult> {
+    return this.runHistoryOperation("undo");
+  }
+
+  redo(): Promise<HistoryOperationResult> {
+    return this.runHistoryOperation("redo");
   }
 
   query<T = unknown>(projection: string): Promise<T> {
@@ -525,6 +577,52 @@ export class EditorClient {
       }
       return status;
     });
+  }
+
+  private async runHistoryOperation(action: "undo" | "redo"): Promise<HistoryOperationResult> {
+    const observed = this.projectionState?.status;
+    if (!observed?.active || !observed.projectSessionId || !observed.historyCursor) {
+      throw new Error(`cannot ${action} without an active synchronized project history`);
+    }
+    const requestId = randomUUID();
+    const result = await this.hotCall(
+      async () => this.grpc[action](
+        requestId,
+        observed.projectSessionId!,
+        observed.historyCursor!,
+      ),
+      async () => {
+        const data = await this.graphql.execute<Record<"undo" | "redo", HistoryOperationResult>>(
+          `mutation HistoryOperation(
+            $requestId: String!
+            $expectedProjectSessionId: String!
+            $historyCursor: String!
+          ) {
+            ${action}(
+              requestId: $requestId
+              expectedProjectSessionId: $expectedProjectSessionId
+              historyCursor: $historyCursor
+            ) {
+              status { ${PROJECT_STATUS_FIELDS} }
+              history { ${HISTORY_STATUS_FIELDS} }
+              entry { id label forward inverse actor transactionId timestamp barrier }
+              events commandSequence transactionId documentStateId historyCursor
+            }
+          }`,
+          {
+            requestId,
+            expectedProjectSessionId: observed.projectSessionId,
+            historyCursor: observed.historyCursor,
+          },
+        );
+        return data[action];
+      },
+    );
+    for (const event of result.events) {
+      this.advanceObservedRevision(event.projectSessionId, event.commandSequence);
+    }
+    this.advanceObservedState(result.documentStateId ?? result.status.documentStateId, result.historyCursor);
+    return result;
   }
 
   private currentProjectExpectation(): ProjectRevisionExpectation | undefined {
@@ -690,15 +788,28 @@ export class EditorClient {
   }
 
   private normalizeError(error: unknown): Error {
-    if (error instanceof GraphQlAuthenticationError) return error;
-    if (error instanceof GraphQlDomainError) {
-      return new Error(error.code !== undefined ? `${error.message} (code ${error.code})` : error.message);
+    const category = classifyTransportError(error).category.toUpperCase();
+    let normalized: Error;
+    if (error instanceof GraphQlAuthenticationError) normalized = error;
+    else if (error instanceof GraphQlDomainError) {
+      normalized = new Error(
+        error.code !== undefined ? `${error.message} (code ${error.code})` : error.message,
+      );
+    } else {
+      const candidate = error as { details?: string; message?: string };
+      if (typeof candidate?.details === "string" && candidate.details.length > 0) {
+        normalized = new Error(candidate.details);
+      } else {
+        normalized = error instanceof Error ? error : new Error(String(error));
+      }
     }
-    const candidate = error as { details?: string; message?: string };
-    if (typeof candidate?.details === "string" && candidate.details.length > 0) {
-      return new Error(candidate.details);
+    // Electron preserva a mensagem, mas não garante propriedades customizadas
+    // do Error através do IPC. A categoria permite à projeção otimista dizer
+    // "rejeitado" versus "confirmação incerta" sem adivinhar pelo texto.
+    if (!/^\[P7M_(?:DOMAIN|AUTHENTICATION|AVAILABILITY)\]/.test(normalized.message)) {
+      normalized.message = `[P7M_${category}] ${normalized.message}`;
     }
-    return error instanceof Error ? error : new Error(String(error));
+    return normalized;
   }
 
   private startEventPump(): void {
@@ -889,7 +1000,14 @@ export class EditorClient {
       projectSessionId: event.projectSessionId,
       projectId: event.projectId,
       commandSequence: event.commandSequence,
+      ...(event.transactionId ? { transactionId: event.transactionId } : {}),
+      ...(event.documentStateId ? { documentStateId: event.documentStateId } : {}),
+      ...(event.historyEntryId ? { historyEntryId: event.historyEntryId } : {}),
+      ...(event.actor ? { actor: event.actor } : {}),
+      ...(event.historyCursor ? { historyCursor: event.historyCursor } : {}),
+      ...(event.historyAction ? { historyAction: event.historyAction } : {}),
     };
+    this.advanceObservedState(event.documentStateId, event.historyCursor);
     for (const listener of this.eventListeners) {
       try {
         listener(payload);
@@ -926,6 +1044,22 @@ export class EditorClient {
         status: Object.freeze({ ...snapshot.status, commandSequence }),
       });
     }
+  }
+
+  private advanceObservedState(documentStateId?: string, historyCursor?: string): void {
+    if (!documentStateId && !historyCursor) return;
+    const snapshot = this.projectionState;
+    if (!snapshot) return;
+    this.projectionState = Object.freeze({
+      ...snapshot,
+      ...(documentStateId ? { documentStateId } : {}),
+      ...(historyCursor ? { historyCursor } : {}),
+      status: Object.freeze({
+        ...snapshot.status,
+        ...(documentStateId ? { documentStateId } : {}),
+        ...(historyCursor ? { historyCursor } : {}),
+      }),
+    });
   }
 
   private onFellBack(): void {
@@ -1097,6 +1231,10 @@ function validateProjectStatus(status: ProjectStatus): ProjectStatus {
     !status ||
     typeof status.active !== "boolean" ||
     parseSequence(status.commandSequence) === undefined ||
+    (status.documentStateId !== undefined && typeof status.documentStateId !== "string") ||
+    (status.historyCursor !== undefined && typeof status.historyCursor !== "string") ||
+    (status.canUndo !== undefined && typeof status.canUndo !== "boolean") ||
+    (status.canRedo !== undefined && typeof status.canRedo !== "boolean") ||
     (status.runtimeState !== "synchronized" &&
       status.runtimeState !== "deferred" &&
       status.runtimeState !== "failed")
@@ -1127,6 +1265,14 @@ function validateProjectStatus(status: ProjectStatus): ProjectStatus {
     ...(typeof status.createdAt === "string" && status.createdAt.length > 0
       ? { createdAt: status.createdAt }
       : {}),
+    ...(typeof status.documentStateId === "string"
+      ? { documentStateId: status.documentStateId }
+      : {}),
+    ...(typeof status.historyCursor === "string"
+      ? { historyCursor: status.historyCursor }
+      : {}),
+    ...(typeof status.canUndo === "boolean" ? { canUndo: status.canUndo } : {}),
+    ...(typeof status.canRedo === "boolean" ? { canRedo: status.canRedo } : {}),
   });
 }
 

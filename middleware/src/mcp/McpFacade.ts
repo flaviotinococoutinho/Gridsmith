@@ -236,7 +236,7 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
   ): void => {
     server.registerTool(name, { description, inputSchema }, async (payload) => {
       const normalized = stripUndefined(payload as Record<string, unknown>);
-      const result = await canonical.surface.dispatchByKind(kind, normalized);
+      const result = await canonical.surface.dispatchByKind(kind, normalized, undefined, "agent");
       return { content: [{ type: "text", text: jsonText(result) }] };
     });
   };
@@ -252,7 +252,7 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
       },
     },
     async ({ kind, payload }) => {
-      const result = await canonical.surface.dispatchByKind(kind, payload);
+      const result = await canonical.surface.dispatchByKind(kind, payload, undefined, "agent");
       return { content: [{ type: "text", text: jsonText(result) }] };
     },
   );
@@ -265,6 +265,64 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
     },
     async () => ({
       content: [{ type: "text", text: jsonText(canonical.surface.projectStatus()) }],
+    }),
+  );
+
+  server.registerTool(
+    "history_status",
+    {
+      description: "Retorna cursor, disponibilidade de undo/redo e entradas recentes do histórico global da sessão ativa.",
+      inputSchema: { limit: z.number().int().min(0).max(500).optional() },
+    },
+    async ({ limit }) => ({
+      content: [{
+        type: "text",
+        text: jsonText(canonical.surface.historyStatus(limit ?? 50)),
+      }],
+    }),
+  );
+
+  server.registerTool(
+    "history_undo",
+    {
+      description: "Desfaz atomicamente a entrada reversível mais recente via MCP; a entrada mantém sua proveniência original.",
+      inputSchema: {
+        requestId: z.string().min(1).max(128).optional(),
+        expectedProjectSessionId: z.string().min(1).optional(),
+        historyCursor: z.string().min(1).max(256).optional(),
+      },
+    },
+    async ({ requestId, expectedProjectSessionId, historyCursor }) => ({
+      content: [{
+        type: "text",
+        text: jsonText(await canonical.surface.historyUndo({
+          ...(requestId !== undefined ? { requestId } : {}),
+          ...(expectedProjectSessionId !== undefined ? { expectedProjectSessionId } : {}),
+          ...(historyCursor !== undefined ? { historyCursor } : {}),
+        }, "agent")),
+      }],
+    }),
+  );
+
+  server.registerTool(
+    "history_redo",
+    {
+      description: "Refaz atomicamente a próxima entrada via MCP; a entrada mantém sua proveniência original.",
+      inputSchema: {
+        requestId: z.string().min(1).max(128).optional(),
+        expectedProjectSessionId: z.string().min(1).optional(),
+        historyCursor: z.string().min(1).max(256).optional(),
+      },
+    },
+    async ({ requestId, expectedProjectSessionId, historyCursor }) => ({
+      content: [{
+        type: "text",
+        text: jsonText(await canonical.surface.historyRedo({
+          ...(requestId !== undefined ? { requestId } : {}),
+          ...(expectedProjectSessionId !== undefined ? { expectedProjectSessionId } : {}),
+          ...(historyCursor !== undefined ? { historyCursor } : {}),
+        }, "agent")),
+      }],
     }),
   );
 

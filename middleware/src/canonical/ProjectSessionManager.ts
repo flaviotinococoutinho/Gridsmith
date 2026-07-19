@@ -13,6 +13,7 @@ import type {
   BlueprintCommand,
   BlueprintEvent,
   BlueprintStore as BlueprintStoreType,
+  CommandActor,
 } from "../domain/BlueprintStore.js";
 import { BlueprintStore } from "../domain/BlueprintStore.js";
 import type { ProjectionResult, RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
@@ -28,7 +29,11 @@ import {
   validateProjectMetadata,
 } from "./BlueprintSerializer.js";
 import { CanonicalOrchestrator } from "./CanonicalOrchestrator.js";
-import { CommandHistory } from "./CommandHistory.js";
+import {
+  CommandHistory,
+  HistoryConflictError,
+  type HistoryEntry,
+} from "./CommandHistory.js";
 import type { HookBus } from "./HookBus.js";
 import { getProjectTemplate } from "./ProjectTemplates.js";
 
@@ -52,6 +57,10 @@ export interface ProjectStatus {
   readonly createdAt?: number;
   readonly commandSequence: string;
   readonly runtimeState: ProjectRuntimeState;
+  readonly documentStateId?: string;
+  readonly historyCursor?: string;
+  readonly canUndo?: boolean;
+  readonly canRedo?: boolean;
 }
 
 export interface PreparedProjectSession {
@@ -69,6 +78,12 @@ export type SessionBlueprintEvent = BlueprintEvent & {
   readonly projectId: string;
   readonly commandSequence: string;
   readonly revision: string;
+  readonly transactionId: string;
+  readonly actor: CommandActor;
+  readonly historyEntryId: string;
+  readonly historyAction: "apply" | "undo" | "redo";
+  readonly documentStateId: string;
+  readonly historyCursor: string;
 };
 
 export interface ProjectSessionChangedEvent {
@@ -84,13 +99,50 @@ export interface SessionDispatchResult {
   readonly event: SessionBlueprintEvent;
   readonly projection: ProjectionResult | undefined;
   readonly commandSequence: bigint;
+  readonly documentStateId: string;
+  readonly historyCursor: string;
+  readonly historyEntry: HistoryEntry;
+}
+
+export interface ProjectHistoryEntrySummary {
+  readonly id: string;
+  readonly label: string;
+  readonly actor: CommandActor;
+  readonly transactionId: string;
+  readonly timestamp: number;
+  readonly barrier?: boolean;
+  readonly applied: boolean;
+}
+
+export interface ProjectHistoryStatus {
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly commandSequence: string;
+  readonly documentStateId: string;
+  readonly historyCursor: string;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+  readonly undoLabel?: string;
+  readonly redoLabel?: string;
+  readonly entries: readonly ProjectHistoryEntrySummary[];
+}
+
+export interface SessionHistoryOperationResult {
+  readonly status: ProjectStatus;
+  readonly history: ProjectHistoryStatus;
+  readonly entry: HistoryEntry;
+  readonly events: readonly SessionBlueprintEvent[];
 }
 
 export interface ProjectSessionPort {
   readonly current: ProjectSession | undefined;
   readonly status: ProjectStatus;
   readCurrent(): ProjectSession | undefined;
-  dispatch(command: BlueprintCommand, expectedProjectSessionId?: string): Promise<SessionDispatchResult>;
+  dispatch(
+    command: BlueprintCommand,
+    expectedProjectSessionId?: string,
+    actor?: CommandActor,
+  ): Promise<SessionDispatchResult>;
 }
 
 export interface ProjectSessionManagerOptions {
@@ -146,6 +198,10 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
       createdAt: session.createdAt,
       commandSequence: session.history.lastSequence.toString(),
       runtimeState: this.runtimeStates.get(session.sessionId) ?? "synchronized",
+      documentStateId: session.history.documentStateId,
+      historyCursor: session.history.historyCursor,
+      canUndo: session.history.status.canUndo,
+      canRedo: session.history.status.canRedo,
     });
   }
 
@@ -250,26 +306,19 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
     }));
   }
 
-  dispatch(command: BlueprintCommand, expectedProjectSessionId?: string): Promise<SessionDispatchResult> {
+  dispatch(
+    command: BlueprintCommand,
+    expectedProjectSessionId?: string,
+    actor: CommandActor = "human",
+  ): Promise<SessionDispatchResult> {
     return this.enqueue(() => this.withTransition(async () => {
       const session = this.requireCurrent();
-      if (this.runtimeStates.get(session.sessionId) === "failed") {
-        throw new ProjectSessionConflictError(
-          "Project runtime is fail-closed after an incomplete rollback; rehydrate before dispatch",
-        );
-      }
-      if (
-        expectedProjectSessionId !== undefined &&
-        expectedProjectSessionId !== session.sessionId
-      ) {
-        throw new ProjectSessionConflictError(
-          `Project session changed before dispatch (expected ${expectedProjectSessionId}, got ${session.sessionId})`,
-        );
-      }
-      const result = await session.orchestrator.dispatch(command);
+      this.assertMutableSession(session, expectedProjectSessionId, "dispatch");
+      const result = await session.orchestrator.dispatch(command, { actor });
       if (result.projection?.status === "deferred") {
-        this.runtimeStates.set(session.sessionId, "deferred");
+        await this.repairDeferredRuntime(session);
       }
+      const entry = result.historyEntry!;
       const sequence = result.commandSequence.toString();
       const event = Object.freeze({
         ...result.event,
@@ -277,10 +326,39 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
         projectId: session.projectId,
         commandSequence: sequence,
         revision: sequence,
+        transactionId: entry.transactionId,
+        actor: entry.actor,
+        historyEntryId: entry.id,
+        historyAction: "apply",
+        documentStateId: result.documentStateId,
+        historyCursor: result.historyCursor,
       }) as SessionBlueprintEvent;
       this.publish("event", event);
-      return { ...result, event };
+      return { ...result, event, historyEntry: entry };
     }));
+  }
+
+  historyStatus(limit = 50): ProjectHistoryStatus {
+    if (!Number.isInteger(limit) || limit < 0 || limit > 500) {
+      throw new TypeError("history status limit must be an integer in [0, 500]");
+    }
+    return this.historyStatusOf(this.requireCurrent(), limit);
+  }
+
+  historyUndo(
+    expectedProjectSessionId?: string,
+    expectedHistoryCursor?: string,
+    _actor: CommandActor = "human",
+  ): Promise<SessionHistoryOperationResult> {
+    return this.moveHistory("undo", expectedProjectSessionId, expectedHistoryCursor);
+  }
+
+  historyRedo(
+    expectedProjectSessionId?: string,
+    expectedHistoryCursor?: string,
+    _actor: CommandActor = "human",
+  ): Promise<SessionHistoryOperationResult> {
+    return this.moveHistory("redo", expectedProjectSessionId, expectedHistoryCursor);
   }
 
   /** Chamado na conexão/reconexão da engine; lê a sessão ativa dentro do lock. */
@@ -301,6 +379,121 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
         throw error;
       }
     }));
+  }
+
+  private moveHistory(
+    direction: "undo" | "redo",
+    expectedProjectSessionId?: string,
+    expectedHistoryCursor?: string,
+  ): Promise<SessionHistoryOperationResult> {
+    return this.enqueue(() => this.withTransition(async () => {
+      const session = this.requireCurrent();
+      this.assertMutableSession(session, expectedProjectSessionId, direction);
+      let moved;
+      try {
+        moved = direction === "undo"
+          ? await session.orchestrator.undo(expectedHistoryCursor)
+          : await session.orchestrator.redo(expectedHistoryCursor);
+      } catch (error) {
+        if (error instanceof HistoryConflictError) {
+          throw new ProjectSessionConflictError(error.message);
+        }
+        throw error;
+      }
+      if (moved.results.some((result) => result.projection?.status === "deferred")) {
+        await this.repairDeferredRuntime(session);
+      }
+      const events = moved.results.map((result) => {
+        const sequence = result.commandSequence.toString();
+        return Object.freeze({
+          ...result.event,
+          projectSessionId: session.sessionId,
+          projectId: session.projectId,
+          commandSequence: sequence,
+          revision: sequence,
+          transactionId: moved.entry.transactionId,
+          actor: moved.entry.actor,
+          historyEntryId: moved.entry.id,
+          historyAction: direction,
+          documentStateId: moved.documentStateId,
+          historyCursor: moved.historyCursor,
+        }) as SessionBlueprintEvent;
+      });
+      // Publicação só começa quando TODO o batch, cursor e runtime consequence
+      // terminaram; falha de preflight nunca vaza evento parcial.
+      for (const event of events) this.publish("event", event);
+      return Object.freeze({
+        status: this.status,
+        history: this.historyStatusOf(session),
+        entry: moved.entry,
+        events: Object.freeze(events),
+      });
+    }));
+  }
+
+  private historyStatusOf(session: ProjectSession, limit = 50): ProjectHistoryStatus {
+    const status = session.history.status;
+    const past = [...session.history.list()].reverse().map((entry) => summarizeHistoryEntry(entry, true));
+    const future = session.history.listFuture().map((entry) => summarizeHistoryEntry(entry, false));
+    const entries = limit === 0 ? [] : [...past, ...future].slice(0, limit);
+    return Object.freeze({
+      projectSessionId: session.sessionId,
+      projectId: session.projectId,
+      commandSequence: status.commandSequence.toString(),
+      documentStateId: status.documentStateId,
+      historyCursor: status.historyCursor,
+      canUndo: status.canUndo,
+      canRedo: status.canRedo,
+      ...(status.undoLabel !== undefined ? { undoLabel: status.undoLabel } : {}),
+      ...(status.redoLabel !== undefined ? { redoLabel: status.redoLabel } : {}),
+      entries: Object.freeze(entries),
+    });
+  }
+
+  /**
+   * Uma projeção pode falhar depois de uma primeira RPC destrutiva (por
+   * exemplo remove seguido de define/add). O commit canônico continua válido;
+   * quando a engine ainda está conectada, reset + replay integral tornam o
+   * runtime novamente equivalente ao store antes de publicar o evento/ACK.
+   * Falha na reparação permanece explicitamente deferred e nunca desfaz ou
+   * esconde o commit já confirmado.
+   */
+  private async repairDeferredRuntime(session: ProjectSession): Promise<void> {
+    this.runtimeStates.set(session.sessionId, "deferred");
+    if (!this.options.adapter.isConnected) return;
+
+    try {
+      const reset = await this.options.adapter.resetSession();
+      const results = await this.options.adapter.rehydrateFrom(
+        session.store,
+        reset.runtimeSessionEpoch,
+      );
+      this.runtimeStates.set(session.sessionId, runtimeStateOf(reset, results));
+    } catch {
+      // O estado canônico e o histórico já foram confirmados. Uma nova sonda
+      // de reconexão/rehydrate tentará reparar novamente.
+      this.runtimeStates.set(session.sessionId, "deferred");
+    }
+  }
+
+  private assertMutableSession(
+    session: ProjectSession,
+    expectedProjectSessionId: string | undefined,
+    operation: string,
+  ): void {
+    if (this.runtimeStates.get(session.sessionId) === "failed") {
+      throw new ProjectSessionConflictError(
+        "Project runtime is fail-closed after an incomplete rollback; rehydrate before mutation",
+      );
+    }
+    if (
+      expectedProjectSessionId !== undefined &&
+      expectedProjectSessionId !== session.sessionId
+    ) {
+      throw new ProjectSessionConflictError(
+        `Project session changed before ${operation} (expected ${expectedProjectSessionId}, got ${session.sessionId})`,
+      );
+    }
   }
 
   private prepareSession(
@@ -382,7 +575,7 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
 
     return {
       status: this.status,
-      summary: summarize(candidate.history.length, projectionResults),
+      summary: summarize(prepared.summary.applied, projectionResults),
     };
   }
 
@@ -488,6 +681,21 @@ function cloneProjectMetadata(metadata: ProjectMetadata): ProjectMetadata {
       yAxis: metadata.spatial.yAxis,
       entityAnchor: metadata.spatial.entityAnchor,
     }),
+  });
+}
+
+function summarizeHistoryEntry(
+  entry: HistoryEntry,
+  applied: boolean,
+): ProjectHistoryEntrySummary {
+  return Object.freeze({
+    id: entry.id,
+    label: entry.label,
+    actor: entry.actor,
+    transactionId: entry.transactionId,
+    timestamp: entry.timestamp,
+    ...(entry.barrier ? { barrier: true } : {}),
+    applied,
   });
 }
 

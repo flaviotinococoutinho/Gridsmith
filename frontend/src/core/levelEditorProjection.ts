@@ -15,6 +15,13 @@ export interface ProjectedLevel {
   readonly seed: number;
   readonly intGrid: readonly number[];
   readonly rules: readonly LevelRule[];
+  readonly palette?: readonly ProjectedPaletteEntry[];
+}
+
+export interface ProjectedPaletteEntry {
+  readonly value: number;
+  readonly name: string;
+  readonly color: string;
 }
 
 export interface ProjectedEntity {
