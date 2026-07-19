@@ -1,0 +1,23 @@
+name: Codex checkout bootstrap
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  export-checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export tracked checkout
+        run: git ls-files -z | tar --null -T - -czf p7m-design.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-checkout
+          path: p7m-design.tar.gz
+          if-no-files-found: error
+          retention-days: 1
