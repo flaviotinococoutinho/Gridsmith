@@ -380,7 +380,10 @@ test("comandos sem engine conectada ficam no AST e são reidratados na conexão"
   await withServer(async ({ server, bridge, store, orchestrator, adapter }) => {
     // Reidratação canônica: o adapter projeta o Blueprint em cada sessão nova
     // (mesma fiação do composition root em src/index.ts).
-    server.on("session", () => void adapter.rehydrateFrom(store));
+    let rehydration: Promise<readonly ProjectionResult[]> | undefined;
+    server.on("session", (session: EngineSession) => {
+      rehydration = adapter.rehydrateFrom(store, session.runtimeSessionEpoch);
+    });
 
     const identity = [1, 0, 0, 1, 0, 0];
     // Comando aplicado com a engine offline: fica registrado no blueprint.
@@ -416,6 +419,11 @@ test("comandos sem engine conectada ficam no AST e são reidratados na conexão"
     });
 
     assert.equal(await rehydrated, "npc-rig");
+    // O handler remoto observa o request antes de o adapter receber o ACK.
+    // Aguarda a operação inteira antes de desconectar para não fabricar uma
+    // supersession tardia/unhandled depois do fim do teste.
+    assert.ok(rehydration);
+    await rehydration;
     const pong = await bridge.pingEngine("pós-reidratação");
     assert.equal(pong.echo, "pós-reidratação");
     engine.close();
