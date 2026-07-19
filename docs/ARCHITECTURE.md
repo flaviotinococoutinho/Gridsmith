@@ -185,14 +185,22 @@ sequenceDiagram
 
 O plano de controle JSON-RPC acima é a borda **middleware ↔ engine**. A borda
 **app (Electron) ↔ middleware** usa dois transports próprios, decididos em
-[ADR-016/017/018](adr/README.md):
+[ADR-016/017/018/019](adr/README.md):
 
 - **GraphQL** ([`../contracts/graphql/editor.schema.graphql`](../contracts/graphql/editor.schema.graphql)):
   superfície **baseline completa** — toda operação do editor existe aqui — e
   também o destino do **fallback**.
 - **gRPC** ([`../contracts/grpc/p7m_editor.proto`](../contracts/grpc/p7m_editor.proto),
-  package `p7m.editor.v1`): **caminho quente prioritário** — `Dispatch`,
-  `Query`, `StreamEvents` (server streaming) e `Health`.
+  package `p7m.editor.v1`): **caminho quente prioritário medido** — `Dispatch`,
+  `Query`, `StreamEventsV2` (server streaming com status de cursor) e `Health`;
+  `StreamEvents` permanece apenas para compatibilidade.
+
+O default gRPC está congelado pelo resultado medido da ADR-019, não por uma
+premissa de superioridade: dispatch teve p95 35,2%/39,3% menor e event-flow
+30,8%/16,5% menor que GraphQL nos payloads pequeno/médio, sem erro ou resync.
+Queries gRPC regrediram nos quatro cenários e permanecem risco explícito.
+GraphQL continua baseline completo; o JSON-RPC legado continua apenas por
+compatibilidade enquanto houver dependentes.
 
 As três bordas do middleware (gateway JSON-RPC do editor, GraphQL e gRPC)
 delegam na mesma superfície `EditorSurface`

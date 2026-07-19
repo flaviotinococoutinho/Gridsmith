@@ -5,6 +5,29 @@ GraphQL e o gateway JSON-RPC legado. Ele não cria um quarto transport, não
 usa doubles de servidor e não inicia a engine. Cada fork sobe um processo real
 e novo do middleware, executa a matriz e o encerra.
 
+## Baseline oficial e decisão
+
+O baseline oficial de 2026-07-19 está versionado em
+[`results/2026-07-19-github-ubuntu.json`](./results/2026-07-19-github-ubuntu.json)
+e a leitura completa está na
+[`ADR-019`](../docs/adr/ADR-019-freeze-medido-dos-transports.md). O relatório
+é válido, foi produzido no GitHub Actions com três forks e registrou zero erro,
+perda de evento ou resync.
+
+| Comparação p95 | small | medium | Decisão |
+|---|---:|---:|---|
+| gRPC dispatch vs GraphQL | 1,511 vs 2,333 ms (-35,2%) | 1,765 vs 2,907 ms (-39,3%) | passa o limiar de -20% nos dois payloads |
+| gRPC event-flow vs GraphQL | 1,359 vs 1,962 ms (-30,8%) | 2,063 vs 2,472 ms (-16,5%) | não regride |
+| gRPC query-small vs GraphQL | 1,257 vs 1,078 ms (+16,6%) | 3,212 vs 0,913 ms (+251,8%) | regressão registrada |
+| gRPC query-document vs GraphQL | 1,140 vs 0,923 ms (+23,5%) | 2,407 vs 1,132 ms (+112,6%) | regressão registrada |
+
+O gRPC permanece default congelado por causa do ganho mensurável em dispatch e
+eventos, não por uma alegação geral de superioridade. GraphQL permanece o
+baseline completo. O gateway legado teve menor p50/p95 nas oito combinações
+payload×operação; isso não vale para todo p99 (por exemplo,
+`query-document/medium`). Ele continua somente para compatibilidade enquanto
+houver dependentes e não será promovido.
+
 ## Execução
 
 Na raiz do repositório:
@@ -68,3 +91,8 @@ O arquivo deve validar contra
 [`transport-benchmark.schema.json`](./transport-benchmark.schema.json). Um run
 com erro, perda/duplicidade de eventos ou resync é gravado com `valid: false` e
 termina com exit code diferente de zero.
+
+Uma repetição só pode sustentar o default gRPC se `dispatch` mantiver p95 pelo
+menos 20% menor que GraphQL nos dois payloads, `event-flow` não regredir mais de
+10% e não houver erro, perda ou resync. Falhar em qualquer condição rebaixa
+gRPC à feature flag até o PreviewHost; a regra normativa está na ADR-019.

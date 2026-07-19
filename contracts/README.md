@@ -119,7 +119,7 @@ graph LR
 A borda app ↔ middleware **não** usa o plano JSON-RPC acima: usa GraphQL
 (superfície baseline completa + destino do fallback) e gRPC (caminho quente
 prioritário) — decisões em [`../docs/adr/`](../docs/adr/README.md)
-(ADR-016/017/018).
+(ADR-016/017/018/019).
 
 | Contrato | Arquivo | Papel | Operações |
 |---|---|---|---|

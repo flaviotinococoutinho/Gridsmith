@@ -45,6 +45,7 @@ const REQUIRED = [
   "docs/PRODUCT.md",
   "docs/RESEARCH-EDITOR-LANDSCAPE.md",
   "docs/adr/README.md",
+  "docs/adr/ADR-019-freeze-medido-dos-transports.md",
   "contracts/README.md",
   "contracts/shared-memory-layout.md",
   "contracts/schemas/error-codes.md",
@@ -56,6 +57,10 @@ const REQUIRED = [
   "scripts/verify-phase3.sh",
   "scripts/verify-phase4.sh",
   "scripts/verify-transports.sh",
+  "scripts/benchmark-transports.sh",
+  "benchmarks/README.md",
+  "benchmarks/transport-benchmark.schema.json",
+  "benchmarks/results/2026-07-19-github-ubuntu.json",
 ];
 
 function packageScripts() {
@@ -106,6 +111,26 @@ if (fs.existsSync(ciPath)) {
       label: "npm run docs:verify",
       pattern: /^\s*-\s*run:\s+npm run docs:verify\s*$/m,
     },
+    {
+      label: "npm run test:transport-fallback",
+      pattern: /^\s*run:\s+cd frontend && npm run test:transport-fallback\s*$/m,
+    },
+    {
+      label: "npm run test:transport-repromotion",
+      pattern: /^\s*run:\s+cd frontend && npm run test:transport-repromotion\s*$/m,
+    },
+    {
+      label: "npm run test:transport-auth",
+      pattern: /^\s*run:\s+cd frontend && npm run test:transport-auth\s*$/m,
+    },
+    {
+      label: "npm run test:transport-journal-gap",
+      pattern: /^\s*run:\s+cd frontend && npm run test:transport-journal-gap\s*$/m,
+    },
+    {
+      label: "npm run test:transport-middleware-restart",
+      pattern: /^\s*run:\s+cd frontend && npm run test:transport-middleware-restart\s*$/m,
+    },
   ];
   for (const invocation of requiredCiInvocations) {
     if (!invocation.pattern.test(executableCi)) {
@@ -113,6 +138,102 @@ if (fs.existsSync(ciPath)) {
         `.github/workflows/ci.yml: quality gate não invocado -> ${invocation.label}`,
       );
     }
+  }
+}
+
+// O baseline versionado é uma evidência executável, não uma tabela copiada à
+// mão: exige a matriz 3 transports × 2 payloads × 4 operações, percentis
+// finitos, fluxo de 1.000 eventos e zero erro/perda/resync no run oficial.
+const benchmarkPath = path.join(
+  root,
+  "benchmarks/results/2026-07-19-github-ubuntu.json",
+);
+if (fs.existsSync(benchmarkPath)) {
+  try {
+    const report = JSON.parse(fs.readFileSync(benchmarkPath, "utf8"));
+    const transports = ["grpc", "graphql", "legacy-jsonrpc"];
+    const payloads = ["small", "medium"];
+    const operations = ["dispatch", "query-small", "query-document", "event-flow"];
+    const expected = new Set(
+      transports.flatMap((transport) =>
+        payloads.flatMap((payload) =>
+          operations.map((operation) => `${transport}|${payload}|${operation}`),
+        ),
+      ),
+    );
+    const measurements = Array.isArray(report.measurements) ? report.measurements : [];
+    for (const measurement of measurements) {
+      expected.delete(
+        `${measurement.transport}|${measurement.payloadClass}|${measurement.operation}`,
+      );
+      for (const percentile of ["p50", "p95", "p99"]) {
+        if (!Number.isFinite(measurement.latencyMs?.[percentile])) {
+          errors.push(
+            `benchmark oficial: ${percentile} ausente/inválido em ` +
+              `${measurement.transport}/${measurement.payloadClass}/${measurement.operation}`,
+          );
+        }
+      }
+      if (
+        measurement.operation === "event-flow" &&
+        (measurement.targetEvents !== 3_000 || measurement.receivedEvents !== 3_000)
+      ) {
+        errors.push(
+          `benchmark oficial: fluxo agregado deve provar 3 forks × 1.000 eventos em ${measurement.transport}/${measurement.payloadClass}`,
+        );
+      }
+    }
+    if (expected.size > 0 || measurements.length !== 24) {
+      errors.push(
+        `benchmark oficial: matriz incompleta (` +
+          `${[...expected].join(", ") || `${measurements.length} medições`})`,
+      );
+    }
+    if (
+      report.schemaVersion !== "p7m.transport-benchmark/v1" ||
+      report.valid !== true ||
+      report.config?.eventCount !== 1_000 ||
+      report.config?.forks !== 3 ||
+      report.totals?.failedSamples !== 0 ||
+      report.totals?.errorCount !== 0 ||
+      report.totals?.resyncs !== 0
+    ) {
+      errors.push("benchmark oficial: proveniência/configuração/validade não satisfazem o baseline");
+    }
+    const byCell = new Map(
+      measurements.map((measurement) => [
+        `${measurement.transport}|${measurement.payloadClass}|${measurement.operation}`,
+        measurement,
+      ]),
+    );
+    for (const payload of payloads) {
+      const grpcDispatch = byCell.get(`grpc|${payload}|dispatch`);
+      const graphqlDispatch = byCell.get(`graphql|${payload}|dispatch`);
+      const grpcEvents = byCell.get(`grpc|${payload}|event-flow`);
+      const graphqlEvents = byCell.get(`graphql|${payload}|event-flow`);
+      if (
+        !Number.isFinite(grpcDispatch?.latencyMs?.p95) ||
+        !Number.isFinite(graphqlDispatch?.latencyMs?.p95) ||
+        grpcDispatch.latencyMs.p95 > graphqlDispatch.latencyMs.p95 * 0.8
+      ) {
+        errors.push(
+          `ADR-019: gRPC default sem ganho mínimo de 20% no p95 de dispatch/${payload}`,
+        );
+      }
+      if (
+        !Number.isFinite(grpcEvents?.latencyMs?.p95) ||
+        !Number.isFinite(graphqlEvents?.latencyMs?.p95) ||
+        grpcEvents.latencyMs.p95 > graphqlEvents.latencyMs.p95 * 1.1
+      ) {
+        errors.push(
+          `ADR-019: gRPC default com regressão acima de 10% no p95 de event-flow/${payload}`,
+        );
+      }
+    }
+  } catch (error) {
+    errors.push(
+      `benchmark oficial inválido: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

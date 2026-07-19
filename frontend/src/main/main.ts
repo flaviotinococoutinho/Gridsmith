@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain } from "electron";
 import {
   EDITOR_AUTH_TOKEN_ENV,
+  EDITOR_AUTH_TOKEN_FILE_ENV,
   generateTransportAuthToken,
   loadTransportAuthToken,
 } from "@p7m/middleware/dist/transport/auth.js";
@@ -67,10 +68,19 @@ function launchService(
   serviceId: string,
   command: string,
   args: readonly string[],
-  env?: Record<string, string>,
+  env?: NodeJS.ProcessEnv,
 ): ManagedProcess {
+  const childEnvironment: NodeJS.ProcessEnv = { ...process.env, ...env };
+  // O processo filho recebe exatamente uma fonte de credencial. Isso evita
+  // herdar um arquivo configurado no shell quando o Electron gerou seu token
+  // efêmero direto (e vice-versa).
+  if (env?.[EDITOR_AUTH_TOKEN_ENV] !== undefined) {
+    delete childEnvironment[EDITOR_AUTH_TOKEN_FILE_ENV];
+  } else if (env?.[EDITOR_AUTH_TOKEN_FILE_ENV] !== undefined) {
+    delete childEnvironment[EDITOR_AUTH_TOKEN_ENV];
+  }
   const child = spawn(command, args, {
-    env: { ...process.env, ...env },
+    env: childEnvironment,
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout.on("data", (chunk: Buffer) => recordServiceLine(serviceId, "stdout", chunk));
@@ -99,8 +109,16 @@ async function editorTransportsReady(
         detail: "falha de autenticação nos transports locais",
         checks: {
           middleware: last.middlewareActive ? "active" : "inactive",
-          graphql: last.graphqlActive ? "active" : "authentication-failed",
-          grpc: last.grpcActive ? "active" : "authentication-failed",
+          graphql: last.graphqlActive
+            ? "active"
+            : last.graphqlAuthenticationFailed
+              ? "authentication-failed"
+              : "inactive",
+          grpc: last.grpcActive
+            ? "active"
+            : last.grpcAuthenticationFailed
+              ? "authentication-failed"
+              : "inactive",
         },
       };
     }

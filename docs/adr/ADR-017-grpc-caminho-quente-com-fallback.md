@@ -9,11 +9,13 @@
 
 As chamadas mais frequentes do editor (dispatch durante drag, queries de
 projeção, eventos) são candidatas a canal persistente HTTP/2 e **server
-streaming**. O benefício não é presumido: a ADR-019 o condiciona a medição.
+streaming**. O benefício não é generalizado: a ADR-019 mediu ganho de p95 em
+dispatch/eventos, regressão em queries e condiciona a manutenção do default a
+limiares reproduzíveis.
 
 ## Decisão
 
-Caminho quente (`Dispatch`, `Query`, `StreamEvents`, `Health`) por **gRPC**
+Caminho quente (`Dispatch`, `Query`, `StreamEventsV2`, `Health`) por **gRPC**
 com **prioridade**; em falha **de transporte**, fallback **imediato** para
 GraphQL e recovery por sondas com **histerese**:
 

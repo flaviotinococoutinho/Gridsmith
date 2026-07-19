@@ -54,6 +54,8 @@ export interface TransportReadiness {
   readonly graphqlActive: boolean;
   readonly grpcActive: boolean;
   readonly authenticationFailed: boolean;
+  readonly graphqlAuthenticationFailed: boolean;
+  readonly grpcAuthenticationFailed: boolean;
   readonly graphqlReason?: string;
   readonly grpcReason?: string;
 }
@@ -185,16 +187,18 @@ export class EditorClient {
     ]);
     const grpcError = grpcResult.status === "rejected" ? classifyTransportError(grpcResult.reason) : undefined;
     const graphqlError = graphqlResult.status === "rejected" ? classifyTransportError(graphqlResult.reason) : undefined;
+    const grpcAuthenticationFailed = grpcError?.category === "authentication";
+    const graphqlAuthenticationFailed = graphqlError?.category === "authentication";
     const readiness: TransportReadiness = {
       middlewareActive:
         grpcResult.status === "fulfilled" ||
         graphqlResult.status === "fulfilled" ||
-        grpcError?.category === "authentication" ||
-        graphqlError?.category === "authentication",
+        grpcAuthenticationFailed || graphqlAuthenticationFailed,
       grpcActive: grpcResult.status === "fulfilled" && grpcResult.value.ok,
       graphqlActive: graphqlResult.status === "fulfilled" && graphqlResult.value.health.ok,
-      authenticationFailed:
-        grpcError?.category === "authentication" || graphqlError?.category === "authentication",
+      authenticationFailed: grpcAuthenticationFailed || graphqlAuthenticationFailed,
+      grpcAuthenticationFailed,
+      graphqlAuthenticationFailed,
       ...(grpcError ? { grpcReason: grpcError.reason } : {}),
       ...(graphqlError ? { graphqlReason: graphqlError.reason } : {}),
     };
@@ -380,12 +384,21 @@ export class EditorClient {
           throw this.normalizeError(error);
         }
         const decision = this.router.onTransportFailure("grpc", Date.now(), classified);
+        const fallbackActive =
+          decision === "fellBack" || this.router.snapshot.active === "graphql";
         this.log.warn("gRPC call failed", {
           reason: classified.reason,
-          fellBack: decision === "fellBack",
+          fellBack: fallbackActive,
         });
-        if (decision !== "fellBack") throw this.normalizeError(error);
-        this.onFellBack();
+        if (decision === "fellBack") {
+          this.onFellBack();
+        } else if (!fallbackActive) {
+          throw this.normalizeError(error);
+        }
+        // O stream pode ter feito a transição enquanto esta chamada gRPC
+        // ainda estava em voo. Nesse caso `onTransportFailure` retorna
+        // `stay` porque o router já está em fallback; a chamada corrente
+        // ainda precisa continuar pelo baseline GraphQL.
       }
     }
     try {

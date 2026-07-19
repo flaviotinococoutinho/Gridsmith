@@ -1,0 +1,1437 @@
+{
+  "schemaVersion": "p7m.transport-benchmark/v1",
+  "generatedAt": "2026-07-19T02:28:02.763Z",
+  "valid": true,
+  "methodology": {
+    "processIsolation": "fresh real middleware process per fork",
+    "engine": "not started; isolates editor transport and canonical middleware path",
+    "implementations": {
+      "grpc": "frontend/src/main/transport/GrpcTransport.ts",
+      "graphql": "frontend/src/main/transport/GraphQlTransport.ts",
+      "legacy": "middleware/src/ipc/JsonRpcPeer.ts over the real EditorGateway"
+    },
+    "percentileMethod": "nearest-rank over successful call latencies from all forks",
+    "payloadByteDefinition": "UTF-8 bytes of canonical JSON application payload; excludes protocol framing",
+    "graphqlEventPolling": "fixed 10 ms interval",
+    "orderPolicy": "payload and transport order rotate deterministically by fork"
+  },
+  "environment": {
+    "node": "v22.23.1",
+    "v8": "12.4.254.21-node.56",
+    "platform": "linux",
+    "osType": "Linux",
+    "osRelease": "6.17.0-1020-azure",
+    "arch": "x64",
+    "cpuModel": "AMD EPYC 7763 64-Core Processor",
+    "cpuLogicalCount": 2,
+    "totalMemoryBytes": 8323981312,
+    "gitCommit": "53200ffd32bc1d76c05320a5f561468cdfec854a",
+    "gitDirty": false
+  },
+  "config": {
+    "warmups": 20,
+    "samples": 100,
+    "forks": 3,
+    "concurrency": 1,
+    "eventCount": 1000,
+    "graphqlPollIntervalMs": 10,
+    "requestTimeoutMs": 10000,
+    "flowTimeoutMs": 30000
+  },
+  "payloads": {
+    "small": {
+      "commandKind": "level/update",
+      "canonicalJson": "{\"levelId\":\"transport-benchmark-level\",\"width\":4,\"height\":4,\"tileSize\":16,\"seed\":1729,\"intGrid\":[2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1],\"rules\":[]}",
+      "utf8Bytes": 141,
+      "sha256": "4c350ceedf89a89df150a7034f50ac9658603ce4a8831aaee2ad8f5ceaa8322f"
+    },
+    "medium": {
+      "commandKind": "level/update",
+      "canonicalJson": "{\"levelId\":\"transport-benchmark-level\",\"width\":32,\"height\":32,\"tileSize\":16,\"seed\":1729,\"intGrid\":[2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2,0,0,1,0,0,1,0,0,1,0,2,1,0,0,1,0,0,1,0,0,1,2,0,1,0,0,1,0,0,1,0,0,2],\"rules\":[]}",
+      "utf8Bytes": 2159,
+      "sha256": "e5c6e3647797bc6568c9d993cf17fcd72ecee60ccf97128fa22dbea2f71ce9f1"
+    }
+  },
+  "measurements": [
+    {
+      "transport": "graphql",
+      "payloadClass": "medium",
+      "operation": "dispatch",
+      "applicationPayloadBytes": 2159,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.823517,
+        "p50": 0.954589,
+        "p95": 2.906517,
+        "p99": 6.26949,
+        "max": 10.330163
+      },
+      "responseBytes": {
+        "min": 2289,
+        "p50": 2289,
+        "p95": 2289,
+        "p99": 2289,
+        "max": 2289
+      },
+      "throughputOpsPerSecond": 749.138,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 106.075553
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 194.35294
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 100.031879
+        }
+      ]
+    },
+    {
+      "transport": "graphql",
+      "payloadClass": "medium",
+      "operation": "event-flow",
+      "applicationPayloadBytes": 2159,
+      "attemptedSamples": 3000,
+      "successfulSamples": 3000,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.801134,
+        "p50": 0.940244,
+        "p95": 2.471523,
+        "p99": 3.976841,
+        "max": 12.050815
+      },
+      "responseBytes": {
+        "min": 2289,
+        "p50": 2289,
+        "p95": 2289,
+        "p99": 2289,
+        "max": 2289
+      },
+      "throughputOpsPerSecond": 842.21,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": true,
+      "targetEvents": 3000,
+      "receivedEvents": 3000,
+      "eventCompletionMs": {
+        "min": 1078.686055,
+        "p50": 1123.634576,
+        "p95": 1376.991547,
+        "p99": 1376.991547,
+        "max": 1376.991547
+      },
+      "eventCompletionRelativeToLastDispatchMs": {
+        "min": 3.133394,
+        "p50": 5.409208,
+        "p95": 8.699105,
+        "p99": 8.699105,
+        "max": 8.699105
+      },
+      "eventThroughputPerSecond": 838.15,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 1118.220078,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 1123.634576,
+          "completionRelativeToLastDispatchMs": 5.409208
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 1368.286381,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 1376.991547,
+          "completionRelativeToLastDispatchMs": 8.699105
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 1075.549395,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 1078.686055,
+          "completionRelativeToLastDispatchMs": 3.133394
+        }
+      ]
+    },
+    {
+      "transport": "graphql",
+      "payloadClass": "medium",
+      "operation": "query-document",
+      "applicationPayloadBytes": 8,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.523283,
+        "p50": 0.618229,
+        "p95": 1.131641,
+        "p99": 1.862477,
+        "max": 2.922227
+      },
+      "responseBytes": {
+        "min": 2300,
+        "p50": 2300,
+        "p95": 2300,
+        "p99": 2300,
+        "max": 2300
+      },
+      "throughputOpsPerSecond": 1401.808,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 66.022715
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 85.934556
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 62.051993
+        }
+      ]
+    },
+    {
+      "transport": "graphql",
+      "payloadClass": "medium",
+      "operation": "query-small",
+      "applicationPayloadBytes": 6,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.493056,
+        "p50": 0.655902,
+        "p95": 0.912931,
+        "p99": 2.047123,
+        "max": 5.787396
+      },
+      "responseBytes": {
+        "min": 13,
+        "p50": 13,
+        "p95": 13,
+        "p99": 13,
+        "max": 13
+      },
+      "throughputOpsPerSecond": 1394.622,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 80.554657
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 71.745304
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 62.812113
+        }
+      ]
+    },
+    {
+      "transport": "graphql",
+      "payloadClass": "small",
+      "operation": "dispatch",
+      "applicationPayloadBytes": 141,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.667262,
+        "p50": 0.920165,
+        "p95": 2.333407,
+        "p99": 3.542631,
+        "max": 4.169299
+      },
+      "responseBytes": {
+        "min": 271,
+        "p50": 271,
+        "p95": 271,
+        "p99": 271,
+        "max": 271
+      },
+      "throughputOpsPerSecond": 911.524,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 129.766892
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 79.246527
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 120.105668
+        }
+      ]
+    },
+    {
+      "transport": "graphql",
+      "payloadClass": "small",
+      "operation": "event-flow",
+      "applicationPayloadBytes": 141,
+      "attemptedSamples": 3000,
+      "successfulSamples": 3000,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.623259,
+        "p50": 0.802818,
+        "p95": 1.962134,
+        "p99": 3.466499,
+        "max": 6.999148
+      },
+      "responseBytes": {
+        "min": 271,
+        "p50": 271,
+        "p95": 271,
+        "p99": 271,
+        "max": 271
+      },
+      "throughputOpsPerSecond": 1019.645,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": true,
+      "targetEvents": 3000,
+      "receivedEvents": 3000,
+      "eventCompletionMs": {
+        "min": 850.995271,
+        "p50": 996.441147,
+        "p95": 1103.699784,
+        "p99": 1103.699784,
+        "max": 1103.699784
+      },
+      "eventCompletionRelativeToLastDispatchMs": {
+        "min": 1.865232,
+        "p50": 2.920748,
+        "p95": 4.136572,
+        "p99": 4.136572,
+        "max": 4.136572
+      },
+      "eventThroughputPerSecond": 1016.558,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 1099.559885,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 1103.699784,
+          "completionRelativeToLastDispatchMs": 4.136572
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 848.067941,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 850.995271,
+          "completionRelativeToLastDispatchMs": 2.920748
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 994.572659,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 996.441147,
+          "completionRelativeToLastDispatchMs": 1.865232
+        }
+      ]
+    },
+    {
+      "transport": "graphql",
+      "payloadClass": "small",
+      "operation": "query-document",
+      "applicationPayloadBytes": 8,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.518432,
+        "p50": 0.616107,
+        "p95": 0.923232,
+        "p99": 2.53104,
+        "max": 4.051263
+      },
+      "responseBytes": {
+        "min": 282,
+        "p50": 282,
+        "p95": 282,
+        "p99": 282,
+        "max": 282
+      },
+      "throughputOpsPerSecond": 1426.362,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 83.075282
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 61.827541
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 65.422488
+        }
+      ]
+    },
+    {
+      "transport": "graphql",
+      "payloadClass": "small",
+      "operation": "query-small",
+      "applicationPayloadBytes": 6,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.502953,
+        "p50": 0.664222,
+        "p95": 1.077583,
+        "p99": 3.232784,
+        "max": 6.57364
+      },
+      "responseBytes": {
+        "min": 13,
+        "p50": 13,
+        "p95": 13,
+        "p99": 13,
+        "max": 13
+      },
+      "throughputOpsPerSecond": 1291.772,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 81.072391
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 85.362039
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 65.804618
+        }
+      ]
+    },
+    {
+      "transport": "grpc",
+      "payloadClass": "medium",
+      "operation": "dispatch",
+      "applicationPayloadBytes": 2159,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.743656,
+        "p50": 0.912831,
+        "p95": 1.7651,
+        "p99": 2.73403,
+        "max": 5.012451
+      },
+      "responseBytes": {
+        "min": 2298,
+        "p50": 2298,
+        "p95": 2298,
+        "p99": 2298,
+        "max": 2298
+      },
+      "throughputOpsPerSecond": 899.319,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 100.629734
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 142.791422
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 90.164428
+        }
+      ]
+    },
+    {
+      "transport": "grpc",
+      "payloadClass": "medium",
+      "operation": "event-flow",
+      "applicationPayloadBytes": 2159,
+      "attemptedSamples": 3000,
+      "successfulSamples": 3000,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.781727,
+        "p50": 0.943128,
+        "p95": 2.063494,
+        "p99": 4.591115,
+        "max": 10.270123
+      },
+      "responseBytes": {
+        "min": 2298,
+        "p50": 2298,
+        "p95": 2298,
+        "p99": 2298,
+        "max": 2298
+      },
+      "throughputOpsPerSecond": 879.363,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": true,
+      "targetEvents": 3000,
+      "receivedEvents": 3000,
+      "eventCompletionMs": {
+        "min": 1021.04132,
+        "p50": 1161.121735,
+        "p95": 1228.877149,
+        "p99": 1228.877149,
+        "max": 1228.877149
+      },
+      "eventCompletionRelativeToLastDispatchMs": {
+        "min": -0.262673,
+        "p50": -0.142006,
+        "p95": -0.129713,
+        "p99": -0.129713,
+        "max": -0.129713
+      },
+      "eventThroughputPerSecond": 879.497,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 1161.246449,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 1161.121735,
+          "completionRelativeToLastDispatchMs": -0.129713
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 1229.012713,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 1228.877149,
+          "completionRelativeToLastDispatchMs": -0.142006
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 1021.300937,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 1021.04132,
+          "completionRelativeToLastDispatchMs": -0.262673
+        }
+      ]
+    },
+    {
+      "transport": "grpc",
+      "payloadClass": "medium",
+      "operation": "query-document",
+      "applicationPayloadBytes": 8,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.495801,
+        "p50": 0.620741,
+        "p95": 2.407443,
+        "p99": 5.777568,
+        "max": 6.944174
+      },
+      "responseBytes": {
+        "min": 2300,
+        "p50": 2300,
+        "p95": 2300,
+        "p99": 2300,
+        "max": 2300
+      },
+      "throughputOpsPerSecond": 1139.44,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 70.234278
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 130.042638
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 63.010232
+        }
+      ]
+    },
+    {
+      "transport": "grpc",
+      "payloadClass": "medium",
+      "operation": "query-small",
+      "applicationPayloadBytes": 6,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.462208,
+        "p50": 0.622104,
+        "p95": 3.21169,
+        "p99": 6.439401,
+        "max": 11.967122
+      },
+      "responseBytes": {
+        "min": 13,
+        "p50": 13,
+        "p95": 13,
+        "p99": 13,
+        "max": 13
+      },
+      "throughputOpsPerSecond": 1010.987,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 97.664667
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 128.671528
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 70.403389
+        }
+      ]
+    },
+    {
+      "transport": "grpc",
+      "payloadClass": "small",
+      "operation": "dispatch",
+      "applicationPayloadBytes": 141,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.565731,
+        "p50": 0.875292,
+        "p95": 1.510621,
+        "p99": 2.968163,
+        "max": 3.712477
+      },
+      "responseBytes": {
+        "min": 280,
+        "p50": 280,
+        "p95": 280,
+        "p99": 280,
+        "max": 280
+      },
+      "throughputOpsPerSecond": 1009.623,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 134.318323
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 69.347263
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 93.474913
+        }
+      ]
+    },
+    {
+      "transport": "grpc",
+      "payloadClass": "small",
+      "operation": "event-flow",
+      "applicationPayloadBytes": 141,
+      "attemptedSamples": 3000,
+      "successfulSamples": 3000,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.537007,
+        "p50": 0.76218,
+        "p95": 1.358722,
+        "p99": 3.969496,
+        "max": 12.209284
+      },
+      "responseBytes": {
+        "min": 280,
+        "p50": 280,
+        "p95": 280,
+        "p99": 280,
+        "max": 280
+      },
+      "throughputOpsPerSecond": 1107.265,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": true,
+      "targetEvents": 3000,
+      "receivedEvents": 3000,
+      "eventCompletionMs": {
+        "min": 804.80266,
+        "p50": 835.425586,
+        "p95": 1068.800562,
+        "p99": 1068.800562,
+        "max": 1068.800562
+      },
+      "eventCompletionRelativeToLastDispatchMs": {
+        "min": -0.140194,
+        "p50": -0.111759,
+        "p95": -0.107943,
+        "p99": -0.107943,
+        "max": -0.107943
+      },
+      "eventThroughputPerSecond": 1107.408,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 1068.936568,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 1068.800562,
+          "completionRelativeToLastDispatchMs": -0.140194
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 804.907677,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 804.80266,
+          "completionRelativeToLastDispatchMs": -0.107943
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 835.53482,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 835.425586,
+          "completionRelativeToLastDispatchMs": -0.111759
+        }
+      ]
+    },
+    {
+      "transport": "grpc",
+      "payloadClass": "small",
+      "operation": "query-document",
+      "applicationPayloadBytes": 8,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.463399,
+        "p50": 0.633167,
+        "p95": 1.14008,
+        "p99": 2.384176,
+        "max": 4.194535
+      },
+      "responseBytes": {
+        "min": 282,
+        "p50": 282,
+        "p95": 282,
+        "p99": 282,
+        "max": 282
+      },
+      "throughputOpsPerSecond": 1309.994,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 102.395208
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 52.407551
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 74.205857
+        }
+      ]
+    },
+    {
+      "transport": "grpc",
+      "payloadClass": "small",
+      "operation": "query-small",
+      "applicationPayloadBytes": 6,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.484189,
+        "p50": 0.632196,
+        "p95": 1.256695,
+        "p99": 3.283649,
+        "max": 3.879106
+      },
+      "responseBytes": {
+        "min": 13,
+        "p50": 13,
+        "p95": 13,
+        "p99": 13,
+        "max": 13
+      },
+      "throughputOpsPerSecond": 1286.02,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 102.980019
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 66.021842
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 64.275955
+        }
+      ]
+    },
+    {
+      "transport": "legacy-jsonrpc",
+      "payloadClass": "medium",
+      "operation": "dispatch",
+      "applicationPayloadBytes": 2159,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.225634,
+        "p50": 0.248556,
+        "p95": 0.339089,
+        "p99": 0.396899,
+        "max": 2.124482
+      },
+      "responseBytes": {
+        "min": 2298,
+        "p50": 2298,
+        "p95": 2298,
+        "p99": 2298,
+        "max": 2298
+      },
+      "throughputOpsPerSecond": 3615.423,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 27.204314
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 29.657176
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 26.116342
+        }
+      ]
+    },
+    {
+      "transport": "legacy-jsonrpc",
+      "payloadClass": "medium",
+      "operation": "event-flow",
+      "applicationPayloadBytes": 2159,
+      "attemptedSamples": 3000,
+      "successfulSamples": 3000,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.189365,
+        "p50": 0.263578,
+        "p95": 0.399464,
+        "p99": 0.899301,
+        "max": 4.904575
+      },
+      "responseBytes": {
+        "min": 2298,
+        "p50": 2298,
+        "p95": 2298,
+        "p99": 2298,
+        "max": 2298
+      },
+      "throughputOpsPerSecond": 3213.451,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "targetEvents": 3000,
+      "receivedEvents": 3000,
+      "eventCompletionMs": {
+        "min": 291.451984,
+        "p50": 298.5768,
+        "p95": 343.716143,
+        "p99": 343.716143,
+        "max": 343.716143
+      },
+      "eventCompletionRelativeToLastDispatchMs": {
+        "min": 0.039364,
+        "p50": 0.043923,
+        "p95": 0.070382,
+        "p99": 0.070382,
+        "max": 0.070382
+      },
+      "eventThroughputPerSecond": 3212.869,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 298.527408,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 298.5768,
+          "completionRelativeToLastDispatchMs": 0.043923
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 343.670938,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 343.716143,
+          "completionRelativeToLastDispatchMs": 0.039364
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 291.377323,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 291.451984,
+          "completionRelativeToLastDispatchMs": 0.070382
+        }
+      ]
+    },
+    {
+      "transport": "legacy-jsonrpc",
+      "payloadClass": "medium",
+      "operation": "query-document",
+      "applicationPayloadBytes": 8,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.088546,
+        "p50": 0.148599,
+        "p95": 0.290588,
+        "p99": 2.162701,
+        "max": 4.281129
+      },
+      "responseBytes": {
+        "min": 2300,
+        "p50": 2300,
+        "p95": 2300,
+        "p99": 2300,
+        "max": 2300
+      },
+      "throughputOpsPerSecond": 4078.578,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 15.897324
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 41.240529
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 16.417198
+        }
+      ]
+    },
+    {
+      "transport": "legacy-jsonrpc",
+      "payloadClass": "medium",
+      "operation": "query-small",
+      "applicationPayloadBytes": 6,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.098735,
+        "p50": 0.116017,
+        "p95": 0.131589,
+        "p99": 0.147969,
+        "max": 1.365744
+      },
+      "responseBytes": {
+        "min": 13,
+        "p50": 13,
+        "p95": 13,
+        "p99": 13,
+        "max": 13
+      },
+      "throughputOpsPerSecond": 8082.984,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 11.803892
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 12.924518
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 12.386596
+        }
+      ]
+    },
+    {
+      "transport": "legacy-jsonrpc",
+      "payloadClass": "small",
+      "operation": "dispatch",
+      "applicationPayloadBytes": 141,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.134743,
+        "p50": 0.175319,
+        "p95": 0.246492,
+        "p99": 0.275477,
+        "max": 1.939779
+      },
+      "responseBytes": {
+        "min": 280,
+        "p50": 280,
+        "p95": 280,
+        "p99": 280,
+        "max": 280
+      },
+      "throughputOpsPerSecond": 5106.681,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 20.035476
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 16.049424
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 22.661667
+        }
+      ]
+    },
+    {
+      "transport": "legacy-jsonrpc",
+      "payloadClass": "small",
+      "operation": "event-flow",
+      "applicationPayloadBytes": 141,
+      "attemptedSamples": 3000,
+      "successfulSamples": 3000,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.086463,
+        "p50": 0.182853,
+        "p95": 0.302097,
+        "p99": 0.50145,
+        "max": 3.64124
+      },
+      "responseBytes": {
+        "min": 280,
+        "p50": 280,
+        "p95": 280,
+        "p99": 280,
+        "max": 280
+      },
+      "throughputOpsPerSecond": 4762.49,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "targetEvents": 3000,
+      "receivedEvents": 3000,
+      "eventCompletionMs": {
+        "min": 157.990229,
+        "p50": 207.262131,
+        "p95": 264.592897,
+        "p99": 264.592897,
+        "max": 264.592897
+      },
+      "eventCompletionRelativeToLastDispatchMs": {
+        "min": -0.033222,
+        "p50": -0.030437,
+        "p95": -0.023585,
+        "p99": -0.023585,
+        "max": -0.023585
+      },
+      "eventThroughputPerSecond": 4763.075,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 207.291475,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 207.262131,
+          "completionRelativeToLastDispatchMs": -0.033222
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 158.010837,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 157.990229,
+          "completionRelativeToLastDispatchMs": -0.023585
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 1000,
+          "successfulSamples": 1000,
+          "failedSamples": 0,
+          "wallMs": 264.620218,
+          "targetEvents": 1000,
+          "receivedEvents": 1000,
+          "completionMs": 264.592897,
+          "completionRelativeToLastDispatchMs": -0.030437
+        }
+      ]
+    },
+    {
+      "transport": "legacy-jsonrpc",
+      "payloadClass": "small",
+      "operation": "query-document",
+      "applicationPayloadBytes": 8,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.056546,
+        "p50": 0.121468,
+        "p95": 0.176181,
+        "p99": 0.190057,
+        "max": 1.247388
+      },
+      "responseBytes": {
+        "min": 282,
+        "p50": 282,
+        "p95": 282,
+        "p99": 282,
+        "max": 282
+      },
+      "throughputOpsPerSecond": 7096.96,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 13.86211
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 11.049596
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 17.359913
+        }
+      ]
+    },
+    {
+      "transport": "legacy-jsonrpc",
+      "payloadClass": "small",
+      "operation": "query-small",
+      "applicationPayloadBytes": 6,
+      "attemptedSamples": 300,
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "latencyMs": {
+        "min": 0.073748,
+        "p50": 0.121007,
+        "p95": 0.172383,
+        "p99": 1.223823,
+        "max": 2.79596
+      },
+      "responseBytes": {
+        "min": 13,
+        "p50": 13,
+        "p95": 13,
+        "p99": 13,
+        "max": 13
+      },
+      "throughputOpsPerSecond": 6120.19,
+      "errors": [],
+      "resyncs": 0,
+      "resyncObservable": false,
+      "forks": [
+        {
+          "fork": 0,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 22.33048
+        },
+        {
+          "fork": 1,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 11.076376
+        },
+        {
+          "fork": 2,
+          "attemptedSamples": 100,
+          "successfulSamples": 100,
+          "failedSamples": 0,
+          "wallMs": 15.611233
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "failedSamples": 0,
+    "errorCount": 0,
+    "resyncs": 0,
+    "measurementCount": 24
+  }
+}

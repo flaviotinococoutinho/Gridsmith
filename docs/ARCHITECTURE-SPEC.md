@@ -620,19 +620,23 @@ vértices. **É protocolo distinto** do JSON-RPC — não confundir os dois plan
 **Regra normativa:** o frontend **NÃO DEVE** reimplementar framing (F4); qualquer peer
 vem de `@p7m/middleware`.
 
-**Transports do app — GraphQL + gRPC (CONFIRMADO — ADR-016/017/018,
+**Transports do app — GraphQL + gRPC (CONFIRMADO — ADR-016/017/018/019,
 `docs/adr/`):** a borda app (Electron) ↔ middleware **não** usa o plano JSON-RPC
 acima. GraphQL (`contracts/graphql/editor.schema.graphql`) é a superfície
 baseline completa e o destino do fallback; gRPC
 (`contracts/grpc/p7m_editor.proto`, package `p7m.editor.v1`) serve o caminho
-quente (`Dispatch`/`Query`/`StreamEvents`/`Health`) com **prioridade** — falha
+quente (`Dispatch`/`Query`/`StreamEventsV2`/`Health`) com **prioridade** — falha
 DE TRANSPORTE cai imediatamente para GraphQL e a repromoção exige histerese de
 sondas Health (`frontend/src/core/transportRouter.ts`). Ambas as bordas delegam
-na mesma `EditorSurface` (R10–R12/F5); a continuidade de eventos entre stream e
-polling é garantida por `seq` (`EventJournal`). Payloads de comando viajam como
-JSON validado na fonte única (`BlueprintStore` + `contracts/schemas/`) — os
-transports **NÃO DEVEM** introduzir segunda fonte de validação. Verbosidade dos
-processos: `P7M_VERBOSITY` (§24).
+na mesma `EditorSurface` (R10–R12/F5). O default gRPC está condicionado ao
+critério medido da ADR-019: no baseline oficial, dispatch melhorou o p95 em
+35,2%/39,3% e event-flow em 30,8%/16,5% contra GraphQL nos payloads
+pequeno/médio, sem erro ou resync; queries gRPC regrediram e **não** sustentam
+alegação de ganho. A continuidade usa cursor `(middlewareInstanceId, seq)`,
+limites do `EventJournal` e snapshot completo em restart/gap. Payloads de
+comando viajam como JSON validado na fonte única (`BlueprintStore` +
+`contracts/schemas/`) — os transports **NÃO DEVEM** introduzir segunda fonte
+de validação. Verbosidade dos processos: `P7M_VERBOSITY` (§24).
 
 ## 17. RFCs aplicáveis
 
@@ -649,7 +653,7 @@ processos: `P7M_VERBOSITY` (§24).
 | **RFC 9562 (UUID)** | identidades | **Aplicável (v4)** | `sessionId` via `randomUUID()` (`EnginePipeServer`) | Conforme; manter v4 (aleatório, sem requisito de ordenação temporal) |
 | **W3C Trace Context** | correlação entre processos | **Parcialmente aplicável** | Não implementado; um `correlationId` local basta hoje (§23). **Não** adotar o protocolo inteiro sem requisito | HIPÓTESE de necessidade futura |
 | **OpenTelemetry** | traces/métricas/logs | **Parcialmente aplicável** | Não instrumentado; custo em hot loop é proibitivo (§13 DOD) | Só nas bordas, sob requisito |
-| **CBOR (RFC 8949) / MessagePack** | payload binário | **NÃO APLICÁVEL agora** | JSON não é gargalo comprovado; bulk vai por MMF | Só com benchmark (§38) |
+| **CBOR (RFC 8949) / MessagePack** | payload binário | **NÃO APLICÁVEL agora** | o benchmark de transport não isola serialização/framing como gargalo; bulk vai por MMF | Só se benchmark específico isolar esse gargalo (§38) |
 
 **Regra normativa:** nenhuma RFC **DEVE** ser citada em código/PR sem relação direta com
 uma decisão verificável.
@@ -973,14 +977,29 @@ projeto (espelha o gap de produto).
 - **Seqlock sem alocação** no leitor de MMF.
 - **Bulk fora do JSON** — dados de malha vão por MMF, não pelo plano de controle
   (limite de 16 MiB por frame força a separação).
+- **Baseline reproduzível dos transports do app** — 24 cenários sobre processos
+  reais do middleware, com p50/p95/p99, payloads de 141/2.159 bytes e fluxo de
+  1.000 eventos (`benchmarks/results/2026-07-19-github-ubuntu.json`).
 
 **Critérios normativos por subsistema crítico:** o autor **DEVE** documentar volume
 máximo, padrão de leitura/escrita, frequência, layout, custo assintótico, alocações,
 limite e estratégia de overflow. Hoje capacidades são fixas na construção (Zero-GC) com
 erro tipado no overflow — o que **DEVE** ser preservado.
 
-**Lacuna:** não há **teste de performance de latência** de dispatch/projeção nem de IPC
-(só de alocação). **MELHORIA OPCIONAL:** microbench de dispatch e de reidratação.
+**Leitura normativa do baseline (ADR-019):** gRPC permanece default para o
+caminho quente porque seu p95 de dispatch foi 35,2%/39,3% menor que GraphQL e
+o de event-flow 30,8%/16,5% menor nos payloads pequeno/médio, sem erro, perda
+ou resync. A conclusão p95 dos fluxos também não regrediu. Isso **NÃO DEVE** ser
+generalizado para queries: o p95 gRPC foi 16,6% a 251,8% maior nos quatro
+cenários de query. O gateway legado teve menor p50/p95 nas oito combinações
+payload×operação, mas não em todo p99; permanece somente compatibilidade e não
+é candidato a promoção.
+
+**Critério de freeze:** manter o default apenas com ganho p95 de dispatch ≥20%
+nos dois payloads, regressão de event-flow ≤10% e zero erro/perda/resync. Falha
+rebaixa gRPC à feature flag até o PreviewHost. A medição não cobre engine,
+concorrência ou variância entre plataformas; reidratação e projeção na engine
+continuam fora deste benchmark.
 
 ## 28. Escalabilidade
 
@@ -1085,6 +1104,7 @@ Já registrados em [`docs/adr/`](adr/README.md) (status Accepted):
 | [ADR-016](adr/ADR-016-graphql-baseline-do-app.md) | GraphQL como superfície baseline do app (e destino do fallback) |
 | [ADR-017](adr/ADR-017-grpc-caminho-quente-com-fallback.md) | gRPC no caminho quente, prioritário, com fallback para GraphQL |
 | [ADR-018](adr/ADR-018-endpoints-e-verbosidade-dos-transports.md) | Endpoints locais dos transports e controle de verbosidade |
+| [ADR-019](adr/ADR-019-freeze-medido-dos-transports.md) | Freeze medido do default e manutenção dos três transports existentes |
 
 Cada ADR **DEVE** conter contexto, decisão, alternativas, consequências, riscos,
 critério de revisão, status, data e links para código e teste.
@@ -1145,7 +1165,8 @@ executável, estável, relevante e difícil de validar manualmente.
 
 - **Feedback rápido** (por commit): build + lint + unit + testes arquiteturais.
 - **Validação de PR**: + integração + contract tests (FF-2) + e2e fases.
-- **Noturno**: + e2e visual Playwright (quando existir) + microbench de performance.
+- **Noturno**: + e2e visual Playwright (quando existir) + repetição controlada
+  do benchmark de transports quando houver mudança material nessa camada.
 - **Release**: smoke do artefato empacotado (P0.9).
 
 Cada gate **DEVE** declarar objetivo, comando, tempo esperado, bloqueante/informativo,
@@ -1284,7 +1305,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 | RFC 6902/7396 | Avaliada | deltas | Rejeitada como substituta de comandos | — |
 | RFC 9562 (UUID v4) | Aplicável | sessionId | CONFIRMADA | — |
 | W3C Trace Context / OTel | Parcial | correlação | Não implementada | correlação local primeiro (PR-5) |
-| CBOR/MessagePack | Não aplicável | payload | — | só com benchmark |
+| CBOR/MessagePack | Não aplicável | payload | — | só se benchmark específico provar framing/payload como gargalo |
 | ISO 25010 | Taxonomia | qualidade | parcial (usabilidade/portabilidade fracas) | — |
 | ISO 42010 / 29148 | Referência | docs/requisitos | parcial | completar viewpoints/rastreabilidade |
 
@@ -1297,7 +1318,10 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
    DN-5 (matriz de compatibilidade).
 4. **Melhoria de OO:** avaliar VO de versão se a superfície de comparação crescer;
    padronizar erros de domínio (JsonRpcError vs Error).
-5. **Melhoria de performance:** microbench de dispatch/reidratação/IPC (além de Zero-GC).
+5. **Performance:** baseline de dispatch/query/eventos dos transports entregue
+   pela ADR-019; otimizar queries gRPC somente se o uso real do MVP confirmar o
+   gargalo e sempre com nova medição. Reidratação/engine seguem fora desse
+   harness.
 6. **Melhoria de resiliência:** timeout por estágio de pipeline sob requisito; limpeza
    de MMF órfão (DN-4). *(Migradores de schema já entregues — R-06.)*
 7. **Melhoria de testabilidade:** PR-4 (controlador puro do editor) + Playwright e2e.
@@ -1312,7 +1336,8 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 4. Contratos como fonte de verdade + fitness functions (P-4, §33).
 5. Persistência por replay (P-10) — save/load = o mesmo caminho validado.
 6. Governança de experiência por perfil+manifesto com fail-safe (§3.6).
-7. Zero-GC verificado por teste (P-5) — desempenho não regride silenciosamente.
+7. Zero-GC verificado por teste (P-5) — alocação nos hot loops não regride
+   silenciosamente; latência é governada por medições separadas (§27).
 8. Determinismo por seed (P-6) — reprodutibilidade e testes cruzados.
 9. Dois planos separados (controle JSON-RPC / dados MMF) — cada regime otimizado.
 10. Paridade de protocolo TS↔C# provada (framing + 12 códigos).
@@ -1383,4 +1408,3 @@ convenção** (reidratação na porta, `reason` obrigatório, contract tests de 
 enquanto o esforço de produto vai para a camada visual e sua cobertura de testes. Nenhum
 item deste documento recomenda reescrita; todos cabem em passos incrementais sobre a
 base atual, cada um verificável no CI.
-
