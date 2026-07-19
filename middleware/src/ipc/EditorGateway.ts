@@ -148,11 +148,18 @@ export class EditorGateway extends EventEmitter {
     peer.registerMethod("blueprint/dispatch", async (params) => {
       this.requireHandshake(session);
       const p = params as { kind?: unknown; payload?: unknown; requestId?: unknown };
-      return this.surface.dispatchByKind(
+      const result = await this.surface.dispatchByKind(
         p?.kind as string,
         p?.payload,
         p?.requestId as string | undefined,
       );
+      return {
+        ...result,
+        // Sequências são uint64 no domínio. JSON-RPC não representa bigint;
+        // preserve a precisão no wire com o mesmo decimal usado por GraphQL,
+        // gRPC, MCP e pelos envelopes do EventJournal.
+        commandSequence: result.commandSequence.toString(),
+      };
     });
 
     peer.registerMethod("blueprint/query", (params) => {

@@ -188,10 +188,15 @@ test("dispatch do editor percorre o caminho canônico até a engine e faz broadc
     const result = (await editorA.request("blueprint/dispatch", {
       kind: "light/add",
       payload: { lightId: "torch", type: "point", position: [4, 2], color: [1, 1, 1], intensity: 2, radius: 64 },
-    })) as { event: BlueprintEvent; projection: { status: string } };
+    })) as {
+      event: BlueprintEvent;
+      projection: { status: string };
+      commandSequence: string;
+    };
 
     assert.equal(result.event.kind, "lightAdded");
     assert.equal(result.projection.status, "projected");
+    assert.equal(result.commandSequence, "1");
     // a engine recebeu a projeção do comando do editor
     assert.equal(h.engineCalls[0]?.method, "lighting/add");
     // o OUTRO editor recebeu o evento por broadcast (coerência multi-janela)
@@ -325,10 +330,14 @@ test("dispatch offline: AST aceita, projeção deferred, broadcast acontece", as
     const result = (await editor.request("blueprint/dispatch", {
       kind: "camera/configure",
       payload: { frequency: 3 },
-    })) as { projection: { status: string; reason?: string } };
+    })) as {
+      projection: { status: string; reason?: string };
+      commandSequence: string;
+    };
 
     assert.equal(result.projection.status, "deferred");
     assert.match(result.projection.reason ?? "", /no engine session/);
+    assert.equal(result.commandSequence, "1");
     assert.deepEqual(h.store.cameraSettings, { frequency: 3 });
     await new Promise((r) => setTimeout(r, 20));
     assert.deepEqual(events, ["cameraConfigured"]);
