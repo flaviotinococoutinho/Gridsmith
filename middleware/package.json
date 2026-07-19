@@ -15,6 +15,8 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "node --import tsx --test test/*.test.ts",
+    "test:project-session": "node --import tsx --test test/project-session-manager.test.ts test/transport-core.test.ts",
+    "test:project-session-transports": "node --import tsx --test --test-name-pattern=\"^sessão de projeto:\" test/editor-gateway.test.ts test/transport-gateways.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

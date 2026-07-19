@@ -35,7 +35,7 @@ Legenda: ✅ completo · 🔶 parcial · ❌ ausente · — não se aplica.
 | Pipeline Aseprite/MGCB | ✅ | ✅ MCP | ✅ compilação | ❌ | ❌ | **Parcial** |
 | Câmera cinemática | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
 | Iluminação deferred | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
-| Save/load + criação de projeto | ✅ (migração de `schemaVersion` testada) | ✅ (`blueprint/load`, `project/new`, `project/templates`) | — | 🔶 (diálogos nativos + escrita `.p7m.json` no `main`, sem teste/e2e; template "Plataforma 2D" **não conectado** ao botão "Novo") | ❌ | **Em fechamento** (P0.2) |
+| Save/load + criação de projeto | ✅ (Blueprint v2 com `projectId`; sessão temporária, replay e troca atômica testados) | ✅ (`project/create`, `project/openDocument`, `project/close`, `project/status` em JSON-RPC/GraphQL/gRPC/MCP) | ✅ reset antes de reidratar; `runtimeState` explícito | 🔶 (diálogos nativos + escrita `.p7m.json` no `main`; template "Plataforma 2D" ainda não conectado ao botão "Novo") | 🔶 (troca/rollback multi-cliente automatizados; falta jornada visual por usuário) | **Em fechamento** (P0.2) |
 | Supervisão de processos | ✅ (máquina de estados testada) | — | — | 🔶 (wire real + chips de estado + restart; falta caminho empacotado) | ❌ | **Em fechamento** (P0.1↔P0.9) |
 | Preview embutido | 🔶 fundação | ❌ | 🔶 fundação | ❌ | ❌ | **Requisito P0.5** |
 | Undo/redo | ✅ IntGrid apenas | ❌ | — | ❌ | ❌ | **Incompleto** (P0.7) |
@@ -78,7 +78,7 @@ graph LR
 | RNF-01 | **Zero-GC nos hot loops** da engine | 0 bytes alocados em Update/Draw-path | ✅ | testes `*_is_allocation_free` (8 métodos em 7 arquivos: esqueletos, leitor MMF, skinning, câmera×2, atores, luzes, tilemap) |
 | RNF-02 | **Determinismo** | mesma entrada+seed ⇒ mesmo resultado, entre runtimes | ✅ | checksums FNV-1a cruzados; trajetórias idênticas |
 | RNF-03 | **Robustez de protocolo** | frame inválido/oversized nunca derruba o peer; erros tipados | ✅ | testes de framing/peer (parse error, teardown, timeout) |
-| RNF-04 | **Offline-first** | mutações aceitas sem engine; reidratação completa na reconexão | ✅ | testes de rehydrate + deferred |
+| RNF-04 | **Offline-first** | sessão ativa sobrevive sem engine; reconexão limpa e reidrata somente o projeto ativo | ✅ | testes de troca desconectada + `runtimeState: deferred` e posterior `synchronized` |
 | RNF-05 | **Compatibilidade multiplataforma de IPC** | Named Pipes (Win) / UDS (POSIX) com a mesma semântica | ✅ | abstração testada; caveat Windows do MMF documentado no contrato |
 | RNF-06 | **Evolutibilidade de contratos** | versão MAJOR negociada; schemas fonte-de-verdade; perfis imutáveis | ✅ | handshake test + R9 + registry test |
 | RNF-07 | **Explicabilidade** | nenhum recurso desabilitado sem razão legível | ✅ | governor/gate tests (fail-safe com reason) |
@@ -87,6 +87,7 @@ graph LR
 | RNF-10 | **Limites explícitos** | capacidades fixas com erro claro (nunca crescimento silencioso) | ✅ | testes de capacidade cheia (skeleton/light/tilemap) |
 | RNF-11 | Latência do plano de controle | decisão baseada em p50/p95/p99 reproduzíveis | ✅ | harness e baseline oficial versionados; critério de default na ADR-019 |
 | RNF-12 | Escala de mapa | > 64k células por streaming/chunks | ⬜ | Fase 5 (shared memory para tiles) |
+| RNF-13 | **Integridade da sessão de projeto** | create/open/close aceitam `expectedProjectSessionId` para compare-and-swap; erro preserva sessão, dirty state, journal e runtime anteriores | ✅ | testes de replay falhando no 5º comando, rollback de runtime, dois clientes e paridade das bordas |
 
 A coluna **Verificação** acima é sustentada por fitness functions — divididas em
 estruturais (grafos de import/reflexão de assembly) e semânticas (Zero-GC,
@@ -96,7 +97,7 @@ determinismo, contrato binário, imutabilidade, fail-safe) — e pelos quality g
 mindmap
   root(("Fitness Functions P7M"))
     Estruturais
-      Middleware R1-R12 import-graph
+      Middleware R1-R13 import-graph
       Frontend F1-F5
       Engine E1-E5 reflexao de assembly
     Semanticas
@@ -126,8 +127,8 @@ mindmap
 | RT-01 | Node.js ≥ 22, TypeScript strict (`exactOptionalPropertyTypes`) | ✅ |
 | RT-02 | .NET 8, `LayoutKind.Sequential` para todo dado de fio binário | ✅ |
 | RT-03 | MonoGame 3.8.2 (DesktopGL); shaders HLSL compilados via MGCB fora do CI headless (referências de CPU cobrem as equações) | ✅ (caveat documentado) |
-| RT-04 | Plano de controle da engine: JSON-RPC 2.0 com framing `uint32 LE` (16 MiB máx); app ↔ middleware: gRPC prioritário medido + GraphQL fallback ([`COMPATIBILITY.md`](COMPATIBILITY.md), ADR-016/017/019) | ✅ |
-| RT-05 | Fronteiras de camada impostas por testes arquiteturais (22 regras) | ✅ |
+| RT-04 | Plano de controle da engine: JSON-RPC 2.0 com framing `uint32 LE` (16 MiB máx); app ↔ middleware: gRPC prioritário medido + GraphQL fallback; cursor de eventos `(middlewareInstanceId, projectSessionId, seq)` ([`COMPATIBILITY.md`](COMPATIBILITY.md), ADR-016/017/019/020) | ✅ |
+| RT-05 | Fronteiras de camada impostas por testes arquiteturais (23 regras, incluindo R13 para sessão única nas bordas) | ✅ |
 | RT-06 | CI: 4 gates (middleware, engine, frontend, e2e) | ✅ |
 | RT-07 | Electron com contextIsolation; binário dispensável no CI (`ELECTRON_SKIP_BINARY_DOWNLOAD`) | ✅ |
 

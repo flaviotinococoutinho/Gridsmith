@@ -15,7 +15,8 @@ editor é request/response + eventos — o formato natural de GraphQL.
 ## Decisão
 
 O app consome o middleware por **GraphQL** como superfície **completa**
-(queries de projeção, mutações canônicas, experiência, templates, load) —
+(queries de projeção, mutações canônicas, experiência, templates e operações
+`projectCreate`/`projectOpenDocument`/`projectClose`/`projectStatus`) —
 baseline sempre disponível e transporte de **fallback** do caminho quente.
 
 - SDL versionado em `contracts/graphql/` (fonte de verdade; cópia em `dist/`
@@ -23,12 +24,17 @@ baseline sempre disponível e transporte de **fallback** do caminho quente.
 - Servidor: `graphql-js` puro sobre `node:http` em **UDS** (POSIX) /
   `127.0.0.1` (Windows) — sem framework; fachada fina sobre a
   `EditorSurface` compartilhada (nenhuma lógica de domínio na borda; regras
-  R10/R12).
+  R10–R13).
 - Enum `CommandKind` espelha `COMMAND_KINDS` (paridade por teste; R8
-  preservada nas três bordas).
+  preservada nas quatro bordas).
 - Eventos por **polling incremental** `eventBatch(middlewareInstanceId,
-  afterSeq)` sobre o `EventJournal`, com limites e `resyncRequired`; a query
-  `snapshot` reconstrói todas as projeções. `eventsSince` permanece legado.
+  projectSessionId, afterSeq)` sobre a partição de sessão do `EventJournal`,
+  com limites e `resyncRequired`; a query `snapshot` reconstrói todas as
+  projeções. Restart, cursor fora da janela ou troca de sessão nunca entregam
+  uma cauda parcial. `eventsSince` permanece legado.
+- Create/open aceitam `expectedProjectSessionId`, validado no commit como
+  compare-and-swap. O status explicita runtime `synchronized`, `deferred` ou
+  `failed`; este último é fail-closed, sem ativar o candidato.
 - Bearer efêmero obrigatório; 401 nunca é interpretado como indisponibilidade.
 - Erros de domínio carregam o código estável JSON-RPC em `extensions.code`.
 
@@ -47,8 +53,9 @@ baseline sempre disponível e transporte de **fallback** do caminho quente.
 ## Consequências
 
 - O gateway JSON-RPC `<nome>-editor` **permanece** para tooling/drivers
-  (verify-phase4) e clientes de edição externos; as três bordas delegam na
-  MESMA `EditorSurface` — um único fluxo canônico (P-1).
+  (verify-phase4) e clientes de edição externos; JSON-RPC, GraphQL, gRPC e MCP
+  delegam na MESMA `EditorSurface` e, por ela, na mesma sessão ativa — um
+  único fluxo canônico (P-1, ADR-020).
 - Novo eixo de compatibilidade (SDL) em
   [`../COMPATIBILITY.md`](../COMPATIBILITY.md).
 - Riscos: drift SDL↔superfície (mitigado por teste de paridade byte a byte

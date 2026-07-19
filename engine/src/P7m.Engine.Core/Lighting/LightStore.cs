@@ -123,6 +123,25 @@ public sealed class LightStore
         _liveCount--;
     }
 
+    /// <summary>
+    /// Volta o armazenamento ao estado vazio entre sessões de projeto sem
+    /// substituir os arrays SoA pré-alocados.
+    /// </summary>
+    public void Reset()
+    {
+        Array.Clear(_types, 0, _types.Length);
+        Array.Clear(_positions, 0, _positions.Length);
+        Array.Clear(_heights, 0, _heights.Length);
+        Array.Clear(_directions, 0, _directions.Length);
+        Array.Clear(_colors, 0, _colors.Length);
+        Array.Clear(_intensities, 0, _intensities.Length);
+        Array.Clear(_radii, 0, _radii.Length);
+        Array.Clear(_innerCos, 0, _innerCos.Length);
+        Array.Clear(_outerCos, 0, _outerCos.Length);
+        Array.Clear(_active, 0, _active.Length);
+        _liveCount = 0;
+    }
+
     public bool IsActive(LightHandle handle) =>
         handle.Slot >= 0 && handle.Slot < Capacity && _active[handle.Slot];
 

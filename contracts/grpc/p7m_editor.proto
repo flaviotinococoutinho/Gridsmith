@@ -25,8 +25,15 @@ service EditorHotPath {
   rpc Query(QueryRequest) returns (QueryReply);
   // Snapshot completo de todas as projeções carimbado com cursor coerente.
   rpc Snapshot(SnapshotRequest) returns (SnapshotReply);
+  // Operações transacionais da sessão de projeto (paridade com GraphQL/JSON-RPC).
+  rpc ProjectCreate(ProjectCreateRequest) returns (ProjectOperationReply);
+  rpc ProjectOpenDocument(ProjectOpenDocumentRequest) returns (ProjectOperationReply);
+  rpc ProjectClose(ProjectCloseRequest) returns (ProjectStatusReply);
+  rpc ProjectStatus(ProjectStatusRequest) returns (ProjectStatusReply);
   // Stream legado mantido até clientes migrarem para o cursor composto.
-  rpc StreamEvents(StreamEventsRequest) returns (stream EventEnvelope);
+  rpc StreamEvents(StreamEventsRequest) returns (stream EventEnvelope) {
+    option deprecated = true;
+  }
   // Primeiro frame é status; eventos só seguem quando não exige resync.
   rpc StreamEventsV2(EventCursorRequest) returns (stream EventStreamFrame);
 }
@@ -39,6 +46,10 @@ message HealthReply {
   uint64 last_event_seq = 3;
   string middleware_instance_id = 4;
   uint64 first_available_seq = 5;
+  string project_session_id = 6;
+  string project_id = 7;
+  uint64 command_sequence = 8;
+  ProjectStatusReply project_status = 9;
 }
 
 message DispatchRequest {
@@ -75,6 +86,57 @@ message SnapshotReply {
   string middleware_instance_id = 2;
   uint64 first_available_seq = 3;
   uint64 last_event_seq = 4;
+  string project_session_id = 5;
+  string project_id = 6;
+  uint64 command_sequence = 7;
+  ProjectStatusReply project_status = 8;
+}
+
+message ProjectCreateRequest {
+  // Vazio gera um projectId no middleware.
+  string project_id = 1;
+  // Vazio cria uma sessão sem comandos; preenchido prepara o template primeiro.
+  string template_id = 2;
+  // Compare-and-swap: recusa substituir uma sessão diferente da observada.
+  string expected_project_session_id = 3;
+}
+
+message ProjectOpenDocumentRequest {
+  string document_json = 1;
+  // Compare-and-swap: recusa candidato preparado sobre sessão obsoleta.
+  string expected_project_session_id = 2;
+}
+
+message ProjectCloseRequest {
+  // Evita que um cliente atrasado feche uma sessão que já foi substituída.
+  string expected_project_session_id = 1;
+}
+
+message ProjectStatusRequest {}
+
+message ReplaySummary {
+  uint32 applied = 1;
+  uint32 projected = 2;
+  uint32 deferred = 3;
+  uint32 skipped = 4;
+}
+
+message ProjectStatusReply {
+  bool active = 1;
+  string project_session_id = 2;
+  string project_id = 3;
+  uint64 command_sequence = 4;
+  uint64 created_at_unix_ms = 5;
+  // synchronized|deferred|failed
+  string runtime_state = 6;
+}
+
+message ProjectOperationReply {
+  ProjectStatusReply status = 1;
+  // Resumo do replay/projeção; zero para create vazio.
+  ReplaySummary summary = 2;
+  string template_id = 3;
+  string name = 4;
 }
 
 message StreamEventsRequest {
@@ -86,12 +148,17 @@ message EventCursorRequest {
   uint64 after_seq = 1;
   // Parte obrigatória do cursor; muda em todo processo do middleware.
   string middleware_instance_id = 2;
+  // Parte obrigatória do cursor; muda em toda troca de projeto.
+  string project_session_id = 3;
 }
 
 message EventEnvelope {
   uint64 seq = 1;
   string kind = 2;
   string payload_json = 3;
+  string project_session_id = 4;
+  string project_id = 5;
+  uint64 command_sequence = 6;
 }
 
 message EventStreamStatus {
@@ -99,8 +166,12 @@ message EventStreamStatus {
   uint64 first_available_seq = 2;
   uint64 last_event_seq = 3;
   bool resync_required = 4;
-  // "", instance_changed, journal_gap, cursor_ahead ou invalid_cursor.
+  // "", instance_changed, project_session_changed, journal_gap,
+  // cursor_ahead ou invalid_cursor.
   string resync_reason = 5;
+  string project_session_id = 6;
+  string project_id = 7;
+  uint64 command_sequence = 8;
 }
 
 message EventStreamFrame {

@@ -9,7 +9,7 @@ que as impõe e define o que "pronto" significa.
 > princípios invioláveis, paradigmas, padrões, contratos, versionamento, erros,
 > testes e plano de evolução, com evidência classificada) está em
 > [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md). Este `GOVERNANCE.md` é o
-> subconjunto executável (as 22 regras e o DoD).
+> subconjunto executável (as 23 regras e o DoD).
 
 ```mermaid
 graph LR
@@ -40,6 +40,7 @@ graph LR
 | **R10** | A lib `graphql` é exclusiva da borda `graphql/` (fachada fina, zero domínio) | teste R10 |
 | **R11** | As libs `@grpc/*` são exclusivas da borda `grpc/` (fachada fina, zero domínio) | teste R11 |
 | **R12** | As bordas de transporte do app (`graphql/`, `grpc/`) só importam a `EditorSurface` (+ transport/protocolo/log) — nunca domínio interno | teste R12 |
+| **R13** | `EditorSurface`, JSON-RPC, GraphQL, gRPC e MCP resolvem o projeto pela mesma porta substituível de sessão; nenhuma borda retém `BlueprintStore`/`CanonicalOrchestrator` fixos | teste R13 |
 
 ### Engine (`engine/tests/.../ArchitectureTests.cs`)
 
@@ -61,15 +62,15 @@ graph LR
 | **F4** | O frontend nunca reimplementa framing de protocolo — peers vêm de `@p7m/middleware` | teste F4 |
 | **F5** | SDKs de transporte (`@grpc/*`, `node:http`) são exclusivos de `main/transport/` — `core/` decide, `main/transport/` fala | teste F5 |
 
-As três camadas concentram 22 regras estruturais, cada uma verificada por
+As três camadas concentram 23 regras estruturais, cada uma verificada por
 grafo de import (middleware/frontend) ou reflexão de assembly (engine):
 
 ```mermaid
 graph TD
-  ROOT(["22 regras estruturais executaveis"]) --> MWg
+  ROOT(["23 regras estruturais executaveis"]) --> MWg
   ROOT --> ENg
   ROOT --> FEg
-  subgraph MWg["Middleware (R1-R12) — import-graph"]
+  subgraph MWg["Middleware (R1-R13) — import-graph"]
     R1["R1 mcp/ + zod isolados"]
     R2["R2 canonical sem transporte"]
     R3["R3 BlueprintStore so validadores+erros"]
@@ -82,6 +83,7 @@ graph TD
     R10["R10 graphql so em graphql/"]
     R11["R11 grpc so em grpc/"]
     R12["R12 bordas do app so EditorSurface"]
+    R13["R13 todas as bordas usam a mesma sessao"]
   end
   subgraph ENg["Engine (E1-E5) — reflexao de assembly"]
     E1["E1 Core sem deps P7m"]
@@ -99,7 +101,7 @@ graph TD
   end
 ```
 
-*Mostra as 22 regras estruturais mapeadas às três camadas (R1-R12 middleware, E1-E5 engine, F1-F5 frontend) e o método de verificação de cada grupo.*
+*Mostra as 23 regras estruturais mapeadas às três camadas (R1-R13 middleware, E1-E5 engine, F1-F5 frontend) e o método de verificação de cada grupo.*
 
 ### Regras semânticas (impostas por testes de comportamento)
 
@@ -110,6 +112,7 @@ graph TD
 | **Contratos binários nunca divergem** (struct C# ↔ escritor Node) | offsets por reflexão + checksum FNV-1a cruzado nos e2e |
 | **Shaders ≡ referências de CPU** | `Lighting2D`/`ColorLut`/`LinearBlendSkinning`/`BonePacker` testados; e2e valida por reimplementação TS independente |
 | **Toda mutação passa pelo orquestrador** (filters → AST → actions → projeção) | R7 + testes do gateway/adapter; `EngineBridge` é diagnóstico |
+| **Troca de projeto é atômica e compartilhada por todas as bordas** | R13 + testes de `ProjectSessionManager`, gateways e dois clientes |
 | **Perfis publicados são imutáveis** | `RuntimeProfileRegistry.register` rejeita re-registro (testado) |
 | **Fail-safe de experiência** (sem prova de suporte → recurso desabilitado com razão) | testes do `ExperienceGovernor`/`ExperienceGate` |
 
@@ -120,7 +123,7 @@ semânticas, todas convergindo nos quality gates e na suíte completa (contagem 
 mindmap
   root(("Fitness Functions P7M"))
     Estruturais
-      Middleware R1-R12 import-graph
+      Middleware R1-R13 import-graph
       Frontend F1-F5
       Engine E1-E5 reflexao de assembly
     Semanticas
@@ -195,6 +198,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 | Tipo | Exigências adicionais |
 |---|---|
 | **Método JSON-RPC novo** | Schema em `contracts/schemas/` + handler + teste RPC + linha na tabela do `contracts/README.md` |
+| **Operação de sessão de projeto** | Paridade JSON-RPC/GraphQL/gRPC/MCP; `expectedProjectSessionId` em create/open/close para compare-and-swap; status com `runtimeState: synchronized\|deferred\|failed`; teste de rollback sem evento parcial |
 | **Comando canônico novo** | Validação no `BlueprintStore` + `COMMAND_KINDS` + projeção no(s) adapter(s) (ou skip com razão) + reidratação + serialização (`BlueprintSerializer`) + broadcast — R8 pega o esquecimento da borda |
 | **Subsistema de engine novo** | Manifesto (`engine/describe`) com limites reais + editor hints; perfil de runtime atualizado se governa recurso de UI |
 | **Perfil de runtime** | Nova VERSÃO (imutabilidade) + regras com `reason` legível |
@@ -206,9 +210,9 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 | Item | Estado |
 |---|---|
 | Testes: três suítes (engine/middleware/frontend), contagem calculada e validada pelo CI | ✅ verdes |
-| Testes arquiteturais (22 regras) | ✅ ativos (R10-R12/F5 cobrem os transports do app) |
+| Testes arquiteturais (23 regras) | ✅ ativos (R10-R13/F5 cobrem os transports e a sessão do app) |
 | E2e fases 1–4 | ✅ verdes |
-| Persistência de projeto (export/load com replay canônico) | ✅ **fechado nesta revisão** (`BlueprintSerializer`, `blueprint/query document`, `blueprint/load`) |
+| Persistência de projeto (documento v2 com `projectId`; open transacional e replay privado) | ✅ **fechado nesta revisão** (`ProjectSessionManager`, `project/create`, `project/openDocument`, `project/close`, `project/status`) |
 | Contratos ↔ implementação | ✅ auditados (R8/R9 + tabela contracts) |
 | Lacunas conhecidas e aceitas | registradas em [`OPPORTUNITIES.md`](OPPORTUNITIES.md) com impacto/esforço |
 
@@ -216,7 +220,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 
 | Gate | Job | Conteúdo |
 |---|---|---|
-| G1 | `middleware` | build + suíte middleware (inclui R1–R12) |
+| G1 | `middleware` | build + suíte middleware (inclui R1–R13) |
 | G2 | `engine` | build + suíte engine (inclui E1–E5, Zero-GC) |
 | G3 | `frontend` | build + suíte frontend (inclui F1–F5) |
 | G4 | `e2e` | verify-phase1..4 + verify-transports com processos reais |
@@ -226,7 +230,7 @@ integração:
 
 ```mermaid
 graph LR
-  G1["G1 middleware<br/>build + suite (R1-R12)"] --> J{"4 gates verdes?"}
+  G1["G1 middleware<br/>build + suite (R1-R13)"] --> J{"4 gates verdes?"}
   G2["G2 engine<br/>build + suite (E1-E5, Zero-GC)"] --> J
   G3["G3 frontend<br/>build + suite (F1-F5)"] --> J
   G4["G4 e2e<br/>verify-phase1..4 (processos reais)"] --> J

@@ -14,14 +14,20 @@
 import {
   BlueprintDocumentError,
   exportBlueprint,
-  replayDocument,
-  type BlueprintDocument,
   type ReplaySummary,
 } from "./BlueprintSerializer.js";
 import { getProjectTemplate, PROJECT_TEMPLATES } from "./ProjectTemplates.js";
-import { CanonicalOrchestrator, type DispatchResult } from "./CanonicalOrchestrator.js";
+import type { DispatchResult } from "./CanonicalOrchestrator.js";
+import {
+  ProjectNotOpenError,
+  ProjectSessionConflictError,
+  type ProjectActivationResult,
+  type ProjectSessionManager,
+  type ProjectStatus,
+  type SessionDispatchResult,
+} from "./ProjectSessionManager.js";
 import { COMMAND_KINDS, reshapeCommand } from "./commandShape.js";
-import type { BlueprintCommand, BlueprintStore } from "../domain/BlueprintStore.js";
+import type { BlueprintCommand } from "../domain/BlueprintStore.js";
 import type { ExperienceGovernor, ResolvedExperience } from "../runtime/ExperienceGovernor.js";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
 import { JsonRpcError, RpcErrorCode } from "../protocol/jsonrpc.js";
@@ -45,6 +51,11 @@ export type CompleteProjectionSnapshot = Readonly<
   Record<QueryableProjection, Record<string, unknown>>
 >;
 
+export interface EditorSnapshot {
+  readonly projections: CompleteProjectionSnapshot;
+  readonly status: ProjectStatus;
+}
+
 export interface ProjectTemplateInfo {
   readonly id: string;
   readonly label: string;
@@ -52,18 +63,19 @@ export interface ProjectTemplateInfo {
 }
 
 export interface EditorSurfaceOptions {
-  orchestrator: CanonicalOrchestrator;
-  store: BlueprintStore;
+  sessions: ProjectSessionManager;
   governor: ExperienceGovernor;
   adapter: RuntimeAdapter;
 }
 
 interface InFlightDispatch {
+  readonly projectSessionId: string;
   readonly fingerprint: string;
   readonly promise: Promise<DispatchResult>;
 }
 
 interface CompletedDispatch {
+  readonly projectSessionId: string;
   readonly fingerprint: string;
   readonly outcome:
     | { readonly ok: true; readonly value: DispatchResult }
@@ -100,7 +112,13 @@ export class EditorSurface {
       kind as BlueprintCommand["kind"],
       payload as Record<string, unknown>,
     );
-    if (requestId === undefined) return this.options.orchestrator.dispatch(command);
+    const projectSessionId = this.readCurrentSession()?.sessionId;
+    if (!projectSessionId) {
+      throw new JsonRpcError(RpcErrorCode.ProjectNotOpen, "No project session is active");
+    }
+    if (requestId === undefined) {
+      return this.dispatchInSession(command, projectSessionId);
+    }
     if (
       typeof requestId !== "string" ||
       requestId.trim().length === 0 ||
@@ -115,6 +133,7 @@ export class EditorSurface {
     const fingerprint = stableJson(command);
     const completed = this.completedDispatches.get(requestId);
     if (completed) {
+      this.assertSameProjectSession(requestId, completed.projectSessionId, projectSessionId);
       this.assertSameRequest(requestId, completed.fingerprint, fingerprint);
       // Reinsere para manter uma LRU simples e deterministicamente limitada.
       this.completedDispatches.delete(requestId);
@@ -124,6 +143,7 @@ export class EditorSurface {
     }
     const inFlight = this.inFlightDispatches.get(requestId);
     if (inFlight) {
+      this.assertSameProjectSession(requestId, inFlight.projectSessionId, projectSessionId);
       this.assertSameRequest(requestId, inFlight.fingerprint, fingerprint);
       return inFlight.promise;
     }
@@ -134,18 +154,32 @@ export class EditorSurface {
       );
     }
 
-    const promise = this.options.orchestrator.dispatch(command);
-    this.inFlightDispatches.set(requestId, { fingerprint, promise });
+    const promise = this.dispatchInSession(command, projectSessionId);
+    this.inFlightDispatches.set(requestId, { projectSessionId, fingerprint, promise });
     void promise.then(
-      (value) => this.completeDispatch(requestId, fingerprint, { ok: true, value }),
-      (error: unknown) => this.completeDispatch(requestId, fingerprint, { ok: false, error }),
+      (value) => this.completeDispatch(
+        requestId,
+        projectSessionId,
+        fingerprint,
+        { ok: true, value },
+      ),
+      (error: unknown) => this.completeDispatch(
+        requestId,
+        projectSessionId,
+        fingerprint,
+        { ok: false, error },
+      ),
     );
     return promise;
   }
 
   /** Projeções de leitura do Blueprint (shape idêntico entre transports). */
   query(projection: string): Record<string, unknown> {
-    const store = this.options.store;
+    const session = this.readCurrentSession();
+    if (!session) {
+      throw new JsonRpcError(RpcErrorCode.ProjectNotOpen, "No project session is active");
+    }
+    const store = session.store;
     switch (projection as QueryableProjection) {
       case "skeletons":
         return { skeletons: store.listSkeletons() };
@@ -171,7 +205,7 @@ export class EditorSurface {
         };
       }
       case "document":
-        return { document: exportBlueprint(store) };
+        return { document: exportBlueprint(store, session.projectId) };
       default:
         throw new JsonRpcError(
           RpcErrorCode.InvalidParams,
@@ -185,34 +219,92 @@ export class EditorSurface {
    * ponto de leitura atômico; a borda carimba o cursor do journal logo depois,
    * ainda no mesmo turno síncrono.
    */
-  snapshot(): CompleteProjectionSnapshot {
-    return Object.freeze(
-      Object.fromEntries(
-        QUERYABLE_PROJECTIONS.map((projection) => [projection, this.query(projection)]),
-      ) as Record<QueryableProjection, Record<string, unknown>>,
-    );
+  snapshot(): EditorSnapshot {
+    const session = this.readCurrentSession();
+    const projections = !session
+      ? emptyProjectionSnapshot()
+      : Object.freeze(
+          Object.fromEntries(
+            QUERYABLE_PROJECTIONS.map((projection) => [projection, this.query(projection)]),
+          ) as Record<QueryableProjection, Record<string, unknown>>,
+        );
+    return Object.freeze({ projections, status: this.projectStatus() });
   }
 
-  /** Replay canônico de um documento salvo (exige Blueprint vazio). */
-  async loadDocument(document: unknown): Promise<ReplaySummary> {
-    if (typeof document !== "object" || document === null) {
+  projectStatus(): ProjectStatus {
+    // A identidade/progresso precisa pertencer ao mesmo ponto observável das
+    // projeções e do journal; durante commit/staging o caller deve tentar de novo.
+    this.readCurrentSession();
+    return this.options.sessions.status;
+  }
+
+  async projectCreate(
+    projectId?: unknown,
+    templateId?: unknown,
+    expectedProjectSessionId?: unknown,
+  ): Promise<ProjectActivationResult> {
+    if (projectId !== undefined && (typeof projectId !== "string" || projectId.length === 0)) {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `"projectId" must be a non-empty string`);
+    }
+    if (templateId !== undefined && (typeof templateId !== "string" || templateId.length === 0)) {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `"templateId" must be a non-empty string`);
+    }
+    this.validateExpectedSessionId(expectedProjectSessionId);
+    try {
+      const prepared = templateId
+        ? await this.options.sessions.createFromTemplate(templateId as string, projectId as string | undefined)
+        : this.options.sessions.createEmptySession(projectId as string | undefined);
+      return await this.options.sessions.replaceAtomically(
+        prepared,
+        expectedProjectSessionId as string | undefined,
+      );
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  async projectOpenDocument(
+    document: unknown,
+    expectedProjectSessionId?: unknown,
+  ): Promise<ProjectActivationResult> {
+    if ((typeof document !== "object" || document === null) && typeof document !== "string") {
       throw new JsonRpcError(
         RpcErrorCode.InvalidParams,
-        `"document" must be a blueprint document object`,
+        `"document" must be a blueprint document object or JSON string`,
+      );
+    }
+    this.validateExpectedSessionId(expectedProjectSessionId);
+    try {
+      const prepared = await this.options.sessions.prepareFromDocument(document);
+      return await this.options.sessions.replaceAtomically(
+        prepared,
+        expectedProjectSessionId as string | undefined,
+      );
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  async projectClose(expectedProjectSessionId?: unknown): Promise<ProjectStatus> {
+    if (
+      expectedProjectSessionId !== undefined &&
+      (typeof expectedProjectSessionId !== "string" || expectedProjectSessionId.length === 0)
+    ) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"expectedProjectSessionId" must be a non-empty string`,
       );
     }
     try {
-      return await replayDocument(
-        document as BlueprintDocument,
-        this.options.store,
-        this.options.orchestrator,
-      );
-    } catch (err) {
-      if (err instanceof BlueprintDocumentError) {
-        throw new JsonRpcError(RpcErrorCode.InvalidParams, err.message);
-      }
-      throw err;
+      return await this.options.sessions.close(expectedProjectSessionId as string | undefined);
+    } catch (error) {
+      throw this.toApplicationError(error);
     }
+  }
+
+  /** Alias compatível; a implementação agora é transacional e substitui A por B. */
+  async loadDocument(document: unknown, expectedProjectSessionId?: unknown): Promise<ReplaySummary> {
+    return (await this.projectOpenDocument(document, expectedProjectSessionId)).summary;
   }
 
   listTemplates(): readonly ProjectTemplateInfo[] {
@@ -225,6 +317,7 @@ export class EditorSurface {
 
   async newProjectFromTemplate(
     templateId: unknown,
+    expectedProjectSessionId?: unknown,
   ): Promise<ReplaySummary & { templateId: string; name: string }> {
     if (typeof templateId !== "string" || templateId.length === 0) {
       throw new JsonRpcError(RpcErrorCode.InvalidParams, `"templateId" must be a non-empty string`);
@@ -233,19 +326,8 @@ export class EditorSurface {
     if (!template) {
       throw new JsonRpcError(RpcErrorCode.InvalidParams, `Unknown project template "${templateId}"`);
     }
-    try {
-      const summary = await replayDocument(
-        template.create(),
-        this.options.store,
-        this.options.orchestrator,
-      );
-      return { templateId: template.id, name: template.label, ...summary };
-    } catch (err) {
-      if (err instanceof BlueprintDocumentError) {
-        throw new JsonRpcError(RpcErrorCode.InvalidParams, err.message);
-      }
-      throw err;
-    }
+    const activation = await this.projectCreate(undefined, template.id, expectedProjectSessionId);
+    return { templateId: template.id, name: template.label, ...activation.summary };
   }
 
   resolveExperience(family?: string, version?: string): ResolvedExperience {
@@ -260,6 +342,47 @@ export class EditorSurface {
     return this.options.adapter.isConnected;
   }
 
+  private async dispatchInSession(
+    command: BlueprintCommand,
+    projectSessionId: string,
+  ): Promise<SessionDispatchResult> {
+    try {
+      return await this.options.sessions.dispatch(command, projectSessionId);
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  private readCurrentSession() {
+    try {
+      return this.options.sessions.readCurrent();
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  private validateExpectedSessionId(value: unknown): void {
+    if (value !== undefined && (typeof value !== "string" || value.length === 0)) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"expectedProjectSessionId" must be a non-empty string`,
+      );
+    }
+  }
+
+  private toApplicationError(error: unknown): unknown {
+    if (error instanceof BlueprintDocumentError) {
+      return new JsonRpcError(RpcErrorCode.InvalidParams, error.message);
+    }
+    if (error instanceof ProjectNotOpenError) {
+      return new JsonRpcError(RpcErrorCode.ProjectNotOpen, error.message);
+    }
+    if (error instanceof ProjectSessionConflictError) {
+      return new JsonRpcError(RpcErrorCode.ProjectSessionConflict, error.message);
+    }
+    return error;
+  }
+
   private assertSameRequest(requestId: string, expected: string, actual: string): void {
     if (expected !== actual) {
       throw new JsonRpcError(
@@ -269,21 +392,54 @@ export class EditorSurface {
     }
   }
 
+  private assertSameProjectSession(
+    requestId: string,
+    expected: string,
+    actual: string,
+  ): void {
+    if (expected !== actual) {
+      throw new JsonRpcError(
+        RpcErrorCode.ProjectSessionConflict,
+        `requestId "${requestId}" belongs to project session ${expected}; ` +
+          `the active session is ${actual}`,
+      );
+    }
+  }
+
   private completeDispatch(
     requestId: string,
+    projectSessionId: string,
     fingerprint: string,
     outcome: CompletedDispatch["outcome"],
   ): void {
     const current = this.inFlightDispatches.get(requestId);
-    if (!current || current.fingerprint !== fingerprint) return;
+    if (
+      !current ||
+      current.projectSessionId !== projectSessionId ||
+      current.fingerprint !== fingerprint
+    ) return;
     this.inFlightDispatches.delete(requestId);
-    this.completedDispatches.set(requestId, { fingerprint, outcome });
+    this.completedDispatches.set(requestId, { projectSessionId, fingerprint, outcome });
     while (this.completedDispatches.size > MAX_COMPLETED_DISPATCHES) {
       const oldest = this.completedDispatches.keys().next().value as string | undefined;
       if (oldest === undefined) break;
       this.completedDispatches.delete(oldest);
     }
   }
+}
+
+function emptyProjectionSnapshot(): CompleteProjectionSnapshot {
+  return Object.freeze({
+    skeletons: { skeletons: [] },
+    meshes: { meshes: [] },
+    lights: { lights: [] },
+    entityDefs: { entityDefs: [] },
+    entities: { entities: [] },
+    camera: { camera: {} },
+    levels: { levels: [] },
+    world: { placements: [], neighbors: {} },
+    document: { document: null },
+  });
 }
 
 /** JSON canônico suficiente para detectar reutilização indevida de requestId. */

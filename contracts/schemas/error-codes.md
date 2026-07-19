@@ -10,9 +10,15 @@
 | `-32005` | `INVALID_BINARY_LAYOUT` | `strideInBytes`/`vertexCount` inconsistentes com o mapa |
 | `-32006` | `DUPLICATE_ID` | Tentativa de registrar um id já existente |
 | `-32007` | `AUTHENTICATION_FAILED` | Token efêmero do editor ausente ou inválido no gateway legado |
+| `-32008` | `PROJECT_NOT_OPEN` | A operação exige uma sessão de projeto ativa |
+| `-32009` | `PROJECT_SESSION_CONFLICT` | A sessão ativa mudou antes de uma operação protegida concluir |
 
 Os códigos padrão do JSON-RPC 2.0 (`-32700`, `-32600`, `-32601`, `-32602`, `-32603`)
 mantêm a semântica da especificação.
+
+O TypeScript reconhece 15 códigos ao todo: os cinco reservados e os sete de
+domínio `-32000..-32006` são compartilhados com C#; autenticação e integridade
+de sessão (`-32007..-32009`) existem somente no middleware.
 
 ## Taxonomia dos códigos de erro
 
@@ -30,7 +36,7 @@ mindmap
         p602["Parametros invalidos"]
       c603["-32603 InternalError"]
         p603["Falha interna do servidor"]
-    Dominio P7M -32000 a -32007
+    Dominio P7M -32000 a -32009
       d000["-32000 EngineNotReady"]
         q000["Sem handshake ou reidratando"]
       d001["-32001 ProtocolMismatch"]
@@ -47,9 +53,13 @@ mindmap
         q006["id ja existente"]
       d007["-32007 AuthenticationFailed"]
         q007["token efemero ausente ou invalido"]
+      d008["-32008 ProjectNotOpen"]
+        q008["nenhuma sessao de projeto ativa"]
+      d009["-32009 ProjectSessionConflict"]
+        q009["identidade esperada divergiu"]
 ```
 
-*Mostra a taxonomia dos códigos de erro separando os reservados do JSON-RPC 2.0 (`-327xx`/`-326xx`) dos de domínio P7M (`-32000..-32007`). Os códigos compartilhados com a engine permanecem idênticos em TypeScript e C#; `AuthenticationFailed` pertence ao gateway do editor no middleware.*
+*Mostra a taxonomia dos códigos de erro separando os reservados do JSON-RPC 2.0 (`-327xx`/`-326xx`) dos de domínio P7M (`-32000..-32009`). Os códigos compartilhados com a engine permanecem idênticos em TypeScript e C#; os códigos de autenticação e sessão de projeto pertencem às bordas do editor no middleware.*
 
 ## Origem dos erros de sessão (`-32000` / `-32001`)
 
@@ -63,7 +73,9 @@ sequenceDiagram
     M-->>E: erro ProtocolMismatch -32001
   else MAJOR compativel (PROTOCOL_VERSION 1.0)
     M-->>E: {sessionId uuid v4, acceptedCapabilities}
-    Note over M: emite session e adapter.rehydrateFrom(store)
+    Note over M: emite session
+    M->>E: engine/reset_session {}
+    Note over M: sessions.rehydrateCurrent() usa apenas o projeto ativo
   end
   opt comando enviado antes da engine pronta
     M->>E: skeleton/initialize (timeout 10s)

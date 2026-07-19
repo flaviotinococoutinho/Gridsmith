@@ -41,7 +41,7 @@ graph TD
 | Documento Blueprint | inteiro (`schemaVersion`) | `middleware/src/canonical/BlueprintSerializer.ts` | exato ou migrado | rejeita se > suportada |
 | Artefato | inteiro (`schemaVersion`) + `revision` | `contracts/schemas/artifact.envelope.schema.json` · `ArtifactStore.ts` | revisões append-only; dedup `(contentHash, schemaVersion)` | — |
 | Runtime profile | `família + versão` (`^\d+\.\d+(\.\d+)?$`) | `contracts/schemas/runtime.profile.schema.json` · `runtime/RuntimeProfile.ts` | exato ou maior `≤` pedida; imutável | `UnknownRuntimeError` |
-| Adapter de runtime | — (sem constante própria) | `runtime/RuntimeAdapter.ts` · `MonoGameAdapter.ts` | governado pelos perfis (família+versão) | projeção `deferred`/`skipped` com razão |
+| Adapter de runtime | — (sem constante própria) | `runtime/RuntimeAdapter.ts` · `MonoGameAdapter.ts` | governado pelos perfis (família+versão) | projeção `deferred`/`skipped` com razão; sessão `failed` é fail-closed |
 | Shared memory | inteiro (`layoutVersion`) | `contracts/shared-memory-layout.md` · header MMF | binária estrita | `InvalidBinaryLayout` (-32005) |
 | Layout de vértice | inteiro (`LayoutVersion`, stride 36) | `engine/.../SharedMemory/SkinnedVertex2D.cs` | offsets publicados por reflexão | `InvalidBinaryLayout` (-32005) |
 | Contrato GraphQL do app | SDL (arquivo único) | `contracts/graphql/editor.schema.graphql` | evolução aditiva; cursor composto e snapshot completos | — (baseline e destino do fallback; ADR-016/019) |
@@ -87,13 +87,13 @@ graph TD
 | Campo | Conteúdo |
 |---|---|
 | Componente | Documento declarativo do projeto (`exportBlueprint` / load por replay) |
-| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 1`; documento sem `schemaVersion` é tratado como versão `0` |
+| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 2`; documento sem `schemaVersion` é tratado como versão `0` |
 | Fonte de verdade | `middleware/src/canonical/BlueprintSerializer.ts` |
 | Regra de compatibilidade | Versão exata é carregada direto; versões anteriores são **migradas em cadeia** `v(n) → v(n+1)` antes do replay |
 | Breaking change | Qualquer mudança estrutural do documento exige nova versão **+** entrada correspondente no registro `MIGRATIONS` |
-| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (hoje `0 → 1`); `documentToCommands` migra de forma transparente na carga (`blueprint/load`) |
+| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2`); v2 introduz `projectId`, derivado deterministicamente para v1; `project/openDocument` prepara e valida antes da troca; `expectedProjectSessionId` protege o commit contra candidato obsoleto |
 | Fallback | Versão acima da suportada é **rejeitada** com `BlueprintDocumentError` (mensagem clara); versão sem migrador registrado é rejeitada |
-| Teste | `middleware/test/blueprint-migration.test.ts` (upgrade de v0/legado, v0 explícito, rejeição de versão futura, rejeição de não-objeto) |
+| Teste | `middleware/test/blueprint-migration.test.ts` + `project-session-manager.test.ts` (projectId v1 determinístico, replay isolado, rollback, CAS e troca A→B) |
 
 ### Artefato versionável
 
@@ -131,7 +131,7 @@ graph TD
 | Regra de compatibilidade | O adapter declara `family` e obtém a `version` do runtime vivo via `identify()` (handshake/manifesto); a compatibilidade efetiva é governada pelos **perfis** (família+versão) |
 | Breaking change | n/a — o adapter acompanha os contratos JSON-RPC e os perfis; mudança incompatível recai sobre esses eixos |
 | Migração | n/a |
-| Fallback | Evento sem suporte no runtime → projeção `deferred`/`skipped` com **razão acionável** (nunca erro silencioso) |
+| Fallback | Evento sem suporte no runtime → projeção `deferred`/`skipped` com **razão acionável**; compensação irrecuperável → sessão `failed`, sem aceitar mutações até recovery |
 | Teste | `middleware/test/runtime-governance.test.ts` + `scripts/verify-phase4.sh` (projeção real na engine) |
 
 ### Layout de shared memory (MMF)
@@ -164,13 +164,14 @@ graph TD
 
 | Campo | Conteúdo |
 |---|---|
-| Componente | Superfície baseline app ↔ middleware: queries/mutations completas, `snapshot` e `eventBatch`; também destino do fallback (ADR-016/017/019) |
+| Componente | Superfície baseline app ↔ middleware: `projectCreate/openDocument/close/status`, queries/mutations completas, `snapshot` e `eventBatch`; também destino do fallback (ADR-016/017/019/020) |
 | Formato da versão | Sem constante própria — o SDL é o contrato, versionado como arquivo único no repositório |
 | Fonte de verdade | `contracts/graphql/editor.schema.graphql` (o build do middleware copia para `dist/contracts/`; a cópia deve ser **byte-idêntica**) |
 | Regra de compatibilidade | Evolução **aditiva** (campo/valor novo não quebra cliente); o enum `CommandKind` deve espelhar `COMMAND_KINDS` (mapeamento `_` ⇄ `/` — GraphQL não aceita `/` em enum) |
 | Breaking change | Remover/renomear campo, tipo ou valor de enum — app e middleware são processos locais da mesma instalação e atualizam juntos |
 | Migração | n/a (distribuição conjunta) |
-| Continuidade | Cursor novo é `(middlewareInstanceId, seq decimal uint64)`; `firstAvailableSeq`/`lastEventSeq` delimitam a janela; `resyncRequired` exige reconstrução por `snapshot`. `eventsSince(Int)` permanece legado e não oferece essa garantia. |
+| Continuidade | Cursor novo é `(middlewareInstanceId, projectSessionId, seq decimal uint64)`; `firstAvailableSeq`/`lastEventSeq` delimitam a partição ativa; restart, gap ou troca de projeto exigem reconstrução por `snapshot`. APIs sem identidade de sessão falham explicitamente. |
+| Concorrência | `projectCreate` e `projectOpenDocument` validam `expectedProjectSessionId` no commit; `projectClose` aplica a mesma proteção. Divergência retorna `PROJECT_SESSION_CONFLICT`. |
 | Autenticação | Bearer efêmero obrigatório. HTTP 401 é erro terminal e não aciona outro transport. |
 | Fallback | — (o GraphQL **é** o baseline completo e o fallback do caminho quente) |
 | Teste | Paridade `dist` ⇄ fonte + enum ⇄ `COMMAND_KINDS` em `middleware/test/transport-gateways.test.ts`; e2e `scripts/verify-transports.sh` |
@@ -179,13 +180,14 @@ graph TD
 
 | Campo | Conteúdo |
 |---|---|
-| Componente | Caminho quente app ↔ middleware — serviço `EditorHotPath` (`Dispatch`, `Query`, `Snapshot`, `StreamEventsV2`, `Health`; RPCs legados preservados) |
+| Componente | App ↔ middleware — serviço `EditorHotPath` (`ProjectCreate`, `ProjectOpenDocument`, `ProjectClose`, `ProjectStatus`, `Dispatch`, `Query`, `Snapshot`, `StreamEventsV2`, `Health`; RPCs legados preservados) |
 | Formato da versão | Package proto — `p7m.editor.v1` |
 | Fonte de verdade | `contracts/grpc/p7m_editor.proto` (cópia em `dist/contracts/` gerada pelo build; byte-idêntica) |
 | Regra de compatibilidade | Protobuf aditivo (campos novos com tags novas); os payloads de comando viajam como `payload_json` e são validados na **mesma fonte única** (`BlueprintStore` + `contracts/schemas/`) — o proto não introduz segunda fonte de validação |
 | Breaking change | Mudança incompatível de mensagem/RPC = novo package (`p7m.editor.v2`) |
 | Migração | n/a (distribuição conjunta) |
-| Continuidade | `Health`/`Snapshot` expõem identidade e limites; `StreamEventsV2` envia um frame de status antes dos eventos. Restart/gap/cursor futuro resultam em `resync_required` sem cauda parcial. `request_id` torna retry cross-transport idempotente. |
+| Continuidade | `Health`/`Snapshot` expõem identidade e limites; `StreamEventsV2` envia um frame de status antes dos eventos. Restart/gap/cursor futuro/troca de sessão resultam em `resync_required` sem cauda parcial. `request_id` torna retry cross-transport idempotente. |
+| Concorrência | Requests de create/open/close carregam `expected_project_session_id`; o servidor valida a identidade no commit atômico. |
 | Autenticação | Metadata `authorization` com Bearer efêmero obrigatória. `UNAUTHENTICATED` nunca aciona fallback. |
 | Fallback | **Somente indisponibilidade** do canal → GraphQL; autenticação, domínio e incompatibilidade de contrato não são cobertos por fallback. Default/freeze segue ADR-019. |
 | Teste | Paridade `dist` ⇄ fonte em `middleware/test/transport-gateways.test.ts`; fallback ao vivo em `frontend/test/editor-client.integration.test.ts`; e2e `scripts/verify-transports.sh` |

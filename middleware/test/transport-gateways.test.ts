@@ -14,16 +14,28 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fs from "node:fs";
 import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as grpc from "@grpc/grpc-js";
-import { CanonicalOrchestrator } from "../src/canonical/CanonicalOrchestrator.js";
 import { EditorSurface } from "../src/canonical/EditorSurface.js";
+import {
+  ProjectSessionManager,
+  type ProjectSessionChangedEvent,
+  type SessionBlueprintEvent,
+} from "../src/canonical/ProjectSessionManager.js";
 import { COMMAND_KINDS } from "../src/canonical/commandShape.js";
 import { HookBus } from "../src/canonical/HookBus.js";
-import { BlueprintStore, type BlueprintEvent } from "../src/domain/BlueprintStore.js";
+import type { BlueprintStore } from "../src/domain/BlueprintStore.js";
 import { GraphQlGateway, resolveSdlPath, graphqlKindToCanonical } from "../src/graphql/GraphQlGateway.js";
 import { GrpcGateway, resolveProtoPath, loadEditorProto } from "../src/grpc/GrpcGateway.js";
+import { EditorGateway } from "../src/ipc/EditorGateway.js";
+import { JsonRpcPeer } from "../src/ipc/JsonRpcPeer.js";
+import {
+  JsonRpcError,
+  PROTOCOL_VERSION,
+  RpcErrorCode,
+} from "../src/protocol/jsonrpc.js";
 import { EventJournal } from "../src/transport/EventJournal.js";
 import {
   bearerAuthorization,
@@ -47,6 +59,12 @@ function offlineAdapter(): RuntimeAdapter {
       status: "deferred",
       reason: "no engine session connected",
     }),
+    resetSession: async () => ({
+      status: "deferred",
+      runtimeSessionEpoch: 0,
+      reason: "no engine session connected",
+    }),
+    rehydrateFrom: async () => [],
   };
 }
 
@@ -54,20 +72,53 @@ interface Rig {
   surface: EditorSurface;
   journal: EventJournal;
   store: BlueprintStore;
+  sessions: ProjectSessionManager;
 }
 
-function makeRig(capacity = 512, middlewareInstanceId = "middleware-test"): Rig {
-  const store = new BlueprintStore();
+async function makeRig(capacity = 512, middlewareInstanceId = "middleware-test"): Promise<Rig> {
   const hooks = new HookBus();
   const adapter = offlineAdapter();
-  const orchestrator = new CanonicalOrchestrator(store, hooks, adapter);
+  const sessions = new ProjectSessionManager({ hooks, adapter });
   const profiles = new RuntimeProfileRegistry();
   for (const profile of MONOGAME_PROFILES) profiles.register(profile);
   const governor = new ExperienceGovernor(profiles);
-  const surface = new EditorSurface({ orchestrator, store, governor, adapter });
+  const surface = new EditorSurface({ sessions, governor, adapter });
   const journal = new EventJournal(capacity, middlewareInstanceId);
-  store.on("event", (event: BlueprintEvent) => journal.append(event.kind, event));
-  return { surface, journal, store };
+  await sessions.activate(sessions.createEmptySession("transport-test-project"));
+  const status = sessions.status;
+  journal.activateSession(status.projectSessionId!, status.projectId!, status.commandSequence);
+  sessions.on("event", (event: SessionBlueprintEvent) => {
+    journal.appendForSession(
+      event.projectSessionId,
+      event.projectId,
+      event.commandSequence,
+      event.kind,
+      event,
+    );
+  });
+  sessions.on("sessionChanged", (event: ProjectSessionChangedEvent) => {
+    if (event.action === "activated") {
+      journal.activateSession(event.projectSessionId!, event.projectId!, event.commandSequence);
+      journal.appendForSession(
+        event.projectSessionId!,
+        event.projectId!,
+        event.commandSequence,
+        event.kind,
+        event,
+      );
+      return;
+    }
+    const previous = journal.position;
+    journal.appendForSession(
+      previous.projectSessionId,
+      previous.projectId,
+      previous.commandSequence,
+      event.kind,
+      event,
+    );
+    journal.deactivateSession();
+  });
+  return { surface, journal, store: sessions.current!.store, sessions };
 }
 
 const silent = createLogger("test", { level: "silent" });
@@ -118,6 +169,8 @@ interface HotPathClient {
       reply: {
         ok: boolean;
         middleware_instance_id: string;
+        project_session_id: string;
+        project_id: string;
         first_available_seq: string;
         last_event_seq: string;
       },
@@ -135,6 +188,8 @@ interface HotPathClient {
       reply: {
         projections_json: string;
         middleware_instance_id: string;
+        project_session_id: string;
+        project_id: string;
         first_available_seq: string;
         last_event_seq: string;
       },
@@ -143,8 +198,29 @@ interface HotPathClient {
   StreamEvents(req: { after_seq: number }): { on(ev: string, fn: (arg: unknown) => void): void; cancel(): void };
   StreamEventsV2(req: {
     middleware_instance_id: string;
+    project_session_id: string;
     after_seq: string;
   }): { on(ev: string, fn: (arg: unknown) => void): void; cancel(): void };
+  ProjectCreate(
+    req: {
+      project_id?: string;
+      template_id?: string;
+      expected_project_session_id?: string;
+    },
+    cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
+  ): void;
+  ProjectOpenDocument(
+    req: { document_json: string; expected_project_session_id?: string },
+    cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
+  ): void;
+  ProjectClose(
+    req: { expected_project_session_id?: string },
+    cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
+  ): void;
+  ProjectStatus(
+    req: object,
+    cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
+  ): void;
   close(): void;
 }
 
@@ -155,6 +231,7 @@ function grpcClient(target: string): HotPathClient {
   const raw = new pkg.p7m.editor.v1.EditorHotPath(target, grpc.credentials.createInsecure());
   const authenticatedMethods = new Set([
     "Health", "Dispatch", "Query", "Snapshot", "StreamEvents", "StreamEventsV2",
+    "ProjectCreate", "ProjectOpenDocument", "ProjectClose", "ProjectStatus",
   ]);
   return new Proxy(raw as object, {
     get(targetClient, property, receiver) {
@@ -204,7 +281,7 @@ test("paridade de contrato: cópias em dist/ idênticas à fonte em contracts/ e
 });
 
 test("EditorSurface: snapshot completo e requestId impedem dispatch duplicado", async () => {
-  const rig = makeRig(8, "middleware-pure");
+  const rig = await makeRig(8, "middleware-pure");
   const payload = { entityDefId: "coin", fields: [{ name: "value", type: "int", default: 1 }] };
 
   const first = rig.surface.dispatchByKind("entitydef/define", payload, "request-1");
@@ -226,16 +303,38 @@ test("EditorSurface: snapshot completo e requestId impedem dispatch duplicado", 
   );
 
   const snapshot = rig.surface.snapshot();
-  assert.deepEqual(Object.keys(snapshot).sort(),
+  assert.deepEqual(Object.keys(snapshot.projections).sort(),
     ["camera", "document", "entities", "entityDefs", "levels", "lights", "meshes", "skeletons", "world"].sort());
   assert.equal(
-    (snapshot.entityDefs["entityDefs"] as Array<{ entityDefId: string }>)[0]?.entityDefId,
+    (snapshot.projections.entityDefs["entityDefs"] as Array<{ entityDefId: string }>)[0]?.entityDefId,
     "coin",
   );
+  assert.equal(snapshot.status.projectSessionId, rig.sessions.current?.sessionId);
+
+  const sessionA = rig.sessions.current!.sessionId;
+  await rig.sessions.replaceAtomically(
+    rig.sessions.createEmptySession("transport-test-project-b"),
+    sessionA,
+  );
+  await assert.rejects(
+    rig.surface.dispatchByKind("entitydef/define", payload, "request-1"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonRpcError);
+      assert.equal(error.code, RpcErrorCode.ProjectSessionConflict);
+      assert.match(error.message, /belongs to project session.*active session/);
+      return true;
+    },
+  );
+  assert.deepEqual(
+    rig.sessions.current!.store.listEntityDefs(),
+    [],
+    "a retry from session A must never be applied to session B",
+  );
+  assert.equal(rig.sessions.current!.history.lastSequence, 0n);
 });
 
-test("GraphQL: dispatch/query/eventsSince/templates/experience na mesma superfície canônica", async () => {
-  const { surface, journal } = makeRig();
+test("GraphQL: dispatch/query/eventBatch/templates/experience na mesma superfície canônica", async () => {
+  const { surface, journal } = await makeRig();
   const gateway = new GraphQlGateway({
     pipeName: `p7m-gql-${process.pid}-${pipeCounter++}`,
     surface,
@@ -284,19 +383,24 @@ test("GraphQL: dispatch/query/eventsSince/templates/experience na mesma superfí
     const lights = (queried.data?.["projection"] as { lights: Array<{ lightId: string }> }).lights;
     assert.equal(lights[0]?.lightId, "sun");
 
-    // eventos por polling incremental (fallback): o dispatch acima é seq 1
+    // O cursor legado não identifica sessão e falha explicitamente.
     const events = await graphqlRequest(socketPath, `{ eventsSince(afterSeq: 0) { seq kind } }`);
-    assert.deepEqual(events.data?.["eventsSince"], [{ seq: 1, kind: "lightAdded" }]);
+    assert.equal(events.errors?.[0]?.extensions?.code, -32602);
+    assert.match(events.errors?.[0]?.message ?? "", /unsafe without projectSessionId/);
 
     const batch = await graphqlRequest(
       socketPath,
-      `query ($instance: String!, $after: String!) {
-        eventBatch(middlewareInstanceId: $instance, afterSeq: $after) {
+      `query ($instance: String!, $session: String!, $after: String!) {
+        eventBatch(middlewareInstanceId: $instance, projectSessionId: $session, afterSeq: $after) {
           middlewareInstanceId firstAvailableSeq lastEventSeq
           resyncRequired resyncReason events { seq kind }
         }
       }`,
-      { instance: "middleware-test", after: "0" },
+      {
+        instance: "middleware-test",
+        session: journal.position.projectSessionId,
+        after: "0",
+      },
     );
     assert.deepEqual(batch.data?.["eventBatch"], {
       middlewareInstanceId: "middleware-test",
@@ -309,7 +413,11 @@ test("GraphQL: dispatch/query/eventsSince/templates/experience na mesma superfí
 
     const changed = await graphqlRequest(
       socketPath,
-      `query { eventBatch(middlewareInstanceId: "old-process", afterSeq: "99") {
+      `query { eventBatch(
+        middlewareInstanceId: "old-process",
+        projectSessionId: "${journal.position.projectSessionId}",
+        afterSeq: "99"
+      ) {
         resyncRequired resyncReason events { seq }
       } }`,
     );
@@ -360,7 +468,7 @@ test("GraphQL: dispatch/query/eventsSince/templates/experience na mesma superfí
 });
 
 test("GraphQL eventBatch: gap/cursor futuro são explícitos e nunca retornam cauda parcial", async () => {
-  const { surface, journal } = makeRig(2, "middleware-gap");
+  const { surface, journal } = await makeRig(2, "middleware-gap");
   journal.append("a", { kind: "a" });
   journal.append("b", { kind: "b" });
   journal.append("c", { kind: "c" });
@@ -374,7 +482,11 @@ test("GraphQL eventBatch: gap/cursor futuro são explícitos e nunca retornam ca
   await gateway.listen();
   try {
     const query = `query ($after: String!) {
-      eventBatch(middlewareInstanceId: "middleware-gap", afterSeq: $after) {
+      eventBatch(
+        middlewareInstanceId: "middleware-gap",
+        projectSessionId: "${journal.position.projectSessionId}",
+        afterSeq: $after
+      ) {
         firstAvailableSeq lastEventSeq resyncRequired resyncReason events { seq }
       }
     }`;
@@ -404,8 +516,8 @@ test("GraphQL eventBatch: gap/cursor futuro são explícitos e nunca retornam ca
   }
 });
 
-test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", async () => {
-  const { surface, journal } = makeRig();
+test("gRPC: dispatch/query unários + StreamEventsV2 session-aware com catch-up e ao vivo", async () => {
+  const { surface, journal } = await makeRig();
   const gateway = new GrpcGateway({
     pipeName: `p7m-grpc-${process.pid}-${pipeCounter++}`,
     surface,
@@ -439,14 +551,26 @@ test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", asyn
       }),
     );
 
+    const legacyFailure = await new Promise<grpc.ServiceError>((resolve) => {
+      const legacy = client.StreamEvents({ after_seq: 0 });
+      legacy.on("error", (error) => resolve(error as grpc.ServiceError));
+    });
+    assert.equal(legacyFailure.code, grpc.status.FAILED_PRECONDITION);
+
     const received: Array<{ seq: string; kind: string }> = [];
-    const stream = client.StreamEvents({ after_seq: 0 });
+    const stream = client.StreamEventsV2({
+      middleware_instance_id: journal.position.middlewareInstanceId,
+      project_session_id: journal.position.projectSessionId,
+      after_seq: "0",
+    });
     stream.on("error", () => {
       // CANCELLED esperado quando o teste encerra o stream
     });
     const gotTwo = new Promise<void>((resolve) => {
       stream.on("data", (raw) => {
-        const e = raw as { seq: string; kind: string };
+        const frame = raw as { event?: { seq: string; kind: string } };
+        if (!frame.event) return;
+        const e = frame.event;
         received.push({ seq: e.seq, kind: e.kind });
         if (received.length === 2) resolve();
       });
@@ -490,6 +614,7 @@ test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", asyn
     const status = await new Promise<Record<string, unknown>>((resolve, reject) => {
       const v2 = client.StreamEventsV2({
         middleware_instance_id: "middleware-test",
+        project_session_id: journal.position.projectSessionId,
         after_seq: "2",
       });
       v2.on("error", reject);
@@ -511,6 +636,7 @@ test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", asyn
       const frames: Array<Record<string, unknown>> = [];
       const v2 = client.StreamEventsV2({
         middleware_instance_id: "middleware-test",
+        project_session_id: journal.position.projectSessionId,
         after_seq: "0",
       });
       v2.on("data", (raw) => frames.push(raw as Record<string, unknown>));
@@ -534,8 +660,8 @@ test("gRPC: dispatch/query unários + StreamEvents com catch-up e ao vivo", asyn
   }
 });
 
-test("paridade entre transports: mesma mutação via GraphQL aparece na query gRPC (superfície única)", async () => {
-  const rig = makeRig();
+test("sessão de projeto: paridade GraphQL, gRPC e gateway legado sobre a mesma sessão", async () => {
+  const rig = await makeRig();
   const pipe = `p7m-both-${process.pid}-${pipeCounter++}`;
   const gql = new GraphQlGateway({
     pipeName: pipe,
@@ -551,10 +677,61 @@ test("paridade entre transports: mesma mutação via GraphQL aparece na query gR
     log: silent,
     authToken: AUTH_TOKEN,
   });
+  const legacy = new EditorGateway({
+    pipeName: pipe,
+    surface: rig.surface,
+    journal: rig.journal,
+    authToken: AUTH_TOKEN,
+  });
   await gql.listen();
   await hot.listen();
+  await legacy.listen();
   const client = grpcClient(hot.endpoint.grpcTarget);
+  const socket = net.connect(legacy.pipePath);
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  const legacyClient = new JsonRpcPeer(socket, {
+    label: "transport-parity-legacy",
+    requestTimeoutMs: 2_000,
+  });
+  await legacyClient.request("editor/handshake", {
+    clientName: "transport-parity",
+    protocolVersion: PROTOCOL_VERSION,
+    authToken: AUTH_TOKEN,
+  });
   try {
+    const created = await graphqlRequest(
+      gql.endpoint.address,
+      `mutation ($expected: String!) {
+        projectCreate(
+          projectId: "shared-project"
+          expectedProjectSessionId: $expected
+        ) {
+          status { active projectSessionId projectId commandSequence runtimeState }
+          summary { applied }
+        }
+      }`,
+      { expected: rig.sessions.status.projectSessionId },
+    );
+    const createdStatus = (created.data?.["projectCreate"] as {
+      status: { projectSessionId: string; projectId: string };
+    }).status;
+    assert.equal(createdStatus.projectId, "shared-project");
+
+    const grpcStatus = await new Promise<Record<string, unknown>>((resolve, reject) =>
+      client.ProjectStatus({}, (error, reply) => error ? reject(error) : resolve(reply)),
+    );
+    assert.equal(grpcStatus["project_session_id"], createdStatus.projectSessionId);
+    assert.equal(grpcStatus["project_id"], "shared-project");
+    const legacyStatus = await legacyClient.request("project/status", {}) as {
+      projectSessionId: string;
+      projectId: string;
+    };
+    assert.equal(legacyStatus.projectSessionId, createdStatus.projectSessionId);
+    assert.equal(legacyStatus.projectId, "shared-project");
+
     const definition = { entityDefId: "player", archetypeId: "hero", fields: [] };
     await graphqlRequest(
       gql.endpoint.address,
@@ -576,7 +753,8 @@ test("paridade entre transports: mesma mutação via GraphQL aparece na query gR
         (err) => (err ? reject(err) : resolve()),
       ),
     );
-    assert.equal(rig.journal.lastSeq, 1n, "retry cross-transport deve emitir um único evento");
+    const seqAfterFirstDispatch = rig.journal.lastSeq;
+    assert.equal(seqAfterFirstDispatch, 2n, "troca de sessão + primeiro comando");
     const reused = await new Promise<grpc.ServiceError>((resolve) =>
       client.Dispatch(
         {
@@ -587,6 +765,7 @@ test("paridade entre transports: mesma mutação via GraphQL aparece na query gR
         (err) => resolve(err!),
       ),
     );
+    assert.equal(rig.journal.lastSeq, seqAfterFirstDispatch, "retry não deve emitir evento");
     assert.equal(reused.code, grpc.status.INVALID_ARGUMENT);
     assert.match(reused.details, /different command/);
 
@@ -595,8 +774,90 @@ test("paridade entre transports: mesma mutação via GraphQL aparece na query gR
     );
     const defs = (JSON.parse(viaGrpc.result_json) as { entityDefs: Array<{ entityDefId: string }> }).entityDefs;
     assert.equal(defs[0]?.entityDefId, "player");
+
+    // Open pelo gRPC substitui a sessão observada imediatamente pelas outras
+    // duas bordas e não reaproveita o store anterior.
+    const opened = await new Promise<Record<string, unknown>>((resolve, reject) =>
+      client.ProjectOpenDocument(
+        {
+          document_json: JSON.stringify({
+            schemaVersion: 2,
+            projectId: "opened-via-grpc",
+            skeletons: [],
+            meshes: [],
+            camera: {},
+            lights: [],
+            entityDefs: [{ entityDefId: "from-grpc-open", fields: [] }],
+            entities: [],
+            levels: [],
+            placements: [],
+          }),
+          expected_project_session_id: createdStatus.projectSessionId,
+        },
+        (error, reply) => error ? reject(error) : resolve(reply),
+      ),
+    );
+    const openedStatus = opened["status"] as Record<string, unknown>;
+    assert.equal(openedStatus["project_id"], "opened-via-grpc");
+    const graphQlAfterOpen = await graphqlRequest(
+      gql.endpoint.address,
+      `{ projectStatus { projectSessionId projectId } projection(name: "entityDefs") }`,
+    );
+    assert.equal(
+      (graphQlAfterOpen.data?.["projectStatus"] as { projectId: string }).projectId,
+      "opened-via-grpc",
+    );
+    assert.deepEqual(
+      (graphQlAfterOpen.data?.["projection"] as { entityDefs: unknown[] }).entityDefs,
+      [{ entityDefId: "from-grpc-open", fields: [] }],
+    );
+    const legacyDefinitions = await legacyClient.request("blueprint/query", {
+      projection: "entityDefs",
+    }) as { entityDefs: unknown[] };
+    assert.deepEqual(
+      legacyDefinitions.entityDefs,
+      [{ entityDefId: "from-grpc-open", fields: [] }],
+    );
+
+    // Create pelo legado e close pelo gRPC completam a paridade das operações
+    // de aplicação e provam que status é único nas três bordas.
+    const legacyCreated = await legacyClient.request("project/create", {
+      projectId: "created-via-legacy",
+      expectedProjectSessionId: openedStatus["project_session_id"],
+    }) as { status: { projectSessionId: string; projectId: string } };
+    const graphQlAfterLegacyCreate = await graphqlRequest(
+      gql.endpoint.address,
+      `{ projectStatus { projectSessionId projectId active } }`,
+    );
+    assert.equal(
+      (graphQlAfterLegacyCreate.data?.["projectStatus"] as { projectSessionId: string }).projectSessionId,
+      legacyCreated.status.projectSessionId,
+    );
+    const grpcAfterLegacyCreate = await new Promise<Record<string, unknown>>((resolve, reject) =>
+      client.ProjectStatus({}, (error, reply) => error ? reject(error) : resolve(reply)),
+    );
+    assert.equal(grpcAfterLegacyCreate["project_id"], "created-via-legacy");
+
+    const closed = await new Promise<Record<string, unknown>>((resolve, reject) =>
+      client.ProjectClose(
+        { expected_project_session_id: legacyCreated.status.projectSessionId },
+        (error, reply) => error ? reject(error) : resolve(reply),
+      ),
+    );
+    assert.equal(closed["active"], false);
+    const graphQlClosed = await graphqlRequest(
+      gql.endpoint.address,
+      `{ projectStatus { active projectSessionId projectId } }`,
+    );
+    assert.equal((graphQlClosed.data?.["projectStatus"] as { active: boolean }).active, false);
+    assert.equal(
+      ((await legacyClient.request("project/status", {})) as { active: boolean }).active,
+      false,
+    );
   } finally {
+    legacyClient.close();
     client.close();
+    await legacy.close();
     hot.forceShutdown();
     await gql.close();
   }

@@ -129,6 +129,10 @@ async function connectFakeEngine(server: EnginePipeServer, calls: Array<{ method
   const peer = new JsonRpcPeer(socket, { label: "fake-engine", requestTimeoutMs: 2000 });
   let nextLightId = 700;
   peer.registerMethod("engine/describe", () => LIVE_MANIFEST);
+  peer.registerMethod("engine/reset_session", (params) => {
+    calls.push({ method: "engine/reset_session", params });
+    return { status: "reset" };
+  });
   peer.registerMethod("camera/configure", (params) => {
     calls.push({ method: "camera/configure", params });
     return params;
@@ -247,6 +251,171 @@ test("eventos sem suporte no runtime são pulados com razão; sem sessão, defer
   } finally {
     await server.close();
   }
+});
+
+test("reset de runtime desconectado é deferred com razão e reidratação não finge sucesso", async () => {
+  const server = new EnginePipeServer({
+    pipeName: `p7m-canon-${process.pid}-${pipeCounter++}`,
+    requestTimeoutMs: 2000,
+  });
+  const adapter = new MonoGameAdapter(server, new CapabilityRegistry(server));
+  const store = new BlueprintStore();
+  store.apply({ kind: "camera/configure", settings: { frequency: 3 } });
+  store.apply({
+    kind: "entitydef/define",
+    definition: { entityDefId: "marker", fields: [] },
+  });
+
+  const reset = await adapter.resetSession();
+  assert.equal(reset.status, "deferred");
+  assert.equal(reset.runtimeSessionEpoch, 0);
+  assert.match(reset.reason, /no engine session connected/);
+
+  const results = await adapter.rehydrateFrom(store, reset.runtimeSessionEpoch);
+  assert.equal(results.length, 1);
+  assert.deepEqual(results[0], {
+    event: "cameraConfigured",
+    status: "deferred",
+    reason: "no engine session connected",
+  });
+});
+
+test("reset conectado precede a reidratação e invalida ids locais da sessão anterior", async () => {
+  const calls: Array<{ method: string; params: unknown }> = [];
+  let nextLightId = 700;
+  const server = {
+    currentRuntimeSessionEpoch: 1,
+    currentSession: {
+      runtimeSessionEpoch: 1,
+      peer: {
+        request: async (method: string, params: unknown): Promise<unknown> => {
+          calls.push({ method, params });
+          if (method === "lighting/add") return { lightId: nextLightId++ };
+          if (method === "engine/reset_session") return { status: "reset" };
+          if (method === "lighting/remove") return { removed: true };
+          throw new Error(`unexpected fake-engine method: ${method}`);
+        },
+      },
+    },
+    on: () => server,
+  } as unknown as EnginePipeServer;
+  const adapter = new MonoGameAdapter(server, {} as CapabilityRegistry);
+
+  const previous = new BlueprintStore();
+  const previousOrchestrator = new CanonicalOrchestrator(previous, new HookBus(), adapter);
+  await previousOrchestrator.dispatch({
+    kind: "light/add",
+    light: {
+      lightId: "key",
+      type: "point",
+      position: [0, 0],
+      color: [1, 1, 1],
+      intensity: 1,
+      radius: 10,
+    },
+  });
+
+  const reset = await adapter.resetSession();
+  assert.equal(reset.status, "reset");
+
+  const active = new BlueprintStore();
+  active.apply({
+    kind: "light/add",
+    light: {
+      lightId: "key",
+      type: "point",
+      position: [1, 2],
+      color: [1, 1, 1],
+      intensity: 2,
+      radius: 20,
+    },
+  });
+  const rehydrated = await adapter.rehydrateFrom(active, reset.runtimeSessionEpoch);
+  assert.equal(rehydrated.length, 1);
+  assert.equal(rehydrated[0]?.status, "projected");
+
+  const activeOrchestrator = new CanonicalOrchestrator(active, new HookBus(), adapter);
+  await activeOrchestrator.dispatch({ kind: "light/remove", lightId: "key" });
+
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ["lighting/add", "engine/reset_session", "lighting/add", "lighting/remove"],
+  );
+  assert.deepEqual(calls.at(-1)?.params, { lightId: 701 });
+});
+
+test("rehydrateFrom mantém peer/epoch pinados e não envia a continuação para engine supersessora", async () => {
+  let releaseFirstProjection!: () => void;
+  const firstProjectionBlocked = new Promise<void>((resolve) => {
+    releaseFirstProjection = resolve;
+  });
+  let projectionStarted!: () => void;
+  const enteredFirstProjection = new Promise<void>((resolve) => {
+    projectionStarted = resolve;
+  });
+  const callsB: string[] = [];
+  const callsC: string[] = [];
+  let epoch = 1;
+  const sessionB = {
+    runtimeSessionEpoch: 1,
+    peer: {
+      request: async (method: string): Promise<unknown> => {
+        callsB.push(method);
+        if (method === "engine/reset_session") return { status: "reset" };
+        if (method === "lighting/add") {
+          projectionStarted();
+          await firstProjectionBlocked;
+          return { lightId: 1 };
+        }
+        throw new Error(`unexpected engine B method: ${method}`);
+      },
+    },
+  };
+  const sessionC = {
+    runtimeSessionEpoch: 2,
+    peer: {
+      request: async (method: string): Promise<unknown> => {
+        callsC.push(method);
+        return method === "lighting/add" ? { lightId: 2 } : { status: "reset" };
+      },
+    },
+  };
+  let currentSession = sessionB;
+  const server = {
+    get currentRuntimeSessionEpoch() {
+      return epoch;
+    },
+    get currentSession() {
+      return currentSession;
+    },
+    on: () => server,
+  } as unknown as EnginePipeServer;
+  const adapter = new MonoGameAdapter(server, {} as CapabilityRegistry);
+  const store = new BlueprintStore();
+  for (const id of ["one", "two"]) {
+    store.apply({
+      kind: "light/add",
+      light: {
+        lightId: id,
+        type: "point",
+        position: [0, 0],
+        color: [1, 1, 1],
+        intensity: 1,
+        radius: 10,
+      },
+    });
+  }
+
+  const reset = await adapter.resetSession();
+  const rehydrating = adapter.rehydrateFrom(store, reset.runtimeSessionEpoch);
+  await enteredFirstProjection;
+  epoch = 2;
+  currentSession = sessionC;
+  releaseFirstProjection();
+
+  await assert.rejects(rehydrating, /expected epoch 1, got 2/);
+  assert.deepEqual(callsB, ["engine/reset_session", "lighting/add"]);
+  assert.deepEqual(callsC, [], "engine C must receive only a fresh reset+full replay");
 });
 
 test("spawn table (P0.6): definição com archetypeId spawna ator; remoção despawna", async () => {

@@ -54,7 +54,7 @@ O P7M é um **ecossistema Engine-as-a-Service local** de três processos
 desacoplados — editor Electron/TypeScript, middleware Node.js/TypeScript e engine
 .NET 8/MonoGame — mediados por um **modelo canônico** independente de runtime e por
 **contratos versionados** (JSON Schema, layouts binários, perfis de runtime). A
-arquitetura já é **madura na plataforma** e **executável em suas regras**: 22 regras
+arquitetura já é **madura na plataforma** e **executável em suas regras**: 23 regras
 arquiteturais são testes que quebram o CI (`GOVERNANCE.md`), a compatibilidade
 binária entre TS e C# é provada por checksums cruzados em e2e, e o hot path da engine
 é verificado como Zero-GC por asserções de alocação. **CONFIRMADO.**
@@ -69,15 +69,12 @@ reescrever a base.
 
 Três achados estruturais orientam as recomendações:
 
-1. O **contrato de adapter de runtime é minimalista** — `RuntimeAdapter` tem apenas
-   `family`, `isConnected`, `identify`, `project`
-   (`middleware/src/runtime/RuntimeAdapter.ts:29-40`). `rehydrateFrom` **não** está na
-   porta; é método concreto do `MonoGameAdapter` (`:201`). Um segundo runtime não
-   herda, por tipo, a obrigação de reidratar nem de limpar estado por sessão.
-   **DECISÃO NECESSÁRIA.**
-2. A **explicabilidade** (razão de `skipped`/`deferred`) sustenta-se em uma
-   convenção não imposta pelo tipo: `ProjectionResult.reason` é opcional
-   (`RuntimeAdapter.ts:24`). **RISCO.**
+1. O **contrato de adapter de runtime fecha o ciclo de sessão** — `RuntimeAdapter`
+   exige `project`, `resetSession` e `rehydrateFrom`. Assim, todo adapter deve limpar o
+   projeto anterior antes de reidratar o seguinte. **CONFIRMADO** pela ADR-020.
+2. A **explicabilidade** é imposta pelo tipo: `ProjectionResult` é uma união
+   discriminada; `reason` é obrigatório nos ramos `skipped` e `deferred` e proibido
+   no ramo `projected`. **CONFIRMADO.**
 3. A **cobertura de testes espelha o diagnóstico de produto**: núcleos puros
    fortemente testados (suíte completa validada pelo CI), mas a camada de produto — `renderer.ts` (738
    linhas) e o wire de `main.ts` (440 linhas) — sem teste automatizado, e sem e2e
@@ -127,7 +124,7 @@ vertical `Projeto → Asset → Entidade → Nível → Preview → Live edit �
 
 ## 3. Pontos fortes (a preservar)
 
-1. **Governança executável, não documental** — 22 regras (R1–R12, F1–F5, E1–E5) são
+1. **Governança executável, não documental** — 23 regras (R1–R13, F1–F5, E1–E5) são
    testes que quebram o CI com o arquivo infrator no erro
    (`middleware/test/architecture.test.ts`, `frontend/test/architecture.test.ts`,
    `engine/tests/.../ArchitectureTests.cs`). **CONFIRMADO.**
@@ -146,8 +143,10 @@ vertical `Projeto → Asset → Entidade → Nível → Preview → Live edit �
 6. **Explicabilidade de primeira classe** — `skipped`/`deferred` carregam razão
    acionável; a matriz do `ExperienceGovernor` justifica cada recurso habilitado/
    desabilitado. **CONFIRMADO** (`ExperienceGovernor.ts:70-119`).
-7. **Paridade de protocolo TS↔C#** — `PROTOCOL_VERSION="1.0"`, framing e os 12 códigos
-   de erro são idênticos em nome e valor nos dois lados. **CONFIRMADO.**
+7. **Taxonomia de protocolo explícita** — `PROTOCOL_VERSION="1.0"`, framing e 12 dos
+   15 códigos TS são compartilhados com C#; os três restantes protegem somente a borda
+   local do middleware (`AuthenticationFailed`, `ProjectNotOpen` e
+   `ProjectSessionConflict`). **CONFIRMADO.**
 8. **Composition root explícita** — todas as dependências são instanciadas uma vez em
    `index.ts main()` e injetadas por construtor; nenhum service-locator.
    **CONFIRMADO** (`index.ts:46-163`).
@@ -166,15 +165,15 @@ preferência estética (ver Apêndice H).
 
 | # | Inconsistência | Evidência | Classificação | Ação |
 |---|---|---|---|---|
-| I-1 | `RuntimeAdapter` **não** declara `rehydrateFrom`; docs e o texto do escopo tratam a reidratação como parte do contrato de adapter | interface em `RuntimeAdapter.ts:29-40` (4 membros); método concreto em `MonoGameAdapter.ts:201`; `CANONICAL-MODEL.md:100-105` fala do adapter como "único dono da reidratação" | **DIVERGÊNCIA** | Elevar reidratação à porta (§12, R-02) |
+| I-1 | `RuntimeAdapter` não declarava limpeza/reidratação de sessão | `RuntimeAdapter.ts` agora exige `resetSession` e `rehydrateFrom`; `MonoGameAdapter` implementa ambos | **CONFIRMADO** (resolvida pela ADR-020) | Manter testes de contrato e rollback de runtime |
 | I-2 | `GOVERNANCE.md` fixava contagens de teste no próprio texto (propensas a drift) | `GOVERNANCE.md` | **DIVERGÊNCIA** (drift) | ✅ corrigido: contagens não são mais fixadas no texto — derivadas e validadas pelo CI (ver `GOVERNANCE.md` §4) |
 | I-3 | `REQUIREMENTS.md` falava em "6 hot loops cobertos"; há **8** métodos `*_is_allocation_free` em 7 arquivos (`SkeletonStoreTests`, `MeshSharedMemoryReaderTests`, `SkinningPipelineTests`, `CameraDynamicsTests` ×2, `ActorTests`, `LightingTests`, `TilemapTests`) | `REQUIREMENTS.md:44` | **DIVERGÊNCIA** (subcontagem) | ✅ corrigido nesta revisão |
 | I-4 | `ARCHITECTURE.md` listava `engine/heartbeat` como notification; o heartbeat real é um `engine/ping` com payload `"heartbeat"` | `ARCHITECTURE.md:76`; `engine/src/P7m.Engine.Runtime/Program.cs:68` | **DIVERGÊNCIA** | ✅ corrigido nesta revisão |
 | I-5 | `ARCHITECTURE.md` §capacidades dizia "Quando a Fase 3 adicionar câmera e iluminação…" (tempo futuro) — Fase 3 concluída | `ARCHITECTURE.md:44-45` | **DIVERGÊNCIA** (drift) | ✅ corrigido nesta revisão |
 | I-6 | Tabela de códigos de erro nomeia em SCREAMING_SNAKE (`ENGINE_NOT_READY`); o código usa PascalCase (`EngineNotReady`) | `contracts/schemas/error-codes.md` vs `jsonrpc.ts:42-56` e `JsonRpcProtocol.cs:16-31` | **DIVERGÊNCIA** (cosmética; valores idênticos) | Nota de mapeamento no contrato |
 
-Nenhuma dessas divergências afeta comportamento em runtime; são drift de documentação
-e um item de contrato (I-1) que **DEVERIA** ser fechado por tipo.
+Nenhuma divergência remanescente afeta comportamento em runtime; I-1 foi fechada por
+tipo e por teste na sessão transacional da ADR-020.
 
 ---
 
@@ -202,7 +201,8 @@ o será (ver §33). Alterá-los exige um ADR de revogação (§32).
   testes de igualdade.*
 - **P-7 — Explicabilidade.** Nenhum recurso **DEVE** ser desabilitado, pulado ou
   adiado sem razão legível (`reason`). *Imposto por testes do governor/gate; ver
-  RISCO em §21 sobre a não-obrigatoriedade de `reason` no tipo.*
+  a união discriminada `ProjectionResult`, que torna `reason` obrigatório em
+  `skipped`/`deferred`.*
 - **P-8 — Núcleo portável.** `core/` do frontend e os núcleos algorítmicos do
   middleware **DEVEM** permanecer puros (sem Electron/Node/transporte). *Imposto por
   F1, R5.*
@@ -211,8 +211,9 @@ o será (ver §33). Alterá-los exige um ADR de revogação (§32).
   `RuntimeProfileRegistry.register` (`RuntimeProfile.ts:60-64`).*
 - **P-10 — Persistência por replay.** Carregar projeto **DEVE** reproduzir o documento
   como comandos pelo orquestrador; o load **NÃO DEVE** injetar estado ignorando
-  validação/hooks/eventos/projeção. *Imposto por `BlueprintSerializer.replayDocument`
-  (`:96-118`) + precondição de store vazio.*
+  filters/validação/histórico. O replay **DEVE** ocorrer numa sessão temporária,
+  sem actions/journal/runtime, antes do commit. *Imposto por
+  `ProjectSessionManager` + `BlueprintSerializer.replayDocument`.*
 
 ---
 
@@ -267,7 +268,7 @@ middleware e engine; *modelo canônico* (verdade), *projeções de runtime* (ada
 
 A regra geral é a **Clean/Hexagonal**: dependências apontam **para dentro**; o
 interno (algoritmos puros → domínio canônico → orquestração → portas) nunca conhece o
-externo (adapters/IPC/MCP/filesystem/tools/composição). **CONFIRMADO** por R1–R12.
+externo (adapters/IPC/MCP/filesystem/tools/composição). **CONFIRMADO** por R1–R13.
 
 ```mermaid
 graph TD
@@ -282,7 +283,7 @@ graph TD
   DOM -.->|"R5: zero imports"| ALGO
 ```
 
-*Mostra a regra de dependencia do middleware: toda seta aponta para dentro (composition root -> externo -> portas -> orquestracao -> dominio -> algoritmos puros); o interno nunca conhece o externo. Nenhuma reescrita relaxa a regra — a correcao e mover a dependencia (R1-R12).*
+*Mostra a regra de dependência do middleware: toda seta aponta para dentro (composition root -> externo -> portas -> orquestração -> domínio -> algoritmos puros); o interno nunca conhece o externo. Nenhuma reescrita relaxa a regra — a correção é mover a dependência (R1-R13).*
 
 **Middleware — grafo permitido (imposto por import-graph scanning,
 `architecture.test.ts:25-66`):**
@@ -290,7 +291,7 @@ graph TD
 | Camada | PODE importar | NÃO DEVE importar | Regra |
 |---|---|---|---|
 | `leveldesign/AutoTiler`, `assets/AsepriteImporter`, `util/fnv1a` | **nada** | qualquer coisa | R5 |
-| `domain/BlueprintStore` | `node:events`, `leveldesign/AutoTiler`, `protocol/jsonrpc` | todo o resto | R3 |
+| `domain/BlueprintStore` | `leveldesign/AutoTiler`, `protocol/jsonrpc` | todo o resto | R3 |
 | `canonical/` | domínio, protocolo, algoritmos puros | `ipc/`, `mcp/`, `sharedmem/`, `assets/`, `tools/`, `runtime/MonoGameAdapter`, `index` | R2 |
 | `runtime/profiles/` | `runtime/RuntimeProfile` | tudo mais (relativo) | R4 |
 | `mcp/` | SDK MCP, `zod`, orquestrador (fachada) | — (mas é o **único** que importa o SDK/`zod`) | R1 |
@@ -363,6 +364,10 @@ graph TD
 - **`CanonicalOrchestrator`** — mediador do fluxo (`:31`); **DEVE** manter o kind do
   comando após filters (lança `Error` se um filter o corromper, `:36-41`); a projeção é
   **opcional** (adapter injetado como `adapter?`), permitindo operação offline.
+- **`ProjectSessionManager`** — porta substituível da sessão publicada; cria store,
+  orquestrador e histórico privados, prepara replay sem actions/journal/runtime e troca
+  a referência ativa somente após reset + reidratação do candidato. Create/open/close
+  **DEVEM** validar `expectedProjectSessionId` como compare-and-swap quando fornecido.
 - **`HookBus`** — extensão governada (`HookBus.ts`): **Filters** transformam em cadeia
   e **falham rápido** (um throw aborta a cadeia); **Actions** notificam e são
   **isoladas** (um throw é capturado, coletado em `errors`, não derruba os demais).
@@ -376,9 +381,10 @@ graph TD
   (`pipeline:<id>:<stage>`); `run()` retorna o `ArtifactEnvelope` publicado
   (`Pipeline.ts:59-92`). **Sem cancelamento/retry/timeout** hoje (ver RISCO §11, §22).
 - **Adapters** — projetam eventos; ver §12.
-- **Reidratação** — método concreto do `MonoGameAdapter.rehydrateFrom` (`:201-227`), na
+- **Reidratação** — `RuntimeAdapter.resetSession/rehydrateFrom`, implementados pelo
+  `MonoGameAdapter`, na
   ordem esqueletos→malhas→câmera→luzes→níveis→entidades; **único dono da projeção,
-  inclusive na reconexão**. Não está na interface (I-1).
+  inclusive na reconexão**.
 
 **Regra normativa:** um novo comando **DEVE** (DoD): validar no `BlueprintStore` +
 entrar em `COMMAND_KINDS` (R8 pega o esquecimento) + ter projeção no(s) adapter(s) ou
@@ -393,9 +399,10 @@ Cada um orquestra o domínio; nenhum o substitui.
 
 | Caso de uso | Entrada | Efeito / Evento | Offline (engine caída) | Sem capacidade | Evidência |
 |---|---|---|---|---|---|
-| **Criar projeto (vazio)** | — | `ProjectLifecycle` → `open-clean`; store vazio | N/A (local) | N/A | `projectLifecycle.ts`; `main.ts` |
-| **Criar projeto (template)** | `templateId` | gateway `project/new` → replay do template pelo caminho canônico (exige store vazio); `project/templates` lista | replay aplica ao store; projeção `deferred` | idem | `EditorGateway` (`project/new`, `project/templates`); template `platformer-2d` |
-| **Abrir projeto** | documento `.p7m.json` | `migrateBlueprintDocument` → `replayDocument` → comandos em ordem de dependência | replay aplica ao store; projeção `deferred` | idem | `BlueprintSerializer.ts` (migração + replay) |
+| **Criar projeto (vazio/template)** | `projectId?`, `templateId?`, `expectedProjectSessionId?` | `ProjectSessionManager` prepara e substitui a sessão por CAS; `project/create` em todas as bordas | sessão ativa com runtime `deferred` | idem | `ProjectSessionManager.ts`; `EditorSurface.ts` |
+| **Abrir projeto** | documento `.p7m.json`, `expectedProjectSessionId?` | parse → migração → validação → sessão temporária → replay → semântica → reset/rehydrate → commit por CAS | commit com runtime `deferred`; reconexão usa apenas a sessão ativa | idem | `project/openDocument`; `ProjectSessionManager.ts`; ADR-020 |
+| **Fechar projeto** | `expectedProjectSessionId?` | reset de runtime e remoção atômica da referência ativa | fecha a sessão; engine nova nasce limpa | N/A | `project/close`; `engine/reset_session` |
+| **Consultar projeto** | — | `project/status` retorna ids, sequência e `runtimeState: synchronized\|deferred\|failed` | explicita degradação sem alterar sessão | N/A | `EditorSurface.projectStatus`; quatro bordas |
 | **Salvar projeto** | — | `exportBlueprint` → snapshot declarativo | funciona (verdade é o store) | N/A | `EditorClient.saveDocument` |
 | **Definir/editar nível** | IntGrid + regras | `levelDefined`/`levelUpdated` → auto-tiling resolvido no adapter → `tilemap/define` | `deferred` | painel `level-editor` gated | `MonoGameAdapter.ts:100-114` |
 | **Posicionar entidade** | entityId, def, posição | `entityPlaced` → `entity/spawn` se houver `archetypeId` | `deferred` | `skipped` com razão | `MonoGameAdapter.ts:127-145` |
@@ -408,6 +415,15 @@ Cada um orquestra o domínio; nenhum o substitui.
 | **Resolver capacidade/experiência** | family, version | matriz de decisões com razões | fail-safe: `requiresSubsystem` → desabilitado | razão explícita | `ExperienceGovernor.resolve:52-68` |
 | **Conectar/reidratar runtime** | sessão nova | `rehydrateFrom(store)` projeta tudo | N/A | N/A | `MonoGameAdapter.ts:201`; `index.ts:120-138` |
 | **Supervisionar processos** | — | spawn/health/retry/shutdown | modo degradado (engine `optional`) | N/A | `ProcessSupervisor.ts`; `main.ts` |
+
+`ProjectStatus.runtimeState` é diagnóstico técnico: `synchronized` significa que o
+runtime representa a sessão ativa; `deferred`, que não havia runtime conectado e a
+reidratação ficou pendente; `failed`, que uma tentativa conectada de reset/reidratação
+falhou. Esse último estado **NÃO** autoriza publicar uma sessão candidata: a sessão
+anterior continua ativa (ou é restaurada) e o erro permanece explícito. O campo
+`expectedProjectSessionId` é opcional no primeiro create, mas, quando enviado em
+create/open/close, **DEVE** coincidir com a sessão ativa ou resultar em
+`ProjectSessionConflict` sem efeitos.
 
 **Regras normativas:** um caso de uso **NÃO DEVE** conter lógica de infraestrutura;
 o frontend **NÃO DEVE** acessar a engine diretamente; ferramentas MCP **NÃO DEVEM**
@@ -500,8 +516,9 @@ simples, benefício, custo e condição de rejeição.
 - **Command** — núcleo do modelo (`BlueprintCommand` + `dispatch`). Identidade por
   `kind`, validação no store, serialização por `BlueprintSerializer`, resultado
   `DispatchResult`. **CONFIRMADO.**
-- **Observer / Pub-Sub** — `BlueprintStore extends EventEmitter` (`"event"`);
-  broadcast `blueprint/event` multi-cliente no gateway; `HookBus` actions;
+- **Observer / Pub-Sub** — `ProjectSessionManager` publica somente depois do
+  commit conjunto de store + histórico; o `EventJournal` faz o broadcast
+  multi-cliente; `HookBus` actions;
   `CapabilityRegistry` (`"capabilities"`). **Diferenciação normativa:** evento de
   domínio (`BlueprintEvent`) ≠ action do HookBus (side-effect) ≠ notification JSON-RPC
   (`engine/log`) ≠ callback local. **CONFIRMADO.**
@@ -525,8 +542,8 @@ simples, benefício, custo e condição de rejeição.
 
 | ID | Padrão | Problema concreto | Onde | Alternativa + por que o padrão vence | Custo | Prioridade |
 |---|---|---|---|---|---|---|
-| PR-1 | **Interface segregada de reidratação** (elevar à porta) | LSP: 2º runtime não é obrigado por tipo a reidratar/limpar sessão | `RuntimeAdapter` | manter concreto — mas aí o compilador não protege o contrato multi-runtime | P | Alta |
-| PR-2 | **Result tipado para projeção** (tornar `reason` obrigatório em skipped/deferred) | P-7 hoje é convenção | `ProjectionResult` | union discriminado por `status` com `reason` exigido no ramo não-`projected` | P | Alta |
+| PR-1 | **Ciclo de sessão na porta — ENTREGUE** | Todo runtime é obrigado por tipo a limpar/reidratar sessão | `RuntimeAdapter.resetSession/rehydrateFrom` | A ADR-020 rejeitou manter os métodos apenas no adapter concreto | — | Fechada |
+| PR-2 | **Result tipado para projeção — ENTREGUE** | P-7 é garantido pelo compilador | `ProjectionResult` | União discriminada por `status`, com `reason` exigido em `skipped`/`deferred` | — | Fechada |
 | PR-3 | **Fila de `deferred` (outbox) explícita** | eventos `deferred` hoje não são reaplicados senão via reidratação total | orquestrador/adapter | reidratação total já cobre reconexão; a fila só se justifica com dependências parciais (asset não compilado) — introduzir **sob requisito** | M | Média |
 | PR-4 | **Controlador puro do editor de níveis** (extrair de `renderer.ts`) | 738 linhas de UI sem teste | `renderer/` → `core/` | mover máquina de ferramentas/hit-test/drag para `core/` (testável, F1) | M | Alta |
 | PR-5 | **Correlation ID ponta a ponta** | hoje não há correlação editor→mw→engine | protocolo | um `correlationId` local resolve; **não** adotar W3C Trace Context inteiro (§17) | M | Média |
@@ -577,7 +594,7 @@ do fio. Método novo ⇒ schema + handler + teste RPC + linha na tabela do
 | Layout binário C# ↔ escritor Node | **CONFIRMADO** | offsets por reflexão + checksum FNV-1a cruzado (`verify-phase2`) |
 | `COMMAND_KINDS` ↔ `BlueprintStore` | **CONFIRMADO** | R8 |
 | Framing/limites ↔ contrato | **CONFIRMADO** | R9 (`HEADER_BYTES=4`, `MAX_FRAME_BYTES=16MiB`, `MAX_LEVEL_CELLS=256²`) |
-| Códigos de erro TS ↔ C# ↔ `error-codes.md` | **CONFIRMADO** (12 códigos idênticos) | agente de verificação; ver §21 |
+| Códigos de erro TS ↔ C# ↔ `error-codes.md` | **CONFIRMADO** (15 códigos TS: 12 compartilhados com C# + 3 exclusivos do middleware) | teste/contrato; ver §21 |
 | **Schemas JSON ↔ handlers/DTOs** | **RISCO** (lacuna) | não há teste que valide params reais contra os `.json`; a validação de conteúdo vive no `BlueprintStore`/handlers, mas o **schema publicado** não é exercido no CI |
 | **Manifesto (`engine/describe`) ↔ profiles** | **RISCO** (parcial) | há teste que valida os hints de property do manifesto contra o enum do schema; não há teste que cruze `requiresSubsystem` dos profiles com os subsistemas realmente publicáveis |
 
@@ -628,12 +645,17 @@ baseline completa e o destino do fallback; gRPC
 quente (`Dispatch`/`Query`/`StreamEventsV2`/`Health`) com **prioridade** — falha
 DE TRANSPORTE cai imediatamente para GraphQL e a repromoção exige histerese de
 sondas Health (`frontend/src/core/transportRouter.ts`). Ambas as bordas delegam
-na mesma `EditorSurface` (R10–R12/F5). O default gRPC está condicionado ao
+na mesma `EditorSurface` e sessão ativa (R10–R13/F5). As operações
+`ProjectCreate`, `ProjectOpenDocument`, `ProjectClose` e `ProjectStatus` têm paridade
+com `project/create`, `project/openDocument`, `project/close` e `project/status` das
+demais bordas; create/open/close aceitam `expectedProjectSessionId` para CAS. O default
+gRPC está condicionado ao
 critério medido da ADR-019: no baseline oficial, dispatch melhorou o p95 em
 35,2%/39,3% e event-flow em 30,8%/16,5% contra GraphQL nos payloads
 pequeno/médio, sem erro ou resync; queries gRPC regrediram e **não** sustentam
-alegação de ganho. A continuidade usa cursor `(middlewareInstanceId, seq)`,
-limites do `EventJournal` e snapshot completo em restart/gap. Payloads de
+alegação de ganho. A continuidade usa cursor
+`(middlewareInstanceId, projectSessionId, seq)`, partições de sessão no
+`EventJournal` e snapshot completo em restart/gap/troca de projeto. Payloads de
 comando viajam como JSON validado na fonte única (`BlueprintStore` +
 `contracts/schemas/`) — os transports **NÃO DEVEM** introduzir segunda fonte
 de validação. Verbosidade dos processos: `P7M_VERBOSITY` (§24).
@@ -678,7 +700,7 @@ Componentes versionados hoje (CONFIRMADO):
 | Componente | Versão | Regra de compatibilidade | Evidência |
 |---|---|---|---|
 | **Protocolo de controle** | `PROTOCOL_VERSION="1.0"` (string) | **MAJOR deve coincidir** no handshake | `jsonrpc.ts:9`; `EnginePipeServer` |
-| **Documento Blueprint** | `schemaVersion` inteiro (=1) | migração explícita (§20) | `BlueprintSerializer.ts:25` |
+| **Documento Blueprint** | `schemaVersion` inteiro (=2) + `projectId` persistente | migração explícita (§20) | `BlueprintSerializer.ts` |
 | **Artefato** | `schemaVersion` inteiro + `revision` | leitura histórica; dedup por `(hash, schemaVersion)` | `ArtifactStore` |
 | **Perfil de runtime** | `família + versão` | match exato, senão maior `≤` (fallback governado); imutável | `RuntimeProfile.ts:82-103` |
 | **Layout de shared memory** | `layoutVersion` (=1) | compatibilidade **binária estrita** | `shared-memory-layout.md` |
@@ -689,7 +711,7 @@ Componentes versionados hoje (CONFIRMADO):
 | Componente | Chave | Compatibilidade |
 |---|---|---|
 | Protocolo | major.minor | MAJOR idêntico |
-| Blueprint document | schemaVersion | migração explícita antes do replay |
+| Blueprint document | schemaVersion + projectId | migração explícita antes do replay; v2 persiste identidade do projeto |
 | Artifact | schemaVersion + revision | leitura de revisões antigas preservada |
 | Runtime profile | família + versão | exato ou fallback descendente governado |
 | Shared memory | layoutVersion | binária estrita (divergência = `InvalidBinaryLayout`) |
@@ -699,41 +721,37 @@ política de bump de cada eixo (hoje dispersa entre docs).
 
 ## 20. Persistência, replay e migração
 
-**Modelo (CONFIRMADO):** o Blueprint é salvo como **documento declarativo versionado**
-(`exportBlueprint` → snapshot com `schemaVersion` + todos os domínios). O load
-**reproduz** o documento como comandos pelo orquestrador, em ordem de dependência
-(skeleton → mesh → camera → light → entityDef → entity → level → world), **exigindo
-store vazio** ("novo projeto" é estado explícito) e **preservando** validação/hooks/
-projeção (P-10).
+**Modelo (CONFIRMADO):** o Blueprint é salvo como documento declarativo v2
+(`schemaVersion`, `projectId` e domínios). O load reproduz comandos em ordem de
+dependência numa `ProjectSession` temporária. Filters e validações do store são
+preservados; actions, journal e runtime são suprimidos até o commit (ADR-020).
 
 **Política para documentos antigos (CONFIRMADO — implementada em `af83a66`):**
 `migrateBlueprintDocument(raw)` (`BlueprintSerializer.ts`) detecta a versão (documentos
 sem `schemaVersion` = versão 0), **rejeita** versões acima da suportada com erro claro,
 e **migra encadeado** `v(n)→v(n+1)` por um `MIGRATIONS: Map<number, BlueprintMigration>`
-(hoje: `0→1`, normaliza a forma garantindo todo domínio como array e carimba
-`schemaVersion: 1`). `documentToCommands` chama a migração **transparentemente**, de modo
+(hoje: `0→1→2`; v2 introduz `projectId` persistente). `documentToCommands` chama a migração **transparentemente**, de modo
 que projetos salvos por builds anteriores continuam abrindo (P0.2 "migração de
 schemaVersion"). Testado em `middleware/test/blueprint-migration.test.ts` (upgrade v0/
 legacy, v0 explícito, rejeição de versão futura, rejeição de não-objeto).
 
 ```mermaid
 graph TD
-  EXP["exportBlueprint"] --> DOC[("BlueprintDocument<br/>schemaVersion + dominios")]
+  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v2<br/>schemaVersion + projectId + dominios")]
   DOC -.-> RAW["raw carregado"]
   subgraph LOAD["LOAD"]
     RAW --> MIG["migrateBlueprintDocument(raw)<br/>(sem schemaVersion = versao 0)"]
     MIG --> V{"versao > suportada?"}
     V -->|"sim"| REJ(["REJEITA (erro claro)"])
-    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1)"]
-    CHAIN --> CMD["documentToCommands<br/>(ordem de dependencia)"]
-    CMD --> CHK{"store vazio?"}
-    CHK -->|"nao"| ERR(["replayDocument exige store vazio"])
-    CHK -->|"sim"| REP["replayDocument: despacha cada comando pelo orquestrador"]
-    REP --> SUM(["ReplaySummary {applied, projected, deferred, skipped}"])
+    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2)"]
+    CHAIN --> TMP["sessao temporaria + replay prepare"]
+    TMP --> SEM["validacao semantica + projecao preparada"]
+    SEM --> COMMIT["reset e rehydrate<br/>commit ou rollback para A"]
+    COMMIT --> SUM["ProjectActivationResult"]
   end
 ```
 
-*Mostra o ciclo de persistencia: exportBlueprint produz o BlueprintDocument declarativo e o LOAD detecta a versao, rejeita se acima da suportada, migra em cadeia v(n)->v(n+1), converte em comandos na ordem de dependencia e faz replayDocument sobre store vazio, preservando validacao/hooks/projecao (P-10). O mesmo caminho serve a project/new (replay de template).*
+*Mostra o load transacional: a sessão anterior permanece publicada até o runtime do candidato estar pronto; qualquer falha restaura A e não publica replay parcial.*
 
 **Regra normativa:** ao subir `BLUEPRINT_DOCUMENT_VERSION`, o autor **DEVE** registrar a
 migração `v(n)→v(n+1)` correspondente em `MIGRATIONS` (senão o load lança "No migration
@@ -744,10 +762,11 @@ registro encadeável; resta apenas manter uma migração por incremento de vers�
 
 **Classificação semântica (CONFIRMADO — não a dicotomia checked/unchecked, §prompt):**
 
-- **Erros de domínio esperados** → `JsonRpcError(code, message, data?)` (TS,
-  `jsonrpc.ts:59-68`) / `JsonRpcException(code, message)` (C#), com **código estável**
-  entre runtimes. Os 12 códigos (5 reservados JSON-RPC + 7 de domínio `-32000..-32006`)
-  são **idênticos em nome (PascalCase) e valor** nos dois lados. **CONFIRMADO.**
+- **Erros de domínio esperados** → `JsonRpcError(code, message, data?)` (TS) /
+  `JsonRpcException(code, message)` (C#), com **código estável**. Há 15 códigos TS:
+  12 compartilhados com C# (5 reservados JSON-RPC + 7 de domínio
+  `-32000..-32006`) e 3 exclusivos do middleware (`AuthenticationFailed -32007`,
+  `ProjectNotOpen -32008`, `ProjectSessionConflict -32009`). **CONFIRMADO.**
 - **Falhas de ferramenta externa** → `AssetToolError(tool, exitCode, stderr)` tipado
   (`AssetPipelineService.ts:51-60`).
 - **Erros de framing/protocolo** → `FrameProtocolError`/`FrameProtocolException`,
@@ -773,6 +792,10 @@ mindmap
         -32004 SharedMemoryUnavailable
         -32005 InvalidBinaryLayout
         -32006 DuplicateId
+      Middleware-only
+        -32007 AuthenticationFailed
+        -32008 ProjectNotOpen
+        -32009 ProjectSessionConflict
     Ferramenta externa
       AssetToolError tool exitCode stderr
     Framing e protocolo
@@ -786,17 +809,15 @@ mindmap
         deferred com reason
 ```
 
-*Mostra a taxonomia de erros do P7M: os 12 codigos JsonRpcError (5 reservados + 7 de dominio, identicos em nome PascalCase e valor entre TS e C#), falhas de ferramenta externa, erros de framing, Error comum de infra e o ProjectionResult para falhas esperadas de projecao.*
+*Mostra a taxonomia de erros do P7M: 15 códigos no TypeScript, dos quais 12 são compartilhados em nome PascalCase e valor com C# e três protegem somente autenticação/sessão no middleware; também mostra falhas de ferramenta, framing, infraestrutura e projeção esperada.*
 
-**Resultados tipados para falhas *esperadas de projeção*:** `ProjectionResult` com
-`status: projected|skipped|deferred` + `reason?`. **NÃO DEVE** usar exceção para o fluxo
-comum de "runtime não suporta" — usa-se `skipped`/`deferred`.
+**Resultados tipados para falhas *esperadas de projeção*:** `ProjectionResult` é união
+discriminada por `status`: `projected` não aceita `reason`; `skipped` e `deferred`
+exigem `reason: string`. **NÃO DEVE** usar exceção para o fluxo comum de "runtime não
+suporta" — usa-se `skipped`/`deferred`. PR-2 está **resolvida** por tipo.
 
-**RISCOS observados:**
+**Risco remanescente:**
 
-- **`ProjectionResult.reason` é opcional** no tipo, embora "obrigatório quando
-  skipped/deferred" por comentário (`RuntimeAdapter.ts:24`). A garantia P-7 depende de
-  disciplina. → **PR-2** (tornar obrigatório por union discriminado).
 - **Inconsistência menor:** `ArtifactStore`, `PipelineRunner`, `RuntimeProfileRegistry`
   e `EngineBridge` lançam `Error` comum em validações que, na borda, seriam mapeadas a
   `JsonRpcError`. **MELHORIA OPCIONAL:** padronizar erros de domínio como
@@ -816,8 +837,9 @@ código+mensagem+`data?` (JSON-RPC) e razão acionável (projeção). `retryable
   **modo degradado** (engine `optional`), shutdown coordenado em ordem inversa.
 - **Reconexão da engine** — backoff 2s/4s/8s (`ConnectWithRetryAsync`), tolera o
   middleware subir depois.
-- **Reidratação na reconexão** — sessão nova ⇒ `rehydrateFrom` projeta o Blueprint
-  inteiro; o projeto sobrevive à queda da engine.
+- **Reidratação na reconexão** — `resetSession` limpa o runtime e `rehydrateFrom`
+  projeta somente o Blueprint da sessão ativa; o status passa de `deferred` para
+  `synchronized`, ou para `failed` se a tentativa conectada não puder ser concluída.
 - **Timeout de request** — 10 s nos dois peers; pendências rejeitadas no teardown.
 - **Limpeza de socket órfão** — `unlink` no `listen`/`close` (POSIX).
 
@@ -848,10 +870,13 @@ processos locais sem justificar pelo modo de falha real.
   (escritor: `seq++` ímpar → grava → `frameIndex++` → `seq++` par; leitor: relê e
   compara, retry se ímpar/divergente). O leitor copia para buffer pré-alocado
   (Zero-GC).
-- **Middleware Node** — event loop single-thread; sem locks; concorrência por I/O
-  assíncrono.
-- **Múltiplos clientes do gateway** — o broadcast `blueprint/event` é multi-cliente;
-  `currentSession` = última sessão ativa.
+- **Middleware Node** — event loop single-thread; `ProjectSessionManager` serializa
+  mutações de sessão em fila e aplica compare-and-swap por `expectedProjectSessionId`.
+  Create/open preparam estado privado; nenhum replay parcial alcança clientes.
+- **Múltiplos clientes do gateway** — o broadcast é multi-cliente e carrega
+  `projectSessionId`, `projectId` e `commandSequence`; `EventJournal` mantém partições
+  por sessão. Cursor antigo `(middlewareInstanceId, projectSessionId, seq)` produz
+  `resyncRequired`, nunca entrega evento do projeto anterior.
 
 **Regras normativas para shared memory (CONFIRMADO — `shared-memory-layout.md`):**
 little-endian; alinhamento por `LayoutKind.Sequential`; `layoutVersion` estrito;
@@ -1051,7 +1076,7 @@ graph BT
 
 *Mostra a pilha de dependencia do middleware de baixo para cima (seguindo as setas ascendentes do original): a composition root conhece tudo, cada camada externa depende da interna, e os algoritmos puros no topo nao importam nada (R5). Nenhuma seta aponta de dentro para fora.*
 
-Nenhuma seta aponta de dentro para fora. **CONFIRMADO** por R1–R12.
+Nenhuma seta aponta de dentro para fora. **CONFIRMADO** por R1–R13.
 
 ## 31. Arquitetura da engine
 
@@ -1092,7 +1117,7 @@ mínimos:
 | ADR-009 | Perfis versionados imutáveis + governança de experiência | `RuntimeProfile`, `ExperienceGovernor` |
 | ADR-010 | Capability discovery por `engine/describe` (reflexão) | `CapabilityRegistry` |
 | ADR-011 | Adapters de runtime como única tradução | R7 |
-| ADR-012 | Persistência por replay (store vazio) | `BlueprintSerializer` |
+| ADR-012 | Persistência por replay validado | `BlueprintSerializer`; refinada pela ADR-020 |
 | ADR-013 | Electron process isolation (contextIsolation) | F2/F3; `preload.ts` |
 | ADR-014 | JSON Schema 2020-12 como fonte de verdade | `contracts/` |
 | ADR-015 | Fitness functions como governança | `GOVERNANCE.md` |
@@ -1105,15 +1130,16 @@ Já registrados em [`docs/adr/`](adr/README.md) (status Accepted):
 | [ADR-017](adr/ADR-017-grpc-caminho-quente-com-fallback.md) | gRPC no caminho quente, prioritário, com fallback para GraphQL |
 | [ADR-018](adr/ADR-018-endpoints-e-verbosidade-dos-transports.md) | Endpoints locais dos transports e controle de verbosidade |
 | [ADR-019](adr/ADR-019-freeze-medido-dos-transports.md) | Freeze medido do default e manutenção dos três transports existentes |
+| [ADR-020](adr/ADR-020-sessao-de-projeto-transacional.md) | Sessão de projeto explícita, replay privado e substituição atômica com rollback de runtime |
 
 Cada ADR **DEVE** conter contexto, decisão, alternativas, consequências, riscos,
 critério de revisão, status, data e links para código e teste.
 
 ## 33. Fitness functions (regras arquiteturais executáveis)
 
-**Existentes (CONFIRMADO — 22 + regras semânticas):**
+**Existentes (CONFIRMADO — 23 + regras semânticas):**
 
-- **Middleware R1–R12** (`architecture.test.ts`) por **import-graph scanning** (regex de
+- **Middleware R1–R13** (`architecture.test.ts`) por **import-graph scanning** (regex de
   imports + resolução relativa): R1 (SDK MCP/`zod` só em `mcp/`), R2 (canônico sem
   transporte/MCP/adapter/dados — inclui `graphql/`, `grpc/`, `transport/`), R3
   (`BlueprintStore` allowlist de 3 imports), R4
@@ -1123,7 +1149,9 @@ critério de revisão, status, data e links para código e teste.
   `COMMAND_KINDS`), **R9** (`HEADER_BYTES=4`, `MAX_FRAME_BYTES=16MiB`, `MAX_LEVEL_CELLS=256²`),
   **R10** (lib `graphql` só em `graphql/`), **R11** (`@grpc/*` só em `grpc/`),
   **R12** (bordas GraphQL/gRPC importam apenas `EditorSurface` + `transport/` +
-  `protocol/jsonrpc` + `util/log` — nunca domínio direto).
+  `protocol/jsonrpc` + `util/log` — nunca domínio direto), **R13** (`EditorSurface` e
+  JSON-RPC/GraphQL/gRPC/MCP resolvem a mesma `ProjectSessionPort`, sem store ou
+  orquestrador fixo nas bordas).
 - **Frontend F1–F5** (`architecture.test.ts`): F1 (`core/` puro), F2 (renderer sem
   Electron/Node; `main` só type), F3 (Electron só em `main/`), F4 (proibido
   `writeUInt32LE`/`readUInt32LE` no source), F5 (SDKs de transporte — `@grpc/*`,
@@ -1134,11 +1162,13 @@ critério de revisão, status, data e links para código e teste.
   contratos binários por reflexão+checksum, shaders≡CPU, imutabilidade de perfis,
   fail-safe de experiência.
 
+**Fitness function de projeção entregue:** o tipo e os testes recusam
+`skipped`/`deferred` sem `reason`; FF-1 e PR-2 estão encerradas.
+
 **Novas fitness functions recomendadas (objetivas e executáveis):**
 
 | ID | Regra a impor | Por quê |
 |---|---|---|
-| FF-1 | Todo `reason` presente quando `status ∈ {skipped, deferred}` (teste do adapter) | fecha o RISCO de P-7 (§21) enquanto PR-2 não muda o tipo |
 | FF-2 | Exemplos de params em cada `contracts/schemas/*.json` validam contra o schema (Ajv 2020-12) | R-05; fecha a lacuna schema↔handler |
 | FF-3 | Todo `requiresSubsystem` de um profile corresponde a um subsistema publicável pelo manifesto | evita regra de governança órfã |
 | FF-4 | R8 robusto: todo `BlueprintEvent.kind` tem rótulo em `vocabulary.ts` e toda projeção cobre todo evento (switch exaustivo já força no TS) | evita evento sem tradução/projeção |
@@ -1156,7 +1186,7 @@ executável, estável, relevante e difícil de validar manualmente.
 
 | Gate | Job | Conteúdo | Bloqueante |
 |---|---|---|---|
-| G1 | middleware | build + suíte middleware (inclui R1–R12) | sim |
+| G1 | middleware | build + suíte middleware (inclui R1–R13) | sim |
 | G2 | engine | build + suíte engine (inclui E1–E5, Zero-GC) | sim |
 | G3 | frontend | build + suíte frontend (inclui F1–F5) | sim |
 | G4 | e2e | `verify-phase1..4` com processos reais | sim |
@@ -1200,14 +1230,14 @@ broadcast); subsistema de engine (manifesto+hints); perfil (nova versão+razões
 ## 36. Plano de implementação (incremental, sem reescrita)
 
 **Fase A — Correções críticas de contrato/segurança (P):**
-- R-02/PR-2: `ProjectionResult` com `reason` obrigatório em skipped/deferred (union
-  discriminado) + FF-1.
+- ✅ R-02/PR-2/FF-1: `ProjectionResult` é união discriminada com `reason` obrigatório
+  em `skipped`/`deferred` (entregue pela ADR-020).
 - R-07: validar `filePath` sob `assetsRoot` em `AssetPipelineService.ingest`.
 - R-14: corrigir contagens/drift de docs (I-2..I-6).
 
 **Fase B — Formalização de fronteiras (P/M):**
-- R-01/PR-1: elevar reidratação (e limpeza de sessão) à porta `RuntimeAdapter` (ou uma
-  porta segregada `RehydratableRuntime`) para LSP multi-runtime.
+- ✅ R-01/PR-1: `resetSession` e `rehydrateFrom` pertencem à porta `RuntimeAdapter` e
+  são exercidos no rollback/reconnect da sessão (entregue pela ADR-020).
 - R-05/FF-2/FF-3: contract tests schema↔handler e profile↔manifesto.
 - R-08: `docs/adr/` com os 15 ADRs retroativos.
 
@@ -1229,10 +1259,6 @@ funcional), P0.7 undo/redo global canônico, P0.8 diagnósticos, P0.9 empacotame
 
 - **RISCO-1 (Alta):** camada de produto sem teste (`renderer.ts`/`main.ts`; sem e2e
   visual) — regressões de UX invisíveis ao CI.
-- **RISCO-2 (Alta):** `reason` de projeção não obrigatório por tipo — explicabilidade
-  (P-7) por convenção.
-- **RISCO-3 (Média-Alta):** contrato de adapter minimalista — 2º runtime sem obrigação
-  de reidratação por tipo (I-1).
 - **RISCO-4 (Média):** sem contract test schema↔handler — schemas podem divergir dos
   DTOs sem o CI perceber.
 - **RISCO-5 (Média):** path traversal em `asset_ingest` (R-07).
@@ -1242,9 +1268,8 @@ funcional), P0.7 undo/redo global canônico, P0.8 diagnósticos, P0.9 empacotame
 
 ## 38. Decisões ainda necessárias
 
-- **DN-1:** elevar (ou não) `rehydrateFrom` + limpeza de sessão à porta de adapter
-  (impacta o 2º runtime). *Recomendação: elevar quando o 2º runtime entrar; até lá,
-  registrar como contrato esperado no ADR-003.*
+- **DN-1:** ✅ resolvida pela ADR-020 — `resetSession` e `rehydrateFrom` são membros
+  obrigatórios de `RuntimeAdapter`; troca/reconexão sempre opera sobre a sessão ativa.
 - **DN-2:** ✅ resolvida — política de migração encadeada implementada (`MIGRATIONS`,
   `af83a66`); manter a disciplina de registrar uma migração por bump de versão.
 - **DN-3:** adotar JCS (RFC 8785) para `contentHash` **se** o hash passar a cruzar
@@ -1264,7 +1289,7 @@ As dez regras invioláveis (§5) são a constituição: **P-1** mutação única
 runtime não contamina o canônico, **P-3** adapter é o único tradutor, **P-4** contratos
 são fonte de verdade, **P-5** hot loop Zero-GC, **P-6** determinismo por seed, **P-7**
 explicabilidade, **P-8** núcleo portável, **P-9** perfis imutáveis, **P-10**
-persistência por replay. Cada uma já é (ou será, via FF-1) imposta por teste. **Revogar
+persistência por replay. Cada uma já é imposta por tipo e/ou teste. **Revogar
 qualquer P-x exige ADR de revogação** — não basta editar texto.
 
 ## B. Catálogo de padrões
@@ -1275,7 +1300,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 | Adapter (gordo) | traduzir conceitos entre domínios | repassar 1:1 | auto-tiling + remapeamento de id na projeção | virar passthrough | testes do adapter |
 | Facade | bordas (MCP, gateway) | conter lógica de domínio | `McpFacade`, `EditorGateway` | lógica vazar p/ fachada | R1 |
 | Command | intenções de mutação | leitura/consulta | `BlueprintCommand` + `dispatch` | comandos genéricos (`updateObject`) | R8 |
-| Observer/Pub-Sub | eventos de domínio, broadcast | acoplar side-effect ao fato | `BlueprintStore`/`blueprint/event`/HookBus actions | confundir níveis de evento (§12) | gateway/adapter |
+| Observer/Pub-Sub | eventos de domínio, broadcast | acoplar side-effect ao fato | `ProjectSessionManager`/`EventJournal`/HookBus actions | confundir níveis de evento (§12) | gateway/adapter |
 | Chain of Responsibility | filters/pipelines | quando um predicado puro basta | HookBus filters, `pipeline:<id>:<stage>` | ordem acidental | HookBus ordering |
 | Strategy | variação real (perfis, runner) | variação inexistente | `editorRules`+governor; `ToolRunner` | Strategy prematuro | governor/gate |
 | State | ciclos de vida | fluxo linear | `ProjectLifecycle`, `ProcessSupervisor` | transição inválida não barrada | testes de lifecycle |
@@ -1311,9 +1336,10 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 
 ## E. Plano incremental (por objetivo)
 
-1. **Correções críticas:** PR-2/FF-1 (`reason` obrigatório), R-07 (path traversal),
-   I-2..I-6 (drift de docs).
-2. **Formalização arquitetural:** PR-1 (reidratação na porta), R-08 (ADRs).
+1. **Correções críticas:** ✅ PR-2/FF-1 (`reason` obrigatório) entregue; seguem R-07
+   (path traversal) e prevenção de drift documental.
+2. **Formalização arquitetural:** ✅ PR-1 (reset/reidratação na porta) entregue;
+   manter os ADRs, incluindo a sessão transacional da ADR-020.
 3. **Melhoria de contratos:** R-05/FF-2/FF-3 (contract tests schema/manifesto/profile),
    DN-5 (matriz de compatibilidade).
 4. **Melhoria de OO:** avaliar VO de versão se a superfície de comparação crescer;
@@ -1325,8 +1351,8 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 6. **Melhoria de resiliência:** timeout por estágio de pipeline sob requisito; limpeza
    de MMF órfão (DN-4). *(Migradores de schema já entregues — R-06.)*
 7. **Melhoria de testabilidade:** PR-4 (controlador puro do editor) + Playwright e2e.
-8. **Preparação para extensibilidade:** 2º adapter de exemplo exercitando LSP (valida
-   PR-1 e o contrato de projeção).
+8. **Preparação para extensibilidade:** 2º adapter de exemplo exercitando o contrato
+   já obrigatório de reset/reidratação e a união discriminada de projeção.
 
 ## F. Top 15 decisões arquiteturais que protegem o futuro
 
@@ -1334,13 +1360,15 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 2. Caminho de mutação único (P-1) — auditável e extensível por hooks.
 3. Adapter como única tradução (P-3) — troca de runtime sem tocar o núcleo.
 4. Contratos como fonte de verdade + fitness functions (P-4, §33).
-5. Persistência por replay (P-10) — save/load = o mesmo caminho validado.
+5. Sessão transacional por replay (P-10/ADR-020) — documento v2 é preparado em store
+   privado e publicado por troca atômica, sem exigir Blueprint vazio.
 6. Governança de experiência por perfil+manifesto com fail-safe (§3.6).
 7. Zero-GC verificado por teste (P-5) — alocação nos hot loops não regride
    silenciosamente; latência é governada por medições separadas (§27).
 8. Determinismo por seed (P-6) — reprodutibilidade e testes cruzados.
 9. Dois planos separados (controle JSON-RPC / dados MMF) — cada regime otimizado.
-10. Paridade de protocolo TS↔C# provada (framing + 12 códigos).
+10. Paridade de protocolo TS↔C# provada (framing + 12 códigos compartilhados; três
+    códigos adicionais ficam restritos à autenticação/sessão do middleware).
 11. Composition root explícita (§8 pontos fortes) — grafo inspecionável.
 12. Núcleos algorítmicos sem dependências (R5) — vendorização segura p/ workers.
 13. Perfis imutáveis por versão (P-9) — evolução sem quebrar o passado.
@@ -1352,8 +1380,8 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 | # | Risco | Sev. | Mitigação |
 |---|---|---|---|
 | 1 | Camada de produto sem teste (renderer/main; sem e2e visual) | Alta | PR-4 + Playwright |
-| 2 | `reason` de projeção não obrigatório por tipo | Alta | PR-2 + FF-1 |
-| 3 | Contrato de adapter minimalista (reidratação fora da porta) | Média-Alta | PR-1 |
+| 2 | ~~`reason` de projeção não obrigatório por tipo~~ | — | **Resolvido:** união discriminada + FF-1 (ADR-020) |
+| 3 | ~~Reidratação/limpeza fora da porta de adapter~~ | — | **Resolvido:** `resetSession` + `rehydrateFrom` obrigatórios (ADR-020) |
 | 4 | Schemas JSON não exercidos no CI | Média | R-05/FF-2 |
 | 5 | Path traversal em `asset_ingest` | Média | R-07 |
 | 6 | ~~Sem migradores de `schemaVersion`~~ **resolvido** (`af83a66`) | — | R-06 (entregue) |
@@ -1386,8 +1414,8 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 
 | ID | Área | Classe | Problema | Evidência | Princípio | Padrão | Norma | Solução | Custo | Prioridade | Critério de aceite | Testes | Rollback |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| R-01 | middleware | Risco | reidratação fora da porta de adapter | `RuntimeAdapter.ts:29-40` vs `MonoGameAdapter.ts:201` | P-3 | ISP | LSP | porta `RehydratableRuntime` ou membro no contrato | P | Alta | 2º adapter compila só implementando reidratação | teste de contrato do adapter | reverter interface |
-| R-02 | middleware | Risco | `reason` opcional em skipped/deferred | `RuntimeAdapter.ts:24` | P-7 | Result tipado | — | union discriminado por `status` | P | Alta | tipo recusa skipped sem reason | FF-1 | reverter tipo |
+| R-01 | middleware | Confirmado | ✅ ciclo de sessão na porta | `RuntimeAdapter.resetSession/rehydrateFrom`; ADR-020 | P-3 | ISP | LSP | membros obrigatórios no contrato | — | Fechada | 2º adapter só compila implementando reset/reidratação | testes de sessão/runtime | git revert |
+| R-02 | middleware | Confirmado | ✅ `reason` obrigatório em skipped/deferred | união `ProjectionResult`; ADR-020 | P-7 | Result tipado | — | união discriminada por `status` | — | Fechada | tipo recusa skipped/deferred sem reason | FF-1 | git revert |
 | R-05 | contracts | Risco | schemas não validados no CI | ausência de teste Ajv | P-4 | — | JSON Schema 2020-12 | contract test de exemplos vs schema (2 lados) | M | Alta | exemplos validam; drift quebra CI | FF-2 | remover job |
 | R-06 | middleware | Confirmado | ~~sem migração de schemaVersion~~ **implementada** (`af83a66`) | `BlueprintSerializer.ts` `migrateBlueprintDocument`/`MIGRATIONS` | P-10 | — | SemVer/schema | ✅ migradores encadeáveis v(n)→v(n+1) + rejeição de versão futura | — | — | doc v0 migra e replica; futura é rejeitada | `blueprint-migration.test.ts` | git revert |
 | R-07 | middleware | Risco | path traversal em ingest | `AssetPipelineService.ts:119` | trust boundary | — | ISO 25010 (segurança) | validar caminho sob `assetsRoot` | P | Alta | caminho externo é rejeitado | teste de borda | remover guarda |
@@ -1403,8 +1431,8 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 Esta especificação é **descritiva do que existe** e **normativa sobre como evoluir**.
 Sua tese: o P7M já acertou as fronteiras difíceis (modelo canônico, dois planos,
 contratos cruzados, Zero-GC, governança executável) — a disciplina agora é **não
-diluí-las** e **fechar por tipo/teste as poucas garantias que hoje vivem por
-convenção** (reidratação na porta, `reason` obrigatório, contract tests de schema),
+diluí-las** e manter fechadas por tipo/teste as garantias de sessão já entregues
+(reset/reidratação na porta e `reason` obrigatório), além de fechar contract tests de schema,
 enquanto o esforço de produto vai para a camada visual e sua cobertura de testes. Nenhum
 item deste documento recomenda reescrita; todos cabem em passos incrementais sobre a
 base atual, cada um verificável no CI.

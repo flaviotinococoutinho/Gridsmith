@@ -90,6 +90,7 @@ export function createPlatformer2DDocument(): BlueprintDocument {
 
   return {
     schemaVersion: BLUEPRINT_DOCUMENT_VERSION,
+    projectId: "template-platformer-2d",
     skeletons: [],
     meshes: [],
     camera: { frequency: 2, damping: 1, response: 2, anticipationSeconds: 0.15 },

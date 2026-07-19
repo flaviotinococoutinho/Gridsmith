@@ -26,8 +26,8 @@ stateDiagram-v2
   graphql --> graphql : sonda ruim (backoff 2s 4s 8s 16s 30s)
   graphql --> grpc : 2 sondas Health boas consecutivas (histerese)
   note right of graphql
-    eventBatch(instanceId, afterSeq)
-    resync explicito em restart/gap
+    eventBatch(instanceId, projectSessionId, afterSeq)
+    resync explicito em restart/gap/troca
   end note
   note right of grpc
     StreamEventsV2 envia status
@@ -44,15 +44,22 @@ stateDiagram-v2
   têm validação única no `BlueprintStore` e schemas em `contracts/schemas/`;
   re-tipá-los em protobuf criaria uma segunda fonte de verdade de validação.
   A hipótese medida é canal/stream, não re-tipagem.
-- **Eventos sem perda silenciosa:** o cursor é o par
-  `(middlewareInstanceId, lastEventSeq)`. `StreamEventsV2` e `eventBatch`
+- **Eventos sem perda silenciosa:** o cursor é a tripla
+  `(middlewareInstanceId, projectSessionId, lastEventSeq)`. O journal é
+  particionado por sessão; `StreamEventsV2` e `eventBatch`
   expõem `firstAvailableSeq`, `lastEventSeq` e `resyncRequired`; restart,
-  cursor futuro e gap fora da janela nunca entregam cauda parcial. O
+  troca de projeto, cursor futuro e gap fora da janela nunca entregam cauda parcial. O
   `EditorClient` substitui seu estado por um snapshot de todas as projeções
   antes de reabrir stream/polling.
 - **Retry idempotente:** `Dispatch` carrega `requestId`; o mesmo identificador
   é reutilizado se uma resposta gRPC se perde e a chamada precisa seguir no
-  GraphQL. A `EditorSurface` deduplica o request sem reaplicar o comando.
+  GraphQL. A `EditorSurface` deduplica o request sem reaplicar o comando e
+  registra sua sessão de origem; reutilizá-lo após uma troca de projeto retorna
+  conflito em vez de aplicar o comando na sessão seguinte.
+- **Operações de sessão:** `ProjectCreate`, `ProjectOpenDocument`,
+  `ProjectClose` e `ProjectStatus` mantêm paridade com as demais bordas;
+  create/open validam `expected_project_session_id` no commit, e status
+  explicita runtime `synchronized`, `deferred` ou `failed` (ADR-020).
 - **Falha de autenticação não é indisponibilidade:** `UNAUTHENTICATED`/HTTP
   401 interrompe a operação e nunca aciona fallback.
 - **Endpoints:** UDS `unix:<runtime>/<pipe>-grpc.sock` (POSIX); TCP
@@ -75,6 +82,8 @@ stateDiagram-v2
 - Falha de DOMÍNIO nunca cai de transporte (o erro pertence ao chamador).
 - Novo eixo de compatibilidade (package `p7m.editor.v1`) em
   [`../COMPATIBILITY.md`](../COMPATIBILITY.md).
+- As quatro bordas consultam a mesma sessão ativa da `EditorSurface`; nenhuma
+  mantém `BlueprintStore` ou orquestrador próprios (ADR-020).
 
 ## Critérios de revisão
 

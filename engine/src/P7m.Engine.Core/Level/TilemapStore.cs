@@ -114,6 +114,22 @@ public sealed class TilemapStore
         _liveCount--;
     }
 
+    /// <summary>
+    /// Remove todos os tilemaps da sessão anterior. Os grandes buffers de
+    /// células continuam alocados e são reutilizados pela próxima sessão.
+    /// </summary>
+    public void Reset()
+    {
+        Array.Clear(_intGrid, 0, _intGrid.Length);
+        Array.Fill(_tiles, -1);
+        Array.Clear(_ids, 0, _ids.Length);
+        Array.Clear(_widths, 0, _widths.Length);
+        Array.Clear(_heights, 0, _heights.Length);
+        Array.Clear(_tileSizes, 0, _tileSizes.Length);
+        Array.Clear(_nonEmptyCounts, 0, _nonEmptyCounts.Length);
+        _liveCount = 0;
+    }
+
     public TilemapHandle Find(string tilemapId)
     {
         for (var slot = 0; slot < _maxTilemaps; slot++)

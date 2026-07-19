@@ -73,6 +73,23 @@ public sealed class CinematicCamera
             config.ShakeSeed);
     }
 
+    /// <summary>
+    /// Reinicia configuração, movimento e shake para uma nova sessão de
+    /// projeto. Diferente de <see cref="Reconfigure"/>, não preserva estado.
+    /// </summary>
+    public void Reset()
+    {
+        _config = CameraConfig.Default;
+        _dynamics = new SecondOrderDynamics(
+            _config.Frequency, _config.Damping, _config.Response, Vector2.Zero);
+        _shake = new ShakeGenerator(
+            _config.ShakeFrequencyHz,
+            _config.ShakeMaxOffset,
+            _config.ShakeMaxRotationRadians,
+            _config.ShakeTraumaDecayPerSecond,
+            _config.ShakeSeed);
+    }
+
     /// <summary>Corte de câmera: teleporta sem transiente.</summary>
     public void Snap(Vector2 position)
     {

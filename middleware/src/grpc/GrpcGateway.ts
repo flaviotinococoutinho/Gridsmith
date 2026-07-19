@@ -72,6 +72,54 @@ export function loadEditorProto(protoPath = resolveProtoPath()): grpc.GrpcObject
   return grpc.loadPackageDefinition(definition);
 }
 
+interface ProjectStatusLike {
+  readonly active: boolean;
+  readonly projectSessionId?: string;
+  readonly projectId?: string;
+  readonly commandSequence: string | number | bigint;
+  readonly createdAt?: number;
+  readonly runtimeState: "synchronized" | "deferred" | "failed";
+}
+
+function serializeProjectStatus(status: ProjectStatusLike): Record<string, unknown> {
+  return {
+    active: status.active,
+    project_session_id: status.projectSessionId ?? "",
+    project_id: status.projectId ?? "",
+    command_sequence: status.commandSequence.toString(),
+    created_at_unix_ms: status.createdAt?.toString() ?? "0",
+    runtime_state: status.runtimeState,
+  };
+}
+
+function serializeProjectOperation(result: {
+  status: ProjectStatusLike;
+  summary?: { applied: number; projected: number; deferred: number; skipped: number };
+}): Record<string, unknown> {
+  return {
+    status: serializeProjectStatus(result.status),
+    ...(result.summary ? { summary: result.summary } : {}),
+  };
+}
+
+function serializeEvent(event: EventEnvelope): {
+  seq: string;
+  project_session_id: string;
+  project_id: string;
+  command_sequence: string;
+  kind: string;
+  payload_json: string;
+} {
+  return {
+    seq: event.seq.toString(),
+    project_session_id: event.projectSessionId,
+    project_id: event.projectId,
+    command_sequence: event.commandSequence.toString(),
+    kind: event.kind,
+    payload_json: JSON.stringify(event.payload),
+  };
+}
+
 function toGrpcError(err: unknown): grpc.ServiceError {
   if (err instanceof JsonRpcError) {
     const e = new Error(err.message) as grpc.ServiceError;
@@ -108,6 +156,10 @@ export class GrpcGateway {
       Dispatch: this.dispatch,
       Query: this.query,
       Snapshot: this.snapshot,
+      ProjectCreate: this.projectCreate,
+      ProjectOpenDocument: this.projectOpenDocument,
+      ProjectClose: this.projectClose,
+      ProjectStatus: this.projectStatus,
       StreamEvents: this.streamEvents,
       StreamEventsV2: this.streamEventsV2,
     });
@@ -151,14 +203,23 @@ export class GrpcGateway {
 
   private health: grpc.handleUnaryCall<unknown, unknown> = (call, callback) => {
     if (!this.authenticated(call)) return callback(authenticationError());
-    const position = this.options.journal.position;
-    callback(null, {
-      ok: true,
-      engine_connected: this.options.surface.isEngineConnected,
-      middleware_instance_id: position.middlewareInstanceId,
-      first_available_seq: position.firstAvailableSeq.toString(),
-      last_event_seq: position.lastEventSeq.toString(),
-    });
+    try {
+      const status = this.options.surface.projectStatus();
+      const position = this.options.journal.position;
+      callback(null, {
+        ok: true,
+        engine_connected: this.options.surface.isEngineConnected,
+        middleware_instance_id: position.middlewareInstanceId,
+        project_session_id: position.projectSessionId,
+        project_id: position.projectId,
+        command_sequence: position.commandSequence.toString(),
+        first_available_seq: position.firstAvailableSeq.toString(),
+        last_event_seq: position.lastEventSeq.toString(),
+        project_status: serializeProjectStatus(status),
+      });
+    } catch (error) {
+      callback(toGrpcError(error));
+    }
   };
 
   private dispatch: grpc.handleUnaryCall<
@@ -212,16 +273,88 @@ export class GrpcGateway {
     try {
       // As duas leituras são síncronas, portanto formam um ponto coerente no
       // event loop: projeções completas + cursor do último evento nelas contido.
-      const projections = this.options.surface.snapshot();
+      const snapshot = this.options.surface.snapshot();
       const position = this.options.journal.position;
       callback(null, {
-        projections_json: JSON.stringify(projections),
+        projections_json: JSON.stringify(snapshot.projections),
         middleware_instance_id: position.middlewareInstanceId,
+        project_session_id: position.projectSessionId,
+        project_id: position.projectId,
+        command_sequence: position.commandSequence.toString(),
         first_available_seq: position.firstAvailableSeq.toString(),
         last_event_seq: position.lastEventSeq.toString(),
+        project_status: serializeProjectStatus(snapshot.status),
       });
     } catch (err) {
       callback(toGrpcError(err));
+    }
+  };
+
+  private projectCreate: grpc.handleUnaryCall<
+    {
+      project_id?: string;
+      template_id?: string;
+      expected_project_session_id?: string;
+    },
+    unknown
+  > = (call, callback) => {
+    if (!this.authenticated(call)) return callback(authenticationError());
+    void (async () => {
+      try {
+        const result = await this.options.surface.projectCreate(
+          call.request.project_id || undefined,
+          call.request.template_id || undefined,
+          call.request.expected_project_session_id || undefined,
+        );
+        callback(null, serializeProjectOperation(result));
+      } catch (err) {
+        callback(toGrpcError(err));
+      }
+    })();
+  };
+
+  private projectOpenDocument: grpc.handleUnaryCall<
+    { document_json?: string; expected_project_session_id?: string },
+    unknown
+  > = (call, callback) => {
+    if (!this.authenticated(call)) return callback(authenticationError());
+    let document: unknown;
+    try {
+      document = JSON.parse(call.request.document_json ?? "");
+    } catch {
+      const error = new Error(`"document_json" must be valid JSON`) as grpc.ServiceError;
+      error.code = grpc.status.INVALID_ARGUMENT;
+      callback(error);
+      return;
+    }
+    void this.options.surface.projectOpenDocument(
+      document,
+      call.request.expected_project_session_id || undefined,
+    ).then(
+      (result) => callback(null, serializeProjectOperation(result)),
+      (error: unknown) => callback(toGrpcError(error)),
+    );
+  };
+
+  private projectClose: grpc.handleUnaryCall<
+    { expected_project_session_id?: string },
+    unknown
+  > = (call, callback) => {
+    if (!this.authenticated(call)) return callback(authenticationError());
+    void this.options.surface.projectClose(
+      call.request.expected_project_session_id || undefined,
+    ).then(
+      (status) => callback(null, serializeProjectStatus(status)),
+      (error: unknown) => callback(toGrpcError(error)),
+    );
+  };
+
+  private projectStatus: grpc.handleUnaryCall<unknown, unknown> = (call, callback) => {
+    if (!this.authenticated(call)) return callback(authenticationError());
+    try {
+      callback(null, serializeProjectStatus(this.options.surface.projectStatus()));
+    } catch (error) {
+      callback(toGrpcError(error));
     }
   };
 
@@ -233,29 +366,35 @@ export class GrpcGateway {
       call.destroy(authenticationError());
       return;
     }
-    const afterSeq = call.request.after_seq ?? 0;
-    const write = (e: EventEnvelope): void => {
-      call.write({ seq: e.seq.toString(), kind: e.kind, payload_json: JSON.stringify(e.payload) });
-    };
-    // catch-up dentro da janela do ring, depois ao vivo
-    for (const envelope of this.options.journal.since(afterSeq)) write(envelope);
-    const live = (envelope: EventEnvelope): void => write(envelope);
-    this.options.journal.on("event", live);
-    call.on("cancelled", () => this.options.journal.removeListener("event", live));
-    call.on("close", () => this.options.journal.removeListener("event", live));
+    const error = new Error(
+      "StreamEvents is unsafe without project_session_id; use StreamEventsV2",
+    ) as grpc.ServiceError;
+    error.code = grpc.status.FAILED_PRECONDITION;
+    error.details = error.message;
+    call.destroy(error);
   };
 
   private streamEventsV2: grpc.handleServerStreamingCall<
-    { middleware_instance_id?: string; after_seq?: string | number },
+    { middleware_instance_id?: string; project_session_id?: string; after_seq?: string | number },
     {
       status?: {
         middleware_instance_id: string;
+        project_session_id: string;
+        project_id: string;
+        command_sequence: string;
         first_available_seq: string;
         last_event_seq: string;
         resync_required: boolean;
         resync_reason: string;
       };
-      event?: { seq: string; kind: string; payload_json: string };
+      event?: {
+        seq: string;
+        project_session_id: string;
+        project_id: string;
+        command_sequence: string;
+        kind: string;
+        payload_json: string;
+      };
     }
   > = (call) => {
     if (!this.authenticated(call)) {
@@ -264,12 +403,16 @@ export class GrpcGateway {
     }
     const result = this.options.journal.readSince(
       call.request.middleware_instance_id,
+      call.request.project_session_id,
       call.request.after_seq,
     );
     // Frame de controle obrigatório: o cliente decide antes de aplicar eventos.
     call.write({
       status: {
         middleware_instance_id: result.middlewareInstanceId,
+        project_session_id: result.projectSessionId,
+        project_id: result.projectId,
+        command_sequence: result.commandSequence.toString(),
         first_available_seq: result.firstAvailableSeq.toString(),
         last_event_seq: result.lastEventSeq.toString(),
         resync_required: result.resyncRequired,
@@ -281,20 +424,41 @@ export class GrpcGateway {
       return;
     }
 
-    const write = (envelope: EventEnvelope): void => {
+    let finished = false;
+    const finishForPartitionChange = (): void => {
+      if (finished) return;
+      const position = this.options.journal.position;
+      if (position.projectSessionId === result.projectSessionId) return;
+      finished = true;
       call.write({
-        event: {
-          seq: envelope.seq.toString(),
-          kind: envelope.kind,
-          payload_json: JSON.stringify(envelope.payload),
+        status: {
+          middleware_instance_id: position.middlewareInstanceId,
+          project_session_id: position.projectSessionId,
+          project_id: position.projectId,
+          command_sequence: position.commandSequence.toString(),
+          first_available_seq: position.firstAvailableSeq.toString(),
+          last_event_seq: position.lastEventSeq.toString(),
+          resync_required: true,
+          resync_reason: "project_session_changed",
         },
       });
+      call.end();
+    };
+    const write = (envelope: EventEnvelope): void => {
+      if (envelope.projectSessionId !== result.projectSessionId) {
+        finishForPartitionChange();
+        return;
+      }
+      if (finished) return;
+      call.write({ event: serializeEvent(envelope) });
     };
     for (const envelope of result.events) write(envelope);
     const live = (envelope: EventEnvelope): void => write(envelope);
     this.options.journal.on("event", live);
+    this.options.journal.on("partitionChanged", finishForPartitionChange);
     const cleanup = (): void => {
       this.options.journal.removeListener("event", live);
+      this.options.journal.removeListener("partitionChanged", finishForPartitionChange);
     };
     call.on("cancelled", cleanup);
     call.on("close", cleanup);

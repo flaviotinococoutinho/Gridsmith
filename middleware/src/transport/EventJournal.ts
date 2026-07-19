@@ -1,13 +1,9 @@
 /**
- * Diário de eventos do Blueprint compartilhado pelos transports do editor.
+ * Diário de eventos particionado pela sessão de projeto ativa.
  *
- * A posição de consumo não é apenas um número: `seq` só é monotônico dentro
- * de uma instância do middleware. O cursor completo é
- * `(middlewareInstanceId, seq)`, o que permite distinguir uma reconexão normal
- * de um processo novo cujo contador voltou a zero.
- *
- * Internamente a sequência é `bigint`; nas bordas ela é sempre serializada
- * como string decimal (GraphQL) ou `uint64` carregado como string (gRPC).
+ * O cursor seguro é `(middlewareInstanceId, projectSessionId, seq)`. Trocar a
+ * sessão substitui o objeto-partição inteiro; eventos e sequências do projeto
+ * anterior deixam de ser alcançáveis sem depender de limpar o Blueprint.
  */
 
 import { randomUUID } from "node:crypto";
@@ -18,18 +14,25 @@ export type EventSequenceInput = string | number | bigint;
 
 export interface EventEnvelope {
   readonly seq: EventSequence;
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly commandSequence: EventSequence;
   readonly kind: string;
   readonly payload: unknown;
 }
 
 export type ResyncReason =
   | "instance_changed"
+  | "project_session_changed"
   | "journal_gap"
   | "cursor_ahead"
   | "invalid_cursor";
 
 export interface JournalPosition {
   readonly middlewareInstanceId: string;
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly commandSequence: EventSequence;
   readonly firstAvailableSeq: EventSequence;
   readonly lastEventSeq: EventSequence;
 }
@@ -37,16 +40,19 @@ export interface JournalPosition {
 export interface JournalReadResult extends JournalPosition {
   readonly resyncRequired: boolean;
   readonly resyncReason?: ResyncReason;
-  /** Vazio sempre que `resyncRequired` for true: nunca aplica uma cauda parcial. */
   readonly events: readonly EventEnvelope[];
+}
+
+interface JournalPartition {
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly ring: EventEnvelope[];
+  nextSeq: EventSequence;
+  commandSequence: EventSequence;
 }
 
 const UINT64_MAX = (1n << 64n) - 1n;
 
-/**
- * Converte um cursor externo em sequência válida. A função é exportada para as
- * bordas validarem consistentemente GraphQL String e protobuf uint64/string.
- */
 export function parseEventSequence(value: unknown): EventSequence | undefined {
   if (typeof value === "bigint") {
     return value >= 0n && value <= UINT64_MAX ? value : undefined;
@@ -63,14 +69,13 @@ export function parseEventSequence(value: unknown): EventSequence | undefined {
   }
 }
 
-/** Eventos: "event" (EventEnvelope) a cada append. */
+/** Eventos: `event` (EventEnvelope) a cada append da partição ativa. */
 export class EventJournal extends EventEmitter {
-  private readonly ring: EventEnvelope[] = [];
-  private nextSeq = 1n;
+  private partition: JournalPartition;
 
   constructor(
     private readonly capacity = 512,
-    readonly middlewareInstanceId = randomUUID(),
+    readonly middlewareInstanceId: string = randomUUID(),
   ) {
     super();
     if (!Number.isInteger(capacity) || capacity < 1) {
@@ -79,53 +84,115 @@ export class EventJournal extends EventEmitter {
     if (typeof middlewareInstanceId !== "string" || middlewareInstanceId.trim().length === 0) {
       throw new TypeError("middlewareInstanceId must be a non-empty string");
     }
+    this.partition = this.newPartition(`no-project-${randomUUID()}`, "", 0n);
   }
 
   get lastSeq(): EventSequence {
-    return this.nextSeq - 1n;
+    return this.partition.nextSeq - 1n;
   }
 
-  /** Primeiro evento ainda reentregável; em diário vazio, `lastSeq + 1`. */
   get firstAvailableSeq(): EventSequence {
-    return this.ring[0]?.seq ?? this.nextSeq;
+    return this.partition.ring[0]?.seq ?? this.partition.nextSeq;
   }
 
   get position(): JournalPosition {
     return Object.freeze({
       middlewareInstanceId: this.middlewareInstanceId,
+      projectSessionId: this.partition.projectSessionId,
+      projectId: this.partition.projectId,
+      commandSequence: this.partition.commandSequence,
       firstAvailableSeq: this.firstAvailableSeq,
       lastEventSeq: this.lastSeq,
     });
   }
 
-  append(kind: string, payload: unknown): EventEnvelope {
-    if (this.nextSeq > UINT64_MAX) {
-      throw new RangeError("EventJournal exhausted the uint64 sequence space; restart with a new instance id");
+  /** Inicia uma nova partição; nenhum evento da anterior é copiado. */
+  activateSession(
+    projectSessionId: string,
+    projectId: string,
+    commandSequence: EventSequenceInput = 0n,
+  ): JournalPosition {
+    const sequence = parseEventSequence(commandSequence);
+    if (!projectSessionId || !projectId || sequence === undefined) {
+      throw new TypeError("activateSession requires valid project/session ids and commandSequence");
     }
-    const envelope: EventEnvelope = Object.freeze({ seq: this.nextSeq++, kind, payload });
-    this.ring.push(envelope);
-    if (this.ring.length > this.capacity) this.ring.shift();
+    this.partition = this.newPartition(projectSessionId, projectId, sequence);
+    this.emit("partitionChanged", this.position);
+    return this.position;
+  }
+
+  /** Partição explícita para o estado sem projeto após close. */
+  deactivateSession(): JournalPosition {
+    this.partition = this.newPartition(`no-project-${randomUUID()}`, "", 0n);
+    this.emit("partitionChanged", this.position);
+    return this.position;
+  }
+
+  append(kind: string, payload: unknown): EventEnvelope {
+    return this.appendForSession(
+      this.partition.projectSessionId,
+      this.partition.projectId,
+      inferCommandSequence(payload) ?? this.partition.commandSequence,
+      kind,
+      payload,
+    )!;
+  }
+
+  /**
+   * Anexa apenas se o produtor ainda pertence à partição ativa. Um callback
+   * tardio de A após ativar B é descartado antes de alcançar qualquer cliente.
+   */
+  appendForSession(
+    projectSessionId: string,
+    projectId: string,
+    commandSequence: EventSequenceInput,
+    kind: string,
+    payload: unknown,
+  ): EventEnvelope | undefined {
+    const sequence = parseEventSequence(commandSequence);
+    if (
+      projectSessionId !== this.partition.projectSessionId ||
+      projectId !== this.partition.projectId ||
+      sequence === undefined
+    ) {
+      return undefined;
+    }
+    if (this.partition.nextSeq > UINT64_MAX) {
+      throw new RangeError("EventJournal exhausted the uint64 sequence space");
+    }
+    if (sequence > this.partition.commandSequence) this.partition.commandSequence = sequence;
+    const envelope: EventEnvelope = Object.freeze({
+      seq: this.partition.nextSeq++,
+      projectSessionId,
+      projectId,
+      commandSequence: sequence,
+      kind,
+      payload,
+    });
+    this.partition.ring.push(envelope);
+    if (this.partition.ring.length > this.capacity) this.partition.ring.shift();
     this.emit("event", envelope);
     return envelope;
   }
 
-  /** Eventos com `seq > afterSeq`, apenas quando o cursor é válido nesta janela. */
   since(afterSeq: EventSequenceInput): readonly EventEnvelope[] {
     const seq = parseEventSequence(afterSeq);
     if (seq === undefined) return [];
-    return this.ring.filter((event) => event.seq > seq);
+    return this.partition.ring.filter((event) => event.seq > seq);
   }
 
-  /**
-   * Resolve um cursor completo. Instância nova, gap, cursor futuro ou entrada
-   * inválida exigem snapshot completo e nunca retornam uma cauda parcial.
-   */
-  readSince(middlewareInstanceId: unknown, afterSeq: unknown): JournalReadResult {
+  readSince(
+    middlewareInstanceId: unknown,
+    projectSessionId: unknown,
+    afterSeq?: unknown,
+  ): JournalReadResult {
     const position = this.position;
     const seq = parseEventSequence(afterSeq);
     if (
       typeof middlewareInstanceId !== "string" ||
       middlewareInstanceId.length === 0 ||
+      typeof projectSessionId !== "string" ||
+      projectSessionId.length === 0 ||
       seq === undefined
     ) {
       return this.resync(position, "invalid_cursor");
@@ -133,22 +200,43 @@ export class EventJournal extends EventEmitter {
     if (middlewareInstanceId !== this.middlewareInstanceId) {
       return this.resync(position, "instance_changed");
     }
-    if (seq > this.lastSeq) {
-      return this.resync(position, "cursor_ahead");
+    if (projectSessionId !== this.partition.projectSessionId) {
+      return this.resync(position, "project_session_changed");
     }
-    if (seq + 1n < this.firstAvailableSeq) {
-      return this.resync(position, "journal_gap");
-    }
+    if (seq > this.lastSeq) return this.resync(position, "cursor_ahead");
+    if (seq + 1n < this.firstAvailableSeq) return this.resync(position, "journal_gap");
     return Object.freeze({
       ...position,
       resyncRequired: false,
-      events: Object.freeze([...this.ring.filter((event) => event.seq > seq)]),
+      events: Object.freeze([
+        ...this.partition.ring.filter((event) => event.seq > seq),
+      ]),
     });
   }
 
-  /** Compatibilidade interna: resume apenas dentro da janela e nunca de cursor futuro. */
   canResumeFrom(afterSeq: EventSequenceInput): boolean {
-    return !this.readSince(this.middlewareInstanceId, afterSeq).resyncRequired;
+    return !this.readSince(
+      this.middlewareInstanceId,
+      this.partition.projectSessionId,
+      afterSeq,
+    ).resyncRequired;
+  }
+
+  private newPartition(
+    projectSessionId: string,
+    projectId: string,
+    commandSequence: EventSequence,
+  ): JournalPartition {
+    if (commandSequence >= UINT64_MAX) {
+      throw new RangeError("commandSequence leaves no space for journal events");
+    }
+    return {
+      projectSessionId,
+      projectId,
+      commandSequence,
+      nextSeq: commandSequence + 1n,
+      ring: [],
+    };
   }
 
   private resync(position: JournalPosition, reason: ResyncReason): JournalReadResult {
@@ -159,4 +247,9 @@ export class EventJournal extends EventEmitter {
       events: Object.freeze([]),
     });
   }
+}
+
+function inferCommandSequence(payload: unknown): EventSequence | undefined {
+  if (payload === null || typeof payload !== "object") return undefined;
+  return parseEventSequence((payload as Record<string, unknown>)["commandSequence"]);
 }

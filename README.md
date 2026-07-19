@@ -8,7 +8,7 @@ composto por três macrocamadas independentes e altamente desacopladas:
 | **Frontend** | [`frontend/`](frontend/) | Electron + TypeScript | Ambiente visual WYSIWYG: blueprints, grafos de estado, rigs/bones, pipelines de iluminação e gestão taxonômica de assets |
 | **Middleware** | [`middleware/`](middleware/) | Node.js + TypeScript (MCP Server) | Orquestração do estado declarativo (AST), interface com IA generativa, ganchos via MCP e JSON-RPC 2.0 |
 | **Backend** | [`engine/`](engine/) | C# / .NET 8 + MonoGame | Motor determinístico de baixo nível, Data-Oriented Design, alocação Zero-GC, consumo via IPC e Shared Memory |
-| **Contratos** | [`contracts/`](contracts/) | JSON Schema | Fonte única de verdade dos contratos JSON-RPC trafegados entre as camadas |
+| **Contratos** | [`contracts/`](contracts/) | JSON Schema + GraphQL SDL + Protobuf | Fonte única de verdade dos contratos JSON-RPC, GraphQL e gRPC trafegados entre as camadas |
 
 ```mermaid
 graph TD
@@ -69,6 +69,11 @@ da engine, nunca assume suporte. Desenho completo em
 - **Transporte binário-seguro:** frames JSON-RPC com prefixo de tamanho (uint32 LE) sobre
   Named Pipes (Windows) ou Unix Domain Sockets (Linux/macOS); dados de malha em massa via
   Memory-Mapped Files com `LayoutKind.Sequential`.
+- **Sessão de projeto transacional:** `ProjectSessionManager` prepara parse, migração,
+  validação, replay e projeção fora da sessão publicada; só então faz a troca atômica.
+  `EditorSurface`, JSON-RPC, GraphQL, gRPC e MCP resolvem a mesma sessão ativa. O
+  documento Blueprint v2 persiste `projectId`, e create/open/close usam
+  `expectedProjectSessionId` como compare-and-swap para rejeitar clientes atrasados.
 
 ## Rumo atual: Alpha 0.1 — First Playable Workflow
 
@@ -145,8 +150,10 @@ graph LR
   editor testados: **FABRIK 2D**, **easing Bézier cúbico** (Newton + bisseção),
   **máquina de estados com semântica Gum** (interpolação interrupt-safe com easing) e
   **ExperienceGate** (painéis governados com razão visível). Parte 2: **unificação
-  canônica** (toda mutação via orquestrador; `MonoGameAdapter.rehydrateFrom` é o único
-  dono da reidratação; `EngineBridge` restrito a diagnósticos), **nível como comando
+  canônica** (toda mutação via orquestrador; a porta `RuntimeAdapter` exige
+  `resetSession` e `rehydrateFrom`, implementados pelo `MonoGameAdapter`; `EngineBridge`
+  restrito a diagnósticos), **sessões de projeto substituíveis** (create/open/close/status
+  paritários nas quatro bordas, replay privado e rollback atômico), **nível como comando
   canônico** (`level/define` com IntGrid + regras; o adapter resolve o auto-tiling na
   projeção e a engine ganha `tilemap/remove`) e **IntGridDocument** no editor (pincéis
   paint/rect/flood com undo/redo célula a célula → payload de `level/define`). Parte 3:
@@ -235,10 +242,17 @@ amostras via `mesh/inspect` — compatibilidade byte a byte comprovada entre os 
 
 `verify-phase4` sobe o **middleware real** (canal da engine + gateway do editor), conecta
 a **engine .NET real** e um **cliente de edição**, e prova o caminho completo da
-ferramenta visual: **dispatch pelo caminho canônico** (`blueprint/dispatch`), **projeção
-no runtime** confirmada na engine, **broadcast de eventos** (`blueprint/event`) recebido
-de volta e a **experiência governada** por perfil de runtime (`experience/resolve`,
+ferramenta visual: cria primeiro uma sessão por **`project/create`**, faz **dispatch pelo
+caminho canônico** (`blueprint/dispatch`), confirma a **projeção no runtime** na engine,
+recebe de volta o **broadcast de eventos** (`blueprint/event`) e a **experiência
+governada** por perfil de runtime (`experience/resolve`,
 habilitação/desabilitação com razão).
+
+As operações de aplicação `project/create`, `project/openDocument`, `project/close` e
+`project/status` existem com a mesma semântica em JSON-RPC, GraphQL, gRPC e MCP. O
+status técnico distingue runtime `synchronized`, `deferred` e `failed`. A continuidade
+de eventos usa o cursor `(middlewareInstanceId, projectSessionId, seq)`; troca de
+processo, troca de projeto ou gap do journal exige snapshot e ressincronização explícita.
 
 ## Documentação
 
@@ -248,8 +262,8 @@ habilitação/desabilitação com razão).
 | [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) | Requisitos funcionais, não funcionais e técnicos com status e verificação |
 | [`docs/ALPHA-0.1.md`](docs/ALPHA-0.1.md) | Milestone Alpha 0.1, jornada de aceite e backlog P0 (status por evidência) |
 | [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Matriz de versionamento e compatibilidade (protocolo, documentos, artefatos, perfis, shared memory) |
-| [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) | Governança arquitetural (22 regras executáveis), Definition of Done, quality gates e fontes de verdade |
-| [`docs/adr/`](docs/adr/) | Architecture Decision Records (ADR-016..018: transports do app — GraphQL baseline, gRPC quente com fallback, endpoints/verbosidade) |
+| [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) | Governança arquitetural (23 regras executáveis), Definition of Done, quality gates e fontes de verdade |
+| [`docs/adr/`](docs/adr/) | Architecture Decision Records (ADR-016..020: transports do app e sessão de projeto transacional) |
 | [`docs/ARCHITECTURE-SPEC.md`](docs/ARCHITECTURE-SPEC.md) | **Especificação técnica normativa (constituição de engenharia):** princípios invioláveis, regras de dependência, paradigmas, padrões, contratos, RFCs/ISO, versionamento, erros, testes e plano de evolução — construída a partir do código com evidência classificada |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Camadas, protocolo de framing e ciclo de vida da conexão |
 | [`docs/CANONICAL-MODEL.md`](docs/CANONICAL-MODEL.md) | Modelo canônico (comandos/eventos/hooks/pipelines/artefatos), adapters e perfis de runtime |

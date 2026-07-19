@@ -2,14 +2,15 @@
 # fallback do app). Fonte de verdade deste SDL: este arquivo; o middleware o
 # carrega em runtime (cópia em dist/ verificada por teste de paridade).
 #
-# Semântica: fachada fina sobre o MESMO CanonicalOrchestrator usado pelo
-# gateway JSON-RPC e pelo MCP — nenhuma lógica de domínio vive aqui.
+# Semântica: fachada fina sobre a MESMA EditorSurface e sessão ativa usadas por
+# JSON-RPC, gRPC e MCP — nenhuma lógica de domínio vive aqui.
 # Mutações genéricas preservam a regra R8 (todo comando canônico despachável
 # pelas bordas); payloads são validados no BlueprintStore, nunca na borda.
 #
 # Eventos: sem subscription — o fallback usa polling incremental por cursor
-# composto `(middlewareInstanceId, afterSeq)`. `seq` é string decimal para não
-# herdar o limite de 32 bits do GraphQL Int. O caminho quente pertence ao gRPC.
+# composto `(middlewareInstanceId, projectSessionId, afterSeq)`. `seq` e
+# `commandSequence` são strings decimais para não herdar o limite de 32 bits do
+# GraphQL Int. O caminho quente pertence ao gRPC.
 
 "Payload/resultado JSON arbitrário validado pelo domínio (não pela borda)."
 scalar JSON
@@ -54,8 +55,11 @@ type DispatchResult {
 }
 
 type BlueprintEventEnvelope {
-  "Sequência legada limitada ao GraphQL Int; clientes novos usam CursorEventEnvelope."
+  "Sequência legada limitada ao GraphQL Int; mantida apenas para introspecção."
   seq: Int!
+  projectSessionId: String!
+  projectId: String!
+  commandSequence: String!
   kind: String!
   payload: JSON!
 }
@@ -63,6 +67,9 @@ type BlueprintEventEnvelope {
 "Evento seguro para cursores longos; seq é decimal uint64."
 type CursorEventEnvelope {
   seq: String!
+  projectSessionId: String!
+  projectId: String!
+  commandSequence: String!
   kind: String!
   payload: JSON!
 }
@@ -70,10 +77,13 @@ type CursorEventEnvelope {
 "Janela incremental do EventJournal; events é vazio quando resyncRequired."
 type EventBatch {
   middlewareInstanceId: String!
+  projectSessionId: String!
+  projectId: String!
+  commandSequence: String!
   firstAvailableSeq: String!
   lastEventSeq: String!
   resyncRequired: Boolean!
-  "instance_changed|journal_gap|cursor_ahead|invalid_cursor"
+  "instance_changed|project_session_changed|journal_gap|cursor_ahead|invalid_cursor"
   resyncReason: String
   events: [CursorEventEnvelope!]!
 }
@@ -82,7 +92,11 @@ type EventBatch {
 type EditorSnapshot {
   "Mapa skeletons|meshes|lights|entityDefs|entities|camera|levels|world|document."
   projections: JSON!
+  status: ProjectStatus!
   middlewareInstanceId: String!
+  projectSessionId: String!
+  projectId: String!
+  commandSequence: String!
   firstAvailableSeq: String!
   lastEventSeq: String!
 }
@@ -127,10 +141,33 @@ type NewProjectResult {
   skipped: Int!
 }
 
+"Identidade e progresso da sessão ativa; ids são null quando não há projeto aberto."
+type ProjectStatus {
+  active: Boolean!
+  projectSessionId: String
+  projectId: String
+  commandSequence: String!
+  createdAt: String
+  "synchronized|deferred|failed"
+  runtimeState: String!
+}
+
+"Resultado uniforme das operações transacionais de projeto."
+type ProjectOperationResult {
+  status: ProjectStatus!
+  "Resumo do replay/projeção; zero para create vazio."
+  summary: ReplaySummary!
+  templateId: String
+  name: String
+}
+
 type Health {
   ok: Boolean!
   engineConnected: Boolean!
   middlewareInstanceId: String!
+  projectSessionId: String!
+  projectId: String!
+  commandSequence: String!
   "Primeiro seq ainda disponível para catch-up (decimal uint64)."
   firstAvailableSeq: String!
   "Último seq publicado no EventJournal (decimal uint64)."
@@ -146,18 +183,26 @@ type Query {
   "Matriz de decisões da governança de experiência."
   experience(family: String, version: String): Experience!
   templates: [ProjectTemplate!]!
-  "Janela segura de eventos após um cursor composto."
-  eventBatch(middlewareInstanceId: String!, afterSeq: String!): EventBatch!
-  "Compatibilidade temporária; sem instance id não consegue detectar restart."
+  "Sessão de projeto observada por todos os transports."
+  projectStatus: ProjectStatus!
+  "Janela segura; projectSessionId opcional só para compatibilidade, omiti-lo exige resync."
+  eventBatch(middlewareInstanceId: String!, projectSessionId: String, afterSeq: String!): EventBatch!
+  "Compatibilidade nominal; falha explicitamente porque não identifica processo nem sessão."
   eventsSince(afterSeq: Int!): [BlueprintEventEnvelope!]!
-    @deprecated(reason: "Use eventBatch com middlewareInstanceId e resyncRequired")
+    @deprecated(reason: "Use eventBatch com middlewareInstanceId, projectSessionId e resyncRequired")
 }
 
 type Mutation {
   "Despacha um comando canônico pelo orquestrador (filters → AST → actions → projeção)."
   dispatch(kind: CommandKind!, payload: JSON!, requestId: String): DispatchResult!
-  "Reproduz um documento salvo pelo caminho canônico (exige Blueprint vazio)."
-  loadDocument(document: JSON!): ReplaySummary!
-  "Cria projeto a partir de template (ex.: platformer-2d); exige Blueprint vazio."
-  newProjectFromTemplate(templateId: String!): NewProjectResult!
+  "Cria e ativa, atomicamente, uma sessão vazia ou baseada em template."
+  projectCreate(projectId: String, templateId: String, expectedProjectSessionId: String): ProjectOperationResult!
+  "Prepara o documento fora da sessão ativa e só então a substitui atomicamente."
+  projectOpenDocument(document: JSON!, expectedProjectSessionId: String): ProjectOperationResult!
+  "Fecha somente a sessão esperada, quando informada."
+  projectClose(expectedProjectSessionId: String): ProjectStatus!
+  "Alias legado transacional de projectOpenDocument."
+  loadDocument(document: JSON!, expectedProjectSessionId: String): ReplaySummary!
+  "Alias legado transacional de projectCreate(templateId: ...)."
+  newProjectFromTemplate(templateId: String!, expectedProjectSessionId: String): NewProjectResult!
 }

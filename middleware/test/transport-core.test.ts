@@ -75,6 +75,7 @@ test("formatRecord sobrevive a detail não serializável", () => {
 
 test("journal: seq monotônico, since incremental e emissão ao vivo", () => {
   const journal = new EventJournal(8, "middleware-a");
+  journal.activateSession("session-a", "project-a", 0);
   const live: bigint[] = [];
   journal.on("event", (e: { seq: bigint }) => live.push(e.seq));
 
@@ -90,6 +91,9 @@ test("journal: seq monotônico, since incremental e emissão ao vivo", () => {
   assert.deepEqual(live, [1n, 2n, 3n]);
   assert.deepEqual(journal.position, {
     middlewareInstanceId: "middleware-a",
+    projectSessionId: "session-a",
+    projectId: "project-a",
+    commandSequence: 0n,
     firstAvailableSeq: 1n,
     lastEventSeq: 3n,
   });
@@ -97,6 +101,7 @@ test("journal: seq monotônico, since incremental e emissão ao vivo", () => {
 
 test("journal: ring não entrega cauda parcial e retorna gap explícito", () => {
   const journal = new EventJournal(2, "middleware-a");
+  journal.activateSession("session-a", "project-a", 0);
   journal.append("a", {});
   journal.append("b", {});
   journal.append("c", {}); // seq 1 caiu do ring
@@ -106,7 +111,7 @@ test("journal: ring não entrega cauda parcial e retorna gap explícito", () => 
   assert.equal(journal.canResumeFrom(0), false); // gap: seq 1 perdido
   assert.equal(journal.canResumeFrom(1), true);
   assert.equal(journal.canResumeFrom(3), true); // em dia
-  const gap = journal.readSince("middleware-a", "0");
+  const gap = journal.readSince("middleware-a", "session-a", "0");
   assert.equal(gap.resyncRequired, true);
   assert.equal(gap.resyncReason, "journal_gap");
   assert.deepEqual(gap.events, [], "uma cauda parcial nunca pode ser aplicada");
@@ -115,23 +120,54 @@ test("journal: ring não entrega cauda parcial e retorna gap explícito", () => 
 
 test("journal: restart, cursor futuro e cursor inválido exigem resync com razão estável", () => {
   const journal = new EventJournal(4, "middleware-new");
+  journal.activateSession("session-new", "project-new", 0);
   journal.append("a", {});
 
-  const restarted = journal.readSince("middleware-old", "100");
+  const restarted = journal.readSince("middleware-old", "session-new", "100");
   assert.equal(restarted.resyncReason, "instance_changed");
   assert.deepEqual(restarted.events, []);
 
-  const ahead = journal.readSince("middleware-new", "100");
+  const ahead = journal.readSince("middleware-new", "session-new", "100");
   assert.equal(ahead.resyncReason, "cursor_ahead");
   assert.equal(journal.canResumeFrom(100), false);
 
   for (const invalid of ["", "-1", "01", "1.5", "18446744073709551616", Number.MAX_VALUE]) {
-    const result = journal.readSince("middleware-new", invalid);
+    const result = journal.readSince("middleware-new", "session-new", invalid);
     assert.equal(result.resyncReason, "invalid_cursor", String(invalid));
     assert.deepEqual(result.events, []);
   }
   assert.equal(parseEventSequence("18446744073709551615"), 18_446_744_073_709_551_615n);
   assert.throws(() => new EventJournal(1, "  "), TypeError);
+});
+
+test("journal: troca de sessão substitui a partição e cursor antigo exige resync", () => {
+  const journal = new EventJournal(8, "middleware-one");
+  journal.activateSession("session-a", "project-a", 2);
+  journal.appendForSession("session-a", "project-a", 3, "lightAdded", {
+    projectSessionId: "session-a",
+    projectId: "project-a",
+    commandSequence: "3",
+  });
+  const cursorA = journal.position;
+
+  journal.activateSession("session-b", "project-b", 5);
+  assert.equal(
+    journal.appendForSession("session-a", "project-a", 4, "late-from-a", {}),
+    undefined,
+    "evento tardio da partição anterior é descartado",
+  );
+  journal.appendForSession("session-b", "project-b", 5, "project/sessionChanged", {});
+
+  const result = journal.readSince(
+    cursorA.middlewareInstanceId,
+    cursorA.projectSessionId,
+    cursorA.lastEventSeq,
+  );
+  assert.equal(result.resyncRequired, true);
+  assert.equal(result.resyncReason, "project_session_changed");
+  assert.deepEqual(result.events, []);
+  assert.equal(result.projectSessionId, "session-b");
+  assert.equal(result.projectId, "project-b");
 });
 
 // ---------- endpoints ----------

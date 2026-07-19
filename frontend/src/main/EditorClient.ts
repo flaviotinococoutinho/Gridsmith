@@ -1,7 +1,8 @@
 /**
  * Cliente transport-neutral do editor. O cursor de eventos é composto por
- * instância do middleware + sequência decimal, e todo resync substitui um
- * snapshot completo antes de reabrir stream/polling.
+ * instância do middleware + sessão de projeto + sequência decimal. Uma troca
+ * de projeto invalida callbacks em voo e todo resync substitui um snapshot
+ * completo antes de reabrir stream/polling.
  */
 
 import { randomUUID } from "node:crypto";
@@ -28,6 +29,9 @@ import type { ResolvedExperienceLike } from "../core/experienceGate.js";
 
 export interface BlueprintEventPayload {
   readonly kind: string;
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly commandSequence: string;
   readonly [key: string]: unknown;
 }
 
@@ -39,13 +43,41 @@ export interface DispatchOutcome {
 export interface ProjectionSnapshot extends HotCursor {
   readonly firstAvailableSeq: string;
   readonly projections: Readonly<Record<string, unknown>>;
+  readonly status: ProjectStatus;
+}
+
+export interface ProjectStatus {
+  readonly active: boolean;
+  readonly projectSessionId?: string;
+  readonly projectId?: string;
+  /** Decimal unix-ms no wire (GraphQL String evita perda de precisão). */
+  readonly createdAt?: string;
+  readonly commandSequence: string;
+  readonly runtimeState: "synchronized" | "deferred" | "failed";
+}
+
+export interface ProjectOperationSummary {
+  readonly applied: number;
+  readonly projected: number;
+  readonly deferred: number;
+  readonly skipped: number;
+}
+
+export interface ProjectOperationResult {
+  readonly status: ProjectStatus;
+  readonly summary: ProjectOperationSummary;
+  readonly templateId?: string;
+  readonly name?: string;
 }
 
 export interface ResynchronizationRecord {
   readonly reason: string;
   readonly atUnixMs: number;
   readonly previousMiddlewareInstanceId?: string;
+  readonly previousProjectSessionId?: string;
   readonly middlewareInstanceId: string;
+  readonly projectSessionId: string;
+  readonly projectId: string;
   readonly lastEventSeq: string;
 }
 
@@ -81,20 +113,33 @@ const EXPERIENCE_QUERY = `query ($family: String, $version: String) {
 }`;
 
 const SNAPSHOT_QUERY = `query EditorSnapshot {
-  snapshot { projections middlewareInstanceId firstAvailableSeq lastEventSeq }
+  snapshot {
+    projections middlewareInstanceId projectSessionId projectId commandSequence firstAvailableSeq lastEventSeq
+    status { active projectSessionId projectId createdAt commandSequence runtimeState }
+  }
 }`;
 
 const HEALTH_QUERY = `query EditorHealth {
-  health { ok engineConnected middlewareInstanceId firstAvailableSeq lastEventSeq }
-}`;
-
-const EVENT_BATCH_QUERY = `query EventBatch($instance: String!, $after: String!) {
-  eventBatch(middlewareInstanceId: $instance, afterSeq: $after) {
-    middlewareInstanceId firstAvailableSeq lastEventSeq
-    resyncRequired resyncReason
-    events { seq kind payload }
+  health {
+    ok engineConnected middlewareInstanceId projectSessionId projectId commandSequence firstAvailableSeq lastEventSeq
   }
 }`;
+
+const EVENT_BATCH_QUERY = `query EventBatch($instance: String!, $projectSessionId: String!, $after: String!) {
+  eventBatch(
+    middlewareInstanceId: $instance
+    projectSessionId: $projectSessionId
+    afterSeq: $after
+  ) {
+    middlewareInstanceId projectSessionId projectId commandSequence firstAvailableSeq lastEventSeq
+    resyncRequired resyncReason
+    events { seq kind projectSessionId projectId commandSequence payload }
+  }
+}`;
+
+const PROJECT_STATUS_FIELDS = `
+  active projectSessionId projectId createdAt commandSequence runtimeState
+`;
 
 export interface EditorClientOptions {
   readonly requestTimeoutMs?: number;
@@ -109,11 +154,21 @@ export interface EditorClientOptions {
 
 interface EventBatchWire {
   middlewareInstanceId: string;
+  projectSessionId: string;
+  projectId: string;
+  commandSequence: string;
   firstAvailableSeq: string;
   lastEventSeq: string;
   resyncRequired: boolean;
   resyncReason?: string | null;
-  events: Array<{ seq: string; kind: string; payload: unknown }>;
+  events: Array<{
+    seq: string;
+    kind: string;
+    projectSessionId: string;
+    projectId: string;
+    commandSequence: string;
+    payload: unknown;
+  }>;
 }
 
 export class EditorClient {
@@ -136,7 +191,10 @@ export class EditorClient {
   private probeTimer: ReturnType<typeof setInterval> | undefined;
   private resyncRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private resyncPromise: Promise<void> | undefined;
+  private projectOperationQueue: Promise<void> = Promise.resolve();
   private pollInFlight = false;
+  /** Invalida streams, polls e callbacks assíncronos abertos para a sessão anterior. */
+  private eventGeneration = 0;
   private resynchronizationCount = 0;
   private lastResynchronization: ResynchronizationRecord | undefined;
   private lastReadiness: TransportReadiness | undefined;
@@ -178,6 +236,14 @@ export class EditorClient {
 
   get latestProjectionSnapshot(): ProjectionSnapshot | undefined {
     return this.projectionState;
+  }
+
+  get activeProjectStatus(): ProjectStatus | undefined {
+    return this.projectionState?.status;
+  }
+
+  get activeProjectSessionId(): string | undefined {
+    return this.projectionState?.status.projectSessionId;
   }
 
   async probeReadiness(): Promise<TransportReadiness> {
@@ -297,26 +363,105 @@ export class EditorClient {
     });
   }
 
-  async saveDocument(): Promise<unknown> {
-    const { document } = await this.query<{ document: unknown }>("document");
-    return document;
+  async saveDocument(expectedProjectSessionId?: string): Promise<unknown> {
+    // Documento e identidade vêm do MESMO snapshot GraphQL. Assim uma troca
+    // concorrente nunca faz o conteúdo de B ser escrito no caminho de A.
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ snapshot: ProjectionSnapshot }>(SNAPSHOT_QUERY);
+      const snapshot = validateSnapshot(data.snapshot);
+      if (
+        expectedProjectSessionId !== undefined &&
+        snapshot.status.projectSessionId !== expectedProjectSessionId
+      ) {
+        throw new Error(
+          `project session changed while saving (expected ${expectedProjectSessionId}, got ${snapshot.status.projectSessionId ?? "none"})`,
+        );
+      }
+      const projection = snapshot.projections["document"] as { document?: unknown } | undefined;
+      if (!snapshot.status.active || !projection || !("document" in projection)) {
+        throw new Error("cannot save without an active project document");
+      }
+      return projection.document;
+    });
   }
 
-  loadDocument(document: unknown): Promise<{
-    applied: number;
-    projected: number;
-    deferred: number;
-    skipped: number;
-  }> {
-    return this.coldCall(async () => {
-      const data = await this.graphql.execute<{
-        loadDocument: { applied: number; projected: number; deferred: number; skipped: number };
-      }>(
-        `mutation ($doc: JSON!) { loadDocument(document: $doc) { applied projected deferred skipped } }`,
-        { doc: document },
+  createProject(templateId?: string): Promise<ProjectOperationResult> {
+    const expectedProjectSessionId = this.activeProjectSessionId;
+    return this.runProjectOperation(async () => {
+      const data = await this.graphql.execute<{ projectCreate: ProjectOperationResult }>(
+        `mutation ProjectCreate($templateId: String, $expectedProjectSessionId: String) {
+          projectCreate(
+            templateId: $templateId
+            expectedProjectSessionId: $expectedProjectSessionId
+          ) {
+            status { ${PROJECT_STATUS_FIELDS} }
+            summary { applied projected deferred skipped }
+            templateId name
+          }
+        }`,
+        {
+          templateId: templateId ?? null,
+          expectedProjectSessionId: expectedProjectSessionId ?? null,
+        },
       );
-      return data.loadDocument;
+      return validateProjectOperationResult(data.projectCreate);
     });
+  }
+
+  openProjectDocument(document: unknown): Promise<ProjectOperationResult> {
+    const expectedProjectSessionId = this.activeProjectSessionId;
+    return this.runProjectOperation(async () => {
+      const data = await this.graphql.execute<{ projectOpenDocument: ProjectOperationResult }>(
+        `mutation ProjectOpenDocument($document: JSON!, $expectedProjectSessionId: String) {
+          projectOpenDocument(
+            document: $document
+            expectedProjectSessionId: $expectedProjectSessionId
+          ) {
+            status { ${PROJECT_STATUS_FIELDS} }
+            summary { applied projected deferred skipped }
+          }
+        }`,
+        { document, expectedProjectSessionId: expectedProjectSessionId ?? null },
+      );
+      return validateProjectOperationResult(data.projectOpenDocument);
+    });
+  }
+
+  closeProject(expectedProjectSessionId?: string): Promise<ProjectStatus> {
+    return this.runProjectOperation(async () => {
+      const data = await this.graphql.execute<{ projectClose: ProjectStatus }>(
+        `mutation ProjectClose($expectedProjectSessionId: String) {
+          projectClose(expectedProjectSessionId: $expectedProjectSessionId) {
+            ${PROJECT_STATUS_FIELDS}
+          }
+        }`,
+        { expectedProjectSessionId: expectedProjectSessionId ?? null },
+      );
+      return validateProjectStatus(data.projectClose);
+    });
+  }
+
+  projectStatus(): Promise<ProjectStatus> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ projectStatus: ProjectStatus }>(
+        `query ProjectStatus { projectStatus { ${PROJECT_STATUS_FIELDS} } }`,
+      );
+      const status = validateProjectStatus(data.projectStatus);
+      const observed = this.projectionState?.status;
+      if (
+        observed !== undefined &&
+        (status.active !== observed.active ||
+          (status.active && status.projectSessionId !== observed.projectSessionId))
+      ) {
+        this.requestResync("project_session_changed");
+      }
+      return status;
+    });
+  }
+
+  /** Compatibilidade temporária: todo load usa a operação transacional nova. */
+  async loadDocument(document: unknown): Promise<ProjectOperationSummary> {
+    return (await this.openProjectDocument(document)).summary;
   }
 
   listProjectTemplates(): Promise<{
@@ -330,7 +475,7 @@ export class EditorClient {
     });
   }
 
-  newProjectFromTemplate(templateId: string): Promise<{
+  async newProjectFromTemplate(templateId: string): Promise<{
     templateId: string;
     name: string;
     applied: number;
@@ -338,26 +483,12 @@ export class EditorClient {
     deferred: number;
     skipped: number;
   }> {
-    return this.coldCall(async () => {
-      const data = await this.graphql.execute<{
-        newProjectFromTemplate: {
-          templateId: string;
-          name: string;
-          applied: number;
-          projected: number;
-          deferred: number;
-          skipped: number;
-        };
-      }>(
-        `mutation ($id: String!) {
-          newProjectFromTemplate(templateId: $id) {
-            templateId name applied projected deferred skipped
-          }
-        }`,
-        { id: templateId },
-      );
-      return data.newProjectFromTemplate;
-    });
+    const result = await this.createProject(templateId);
+    return {
+      templateId: result.templateId ?? templateId,
+      name: result.name ?? templateId,
+      ...result.summary,
+    };
   }
 
   close(): void {
@@ -369,6 +500,51 @@ export class EditorClient {
     this.probeTimer = undefined;
     this.resyncRetryTimer = undefined;
     this.grpc.close();
+  }
+
+  /**
+   * Serializa substituições dentro deste cliente e encerra a geração antiga
+   * antes de chamar o middleware. Se a preparação remota falhar, o cursor e o
+   * pump anteriores são retomados. Depois do commit remoto, o snapshot antigo
+   * é descartado imediatamente e a projeção completa da nova sessão é aplicada.
+   */
+  private runProjectOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.projectOperationQueue.then(async () => {
+      const shouldRestart = this.isConnected;
+      this.stopEventPump();
+      if (this.resyncPromise) {
+        await this.resyncPromise.catch(() => undefined);
+      }
+
+      let committed = false;
+      try {
+        const result = await this.coldCall(operation);
+        committed = true;
+        this.projectionState = undefined;
+        this.cursor = undefined;
+        try {
+          await this.resynchronize("project_session_changed", false);
+        } catch (error) {
+          // O commit remoto já aconteceu: não reportamos uma falsa falha de
+          // open/create ao ciclo de vida. A projeção segue indisponível até o
+          // retry completo concluir; nenhum cursor antigo é reutilizado.
+          this.log.warn("project committed; snapshot retry scheduled", {
+            message: String(error),
+          });
+          this.requestResync("project_session_changed");
+        }
+        if (shouldRestart && this.cursor && !this.closed) this.startEventPump();
+        return result;
+      } catch (error) {
+        if (!committed && shouldRestart && !this.closed) this.startEventPump();
+        throw error;
+      }
+    });
+    this.projectOperationQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private async hotCall<T>(viaGrpc: () => Promise<T>, viaGraphql: () => Promise<T>): Promise<T> {
@@ -439,6 +615,7 @@ export class EditorClient {
   }
 
   private stopEventPump(): void {
+    this.eventGeneration++;
     this.cancelStream?.();
     this.cancelStream = undefined;
     if (this.pollTimer) clearTimeout(this.pollTimer);
@@ -446,6 +623,7 @@ export class EditorClient {
   }
 
   private openStream(): void {
+    const generation = this.eventGeneration;
     const cursor = this.cursor;
     if (!cursor) {
       this.requestResync("missing_cursor");
@@ -453,9 +631,14 @@ export class EditorClient {
     }
     this.cancelStream = this.grpc.streamEvents(
       cursor,
-      (status) => this.handleStreamStatus(status),
-      (event) => this.deliver(event),
+      (status) => {
+        if (generation === this.eventGeneration) this.handleStreamStatus(status);
+      },
+      (event) => {
+        if (generation === this.eventGeneration) this.deliver(event);
+      },
       (error) => {
+        if (generation !== this.eventGeneration) return;
         const classified = classifyTransportError(error);
         if (classified.category !== "availability") {
           this.recordFatalTransportError(classified);
@@ -482,6 +665,13 @@ export class EditorClient {
       this.requestResync("instance_changed");
       return;
     }
+    if (
+      status.projectSessionId !== cursor.projectSessionId ||
+      status.projectId !== cursor.projectId
+    ) {
+      this.requestResync("project_session_changed");
+      return;
+    }
     const after = parseSequence(cursor.lastEventSeq);
     const first = parseSequence(status.firstAvailableSeq);
     const last = parseSequence(status.lastEventSeq);
@@ -498,15 +688,21 @@ export class EditorClient {
 
   private schedulePoll(delayMs: number): void {
     if (this.closed || this.router.active !== "graphql" || this.pollTimer) return;
+    const generation = this.eventGeneration;
     this.pollTimer = setTimeout(() => {
       this.pollTimer = undefined;
-      void this.pollEvents();
+      if (generation === this.eventGeneration) void this.pollEvents(generation);
     }, delayMs);
     this.pollTimer.unref?.();
   }
 
-  private async pollEvents(): Promise<void> {
-    if (this.pollInFlight || this.closed || this.router.active !== "graphql") return;
+  private async pollEvents(generation: number): Promise<void> {
+    if (
+      generation !== this.eventGeneration ||
+      this.pollInFlight ||
+      this.closed ||
+      this.router.active !== "graphql"
+    ) return;
     this.pollInFlight = true;
     try {
       if (this.resyncPromise) await this.resyncPromise;
@@ -517,8 +713,10 @@ export class EditorClient {
       }
       const data = await this.graphql.execute<{ eventBatch: EventBatchWire }>(EVENT_BATCH_QUERY, {
         instance: cursor.middlewareInstanceId,
+        projectSessionId: cursor.projectSessionId,
         after: cursor.lastEventSeq,
       });
+      if (generation !== this.eventGeneration) return;
       const batch = data.eventBatch;
       if (batch.resyncRequired) {
         await this.resynchronize(batch.resyncReason ?? "server_resync_required");
@@ -526,6 +724,13 @@ export class EditorClient {
       }
       if (batch.middlewareInstanceId !== cursor.middlewareInstanceId) {
         await this.resynchronize("instance_changed");
+        return;
+      }
+      if (
+        batch.projectSessionId !== cursor.projectSessionId ||
+        batch.projectId !== cursor.projectId
+      ) {
+        await this.resynchronize("project_session_changed");
         return;
       }
       for (const event of batch.events) {
@@ -542,16 +747,26 @@ export class EditorClient {
       else this.log.debug("event poll failed", { reason: classified.reason });
     } finally {
       this.pollInFlight = false;
-      if (!this.fatalTransportError) this.schedulePoll(this.eventPollMs);
+      if (generation === this.eventGeneration && !this.fatalTransportError) {
+        this.schedulePoll(this.eventPollMs);
+      }
     }
   }
 
   private deliver(event: HotEvent): boolean {
     const cursor = this.cursor;
     const sequence = parseSequence(event.seq);
+    const commandSequence = parseSequence(event.commandSequence);
     const last = cursor ? parseSequence(cursor.lastEventSeq) : undefined;
-    if (!cursor || sequence === undefined || last === undefined) {
+    if (!cursor || sequence === undefined || commandSequence === undefined || last === undefined) {
       this.requestResync("invalid_event_cursor");
+      return false;
+    }
+    if (
+      event.projectSessionId !== cursor.projectSessionId ||
+      event.projectId !== cursor.projectId
+    ) {
+      this.requestResync("project_session_changed");
       return false;
     }
     if (sequence <= last) return true;
@@ -559,10 +774,32 @@ export class EditorClient {
       this.requestResync("client_gap");
       return false;
     }
-    this.cursor = { ...cursor, lastEventSeq: event.seq };
+    this.cursor = {
+      ...cursor,
+      commandSequence: event.commandSequence,
+      lastEventSeq: event.seq,
+    };
+    // Trocas/fechamentos de sessão são eventos de controle, não mutações do
+    // Blueprint. Eles invalidam a projeção inteira e nunca devem sujar o
+    // documento nem chegar aos consumidores como um comando editável.
+    if (event.kind === "project/sessionChanged") {
+      this.requestResync("project_session_changed");
+      return false;
+    }
+    const rawPayload =
+      typeof event.payload === "object" && event.payload !== null
+        ? (event.payload as Record<string, unknown>)
+        : { value: event.payload };
+    const payload: BlueprintEventPayload = {
+      ...rawPayload,
+      kind: event.kind,
+      projectSessionId: event.projectSessionId,
+      projectId: event.projectId,
+      commandSequence: event.commandSequence,
+    };
     for (const listener of this.eventListeners) {
       try {
-        listener(event.payload as BlueprintEventPayload);
+        listener(payload);
       } catch (error) {
         this.log.warn("blueprint event listener failed", { message: String(error) });
       }
@@ -592,6 +829,11 @@ export class EditorClient {
       }
       if (!this.cursor || health.middlewareInstanceId !== this.cursor.middlewareInstanceId) {
         await this.resynchronize("instance_changed");
+      } else if (
+        health.projectSessionId !== this.cursor.projectSessionId ||
+        health.projectId !== this.cursor.projectId
+      ) {
+        await this.resynchronize("project_session_changed");
       }
       if (this.router.onProbeResult(true, Date.now()) === "promoted") {
         this.log.info("gRPC recovered; promoting", { lastEventSeq: this.cursor?.lastEventSeq });
@@ -633,11 +875,15 @@ export class EditorClient {
     const shouldRestart = restartPump && this.isConnected;
     if (shouldRestart) this.stopEventPump();
     const previousMiddlewareInstanceId = this.cursor?.middlewareInstanceId;
+    const previousProjectSessionId = this.cursor?.projectSessionId;
     const data = await this.graphql.execute<{ snapshot: ProjectionSnapshot }>(SNAPSHOT_QUERY);
     const snapshot = validateSnapshot(data.snapshot);
     this.projectionState = snapshot;
     this.cursor = {
       middlewareInstanceId: snapshot.middlewareInstanceId,
+      projectSessionId: snapshot.projectSessionId,
+      projectId: snapshot.projectId,
+      commandSequence: snapshot.commandSequence,
       firstAvailableSeq: snapshot.firstAvailableSeq,
       lastEventSeq: snapshot.lastEventSeq,
     };
@@ -645,7 +891,10 @@ export class EditorClient {
       reason,
       atUnixMs: Date.now(),
       ...(previousMiddlewareInstanceId ? { previousMiddlewareInstanceId } : {}),
+      ...(previousProjectSessionId ? { previousProjectSessionId } : {}),
       middlewareInstanceId: snapshot.middlewareInstanceId,
+      projectSessionId: snapshot.projectSessionId,
+      projectId: snapshot.projectId,
       lastEventSeq: snapshot.lastEventSeq,
     };
     this.resynchronizationCount++;
@@ -653,6 +902,8 @@ export class EditorClient {
     this.log.info("projection snapshot applied", {
       reason,
       middlewareInstanceId: snapshot.middlewareInstanceId,
+      projectSessionId: snapshot.projectSessionId,
+      projectId: snapshot.projectId,
       lastEventSeq: snapshot.lastEventSeq,
     });
     for (const listener of this.resyncListeners) {
@@ -694,6 +945,8 @@ function validateSnapshot(snapshot: ProjectionSnapshot): ProjectionSnapshot {
     !snapshot ||
     typeof snapshot.middlewareInstanceId !== "string" ||
     snapshot.middlewareInstanceId.length === 0 ||
+    typeof snapshot.projectSessionId !== "string" ||
+    typeof snapshot.projectId !== "string" ||
     typeof snapshot.projections !== "object" ||
     snapshot.projections === null
   ) {
@@ -704,5 +957,76 @@ function validateSnapshot(snapshot: ProjectionSnapshot): ProjectionSnapshot {
   if (first === undefined || last === undefined || first > last + 1n) {
     throw new Error("invalid editor snapshot cursor bounds");
   }
-  return Object.freeze({ ...snapshot, projections: Object.freeze({ ...snapshot.projections }) });
+  const status = validateProjectStatus(snapshot.status);
+  if (
+    status.active &&
+    (status.projectSessionId !== snapshot.projectSessionId || status.projectId !== snapshot.projectId)
+  ) {
+    throw new Error("editor snapshot status does not match its project cursor");
+  }
+  return Object.freeze({
+    ...snapshot,
+    status,
+    projections: Object.freeze({ ...snapshot.projections }),
+  });
+}
+
+function validateProjectStatus(status: ProjectStatus): ProjectStatus {
+  if (
+    !status ||
+    typeof status.active !== "boolean" ||
+    parseSequence(status.commandSequence) === undefined ||
+    (status.runtimeState !== "synchronized" &&
+      status.runtimeState !== "deferred" &&
+      status.runtimeState !== "failed")
+  ) {
+    throw new Error("invalid project status");
+  }
+  if (
+    status.active &&
+    (typeof status.projectSessionId !== "string" ||
+      status.projectSessionId.length === 0 ||
+      typeof status.projectId !== "string" ||
+      status.projectId.length === 0 ||
+      typeof status.createdAt !== "string" ||
+      parseSequence(status.createdAt) === undefined)
+  ) {
+    throw new Error("active project status is missing session identity");
+  }
+  return Object.freeze({
+    active: status.active,
+    commandSequence: status.commandSequence,
+    runtimeState: status.runtimeState,
+    ...(typeof status.projectSessionId === "string" && status.projectSessionId.length > 0
+      ? { projectSessionId: status.projectSessionId }
+      : {}),
+    ...(typeof status.projectId === "string" && status.projectId.length > 0
+      ? { projectId: status.projectId }
+      : {}),
+    ...(typeof status.createdAt === "string" && status.createdAt.length > 0
+      ? { createdAt: status.createdAt }
+      : {}),
+  });
+}
+
+function validateProjectOperationResult(result: ProjectOperationResult): ProjectOperationResult {
+  if (!result || typeof result.summary !== "object" || result.summary === null) {
+    throw new Error("invalid project operation result");
+  }
+  const summary = result.summary;
+  for (const value of [summary.applied, summary.projected, summary.deferred, summary.skipped]) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error("invalid project operation summary");
+    }
+  }
+  return Object.freeze({
+    status: validateProjectStatus(result.status),
+    summary: Object.freeze({ ...summary }),
+    ...(typeof result.templateId === "string" && result.templateId.length > 0
+      ? { templateId: result.templateId }
+      : {}),
+    ...(typeof result.name === "string" && result.name.length > 0
+      ? { name: result.name }
+      : {}),
+  });
 }

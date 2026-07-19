@@ -9,7 +9,12 @@ export interface ProjectStatusPayload {
   state: string;
   windowTitle: string;
   isDirty: boolean;
-  project?: { filePath?: string; name: string };
+  project?: {
+    filePath?: string;
+    name: string;
+    projectSessionId?: string;
+    projectId?: string;
+  };
   recents: Array<{ filePath: string; name: string; lastOpenedUnixMs: number }>;
 }
 
@@ -29,7 +34,14 @@ export interface P7mEditorApi {
   dispatch(kind: string, payload: Record<string, unknown>): Promise<unknown>;
   query(projection: string): Promise<unknown>;
   experience(family?: string, version?: string): Promise<unknown>;
-  onBlueprintEvent(listener: (event: { kind: string }) => void): void;
+  onBlueprintEvent(
+    listener: (event: {
+      kind: string;
+      projectSessionId: string;
+      projectId: string;
+      commandSequence: string;
+    }) => void,
+  ): void;
   /** Snapshot completo após restart/gap; substitui o estado projetado local. */
   onProjectionResync(
     listener: (payload: { snapshot: unknown; record: { reason: string } }) => void,

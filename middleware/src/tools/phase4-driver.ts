@@ -7,10 +7,11 @@
  *
  *  1. handshake de editor e resolução da experiência governada usando a
  *     identidade do runtime conectado (perfil monogame@3.8.2);
- *  2. dispatch canônico (blueprint/dispatch) com projeção confirmada na
+ *  2. criação e confirmação de uma ProjectSession explícita pelo gateway legado;
+ *  3. dispatch canônico (blueprint/dispatch) com projeção confirmada na
  *     engine e broadcast de eventos recebido de volta;
- *  3. projeções de leitura (blueprint/query) coerentes com o AST;
- *  4. governança na prática: recurso de preview habilitado no perfil 3.8.2
+ *  4. projeções de leitura (blueprint/query) coerentes com o AST;
+ *  5. governança na prática: recurso de preview habilitado no perfil 3.8.2
  *     e desabilitado ao pedir a experiência do perfil 3.8.0.
  *
  * Uso: node dist/tools/phase4-driver.js --pipe <nome>
@@ -84,6 +85,28 @@ async function main(): Promise<void> {
     const older = (await peer.request("experience/resolve", { version: "3.8.0" })) as Experience;
     const oldPreview = feature(older, "preview.embedded")!;
     assert(oldPreview.enabled === false, `preview disabled on profile 3.8.0 ("${oldPreview.reason}")`);
+
+    // O processo inicia deliberadamente sem projeto. Todo dispatch exige uma
+    // ProjectSession explícita; confirmar o status também prova que o gateway
+    // legado observa a mesma referência ativa usada pelos demais transports.
+    const created = (await peer.request("project/create", {
+      projectId: "phase4-project",
+    })) as {
+      status: { active: boolean; projectSessionId: string; projectId: string };
+    };
+    assert(created.status.active, "project session created before canonical dispatch");
+    assert(created.status.projectId === "phase4-project", "created project identity is stable");
+    const projectStatus = (await peer.request("project/status", {})) as {
+      active: boolean;
+      projectSessionId: string;
+      projectId: string;
+    };
+    assert(
+      projectStatus.active &&
+        projectStatus.projectSessionId === created.status.projectSessionId &&
+        projectStatus.projectId === created.status.projectId,
+      "project/status confirms the active session",
+    );
 
     // dispatch canônico com engine viva: projeção confirmada
     const dispatch = (await peer.request("blueprint/dispatch", {

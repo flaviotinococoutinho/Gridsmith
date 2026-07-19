@@ -14,12 +14,13 @@ governança de runtime.
 | `src/core/stateMachine.ts` | Máquina de estados visuais com semântica Gum: estado = conjunto nomeado de atribuições; numéricos interpolam com easing (interrupt-safe), discretos aplicam no início |
 | `src/core/experienceGate.ts` | Gate da UI sobre a matriz de decisões da governança — painéis desabilitados carregam a RAZÃO do perfil/manifesto |
 | `src/core/transportRouter.ts` | Política **pura** de transporte: gRPC prioritário, fallback imediato para GraphQL em falha DE TRANSPORTE, sondas com backoff e histerese — falha de domínio nunca troca transporte (ADR-017) |
+| `src/core/projectLifecycle.ts` | Máquina de estados do documento vinculada a `projectSessionId`; dirty tracking e autosave só avançam para a sessão confirmada |
 | `src/core/levelEditorTools.ts` | Ferramentas puras do editor de níveis (brush/rect/line/picker, drag de células, hit-test de marcadores) |
 | `src/core/logging.ts` | Logger puro com escopo hierárquico e sink injetável (`P7M_VERBOSITY`) |
 | `src/main/transport/` | Clientes dos transports (`GrpcTransport`, `GraphQlTransport`) — os **únicos** módulos com SDKs de transporte (regra F5) |
-| `src/main/EditorClient.ts` | Cliente do middleware: quente por gRPC com fallback GraphQL (TransportRouter), eventos contínuos por `seq` (stream ⇄ polling), erros normalizados |
+| `src/main/EditorClient.ts` | Cliente do middleware: gRPC quente/fallback GraphQL, cursor `(middlewareInstanceId, projectSessionId, seq)`, snapshot integral em resync e operações transacionais de projeto |
 | `src/main/appConfig.ts` | Configuração refinada do Electron: instância única, estado de janela persistido, `sandbox` + navegação/popups bloqueados |
-| `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation, API `window.p7m` (connect/dispatch/query/experience/eventos) |
+| `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation, API `window.p7m` (connect/dispatch/query/projectStatus/experience/eventos e notificação de resync) |
 | `src/renderer/` | Shell da UI: régua de painéis do ExperienceGate + log de eventos; editor de níveis montado por contexto em `levelEditorView.ts` |
 
 ### Modelo de processos
@@ -63,9 +64,19 @@ npm run app -- --pipe p7m-engine
 ```
 
 O app fala com o middleware por gRPC no caminho quente e cai para GraphQL em
-falha de transporte (ADR-016/017/018 em [`../docs/adr/`](../docs/adr/README.md)).
+falha de transporte (ADR-016/017/018/019/020 em
+[`../docs/adr/`](../docs/adr/README.md)).
 Verbosidade dos dois lados: `P7M_VERBOSITY=silent|error|warn|info|debug|trace`
 (default `info`).
+
+Create/open/close consultam `project/status` e usam
+`expectedProjectSessionId` como compare-and-swap. O lifecycle local só troca o
+descritor depois da confirmação do middleware; documento inválido ou falha de
+replay deixa projeto e dirty state anteriores intactos. `runtimeState` distingue
+`synchronized`, `deferred` (engine ausente) e `failed` (fail-closed). Ao detectar
+restart, gap ou `project_session_changed`, o `EditorClient` busca um snapshot
+completo, substitui todas as projeções e só então retoma stream/polling da nova
+tripla de cursor.
 
 ## Regras da casa
 
@@ -77,7 +88,8 @@ graph LR
   R["renderer (UI)"] -->|"dispatch(command)"| P["preload (window.p7m)"]
   P == "IPC do Electron (contextBridge)" ==> M["main (EditorClient)"]
   M == "quente: gRPC / fallback: GraphQL" ==> GW(["EditorSurface (caminho canonico)"])
-  GW -->|"store.apply + projecao"| EV(["evento / projecao"])
+  GW --> SESS["ProjectSessionManager<br/>sessao ativa"]
+  SESS -->|"store.apply + projecao"| EV(["evento de sessao / projecao"])
   EV -.-> M
   M -.-> P
   P -.->|"re-render"| R
@@ -117,8 +129,11 @@ stateDiagram-v2
   state "ProjectLifecycle (Frontend main)" as PL {
     [*] --> no_project
     no_project --> opening : open
-    opening --> open_clean : ok
-    opening --> no_project : openFailed
+    open_clean --> opening : substituir
+    open_dirty --> opening : substituir confirmado
+    opening --> open_clean : ok / restaura A limpo
+    opening --> open_dirty : falha, restaura A sujo
+    opening --> no_project : falha sem sessao anterior
     open_clean --> open_dirty : editar
     open_dirty --> open_clean : salvar
     open_clean --> saving : save
