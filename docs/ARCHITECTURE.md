@@ -272,11 +272,11 @@ operação.
 
 `project/create`, `project/openDocument`, `project/close` e `project/status`
 formam a API de aplicação. Open faz parse → migração → validação → replay em
-sessão temporária → validação semântica → reset/reidratação → commit. Create e
-open aceitam `expectedProjectSessionId`, validado no commit como
-compare-and-swap; um candidato obsoleto nunca sobrescreve uma sessão ativada por
-outro cliente. Falha antes do commit preserva sessão, journal, dirty state e
-runtime anteriores.
+sessão temporária → validação semântica → reset/reidratação → commit. Create,
+open e close aceitam `expectedProjectSessionId` e `expectedCommandSequence`,
+validados no commit como compare-and-swap; um candidato obsoleto ou comando
+concorrente nunca é descartado por troca/close atrasado. Falha antes do commit
+preserva sessão, journal, dirty state e runtime anteriores.
 
 O status de runtime é `synchronized`, `deferred` ou `failed`. `deferred` indica
 engine ausente e permite que a sessão canônica siga ativa; `failed` indica que a
@@ -284,6 +284,29 @@ compensação/reidratação não restaurou coerência e bloqueia mutações até
 integral. Antes de reidratar outro projeto, o adapter executa
 `engine/reset_session`, que limpa atores, níveis, luzes, câmera, esqueletos e
 readers de shared memory sob um único lock.
+
+## Ciclo de vida do arquivo
+
+A transação de sessão não substitui durabilidade em disco. No Electron,
+`ProjectController` serializa New/Open/Save/Save As/Close/Recovery/Recentes e
+depende de portas injetáveis para dialogs, filesystem, cliente e lease. Save
+publica um temporário do mesmo diretório somente depois de write + flush +
+close, preserva `.bak` quando aplicável e conclui por rename; Close só chama
+`project/close` após Save confirmado.
+
+Dispatch, journal e snapshots carregam `commandSequence`: o controller
+deduplica resposta/evento e Save só limpa dirty até a sequência do snapshot.
+Restart do middleware é compensado pela projeção completa cacheada no mesmo
+watermark, sem apagar caminho, dirty state ou lease e sem sintetizar Close.
+Rebind exige igualdade do documento cacheado; igualdade de `projectId` sozinha
+jamais associa uma sessão remota ao `filePath` local.
+
+New materializa o documento do template com IDs e unidades canônicas, grava-o
+e só então o envia a `project/openDocument`. Recovery compara timestamps do
+arquivo e de `.autosave`; restaurar ou abrir cópia continua passando pela
+sessão transacional. Recentes e argumentos de segunda instância convergem no
+mesmo controller. A separação e as garantias estão em
+[ADR-021](adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md).
 
 **Verbosidade:** `P7M_VERBOSITY=silent|error|warn|info|debug|trace` controla os
 loggers estruturados dos dois lados (stdout do middleware pertence ao MCP; logs

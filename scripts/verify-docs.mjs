@@ -47,6 +47,7 @@ const REQUIRED = [
   "docs/adr/README.md",
   "docs/adr/ADR-019-freeze-medido-dos-transports.md",
   "docs/adr/ADR-020-sessao-de-projeto-transacional.md",
+  "docs/adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md",
   "contracts/README.md",
   "contracts/shared-memory-layout.md",
   "contracts/schemas/error-codes.md",
@@ -140,6 +141,10 @@ if (fs.existsSync(ciPath)) {
     {
       label: "middleware npm run test:project-session-transports",
       pattern: /^\s*run:\s+npm run test:project-session-transports\s*$/m,
+    },
+    {
+      label: "frontend npm run test:project-lifecycle-product",
+      pattern: /^\s*run:\s+cd frontend && npm run test:project-lifecycle-product\s*$/m,
     },
     {
       label: "frontend npm run test:project-session",

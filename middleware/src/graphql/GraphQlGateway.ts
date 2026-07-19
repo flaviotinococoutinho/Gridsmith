@@ -240,6 +240,8 @@ export class GraphQlGateway {
       experience: (args: { family?: string; version?: string }) =>
         surface.resolveExperience(args.family, args.version),
       templates: () => surface.listTemplates(),
+      projectTemplateDocument: (args: { templateId: string; options: unknown }) =>
+        surface.materializeProjectTemplate(args.templateId, args.options),
       projectStatus: () => surface.projectStatus(),
       eventBatch: (args: {
         middlewareInstanceId: string;
@@ -271,36 +273,49 @@ export class GraphQlGateway {
         projectId?: string | null;
         templateId?: string | null;
         expectedProjectSessionId?: string | null;
+        expectedCommandSequence?: string | null;
       }) => surface.projectCreate(
         args.projectId ?? undefined,
         args.templateId ?? undefined,
         args.expectedProjectSessionId ?? undefined,
+        args.expectedCommandSequence ?? undefined,
       ),
       projectOpenDocument: (args: {
         document: unknown;
         expectedProjectSessionId?: string | null;
+        expectedCommandSequence?: string | null;
       }) => surface.projectOpenDocument(
         args.document,
         args.expectedProjectSessionId ?? undefined,
+        args.expectedCommandSequence ?? undefined,
       ),
-      projectClose: (args: { expectedProjectSessionId?: string | null }) =>
-        surface.projectClose(args.expectedProjectSessionId ?? undefined),
+      projectClose: (args: {
+        expectedProjectSessionId?: string | null;
+        expectedCommandSequence?: string | null;
+      }) => surface.projectClose(
+        args.expectedProjectSessionId ?? undefined,
+        args.expectedCommandSequence ?? undefined,
+      ),
       // Aliases legados preservam o wire, mas usam a mesma troca transacional.
       loadDocument: async (args: {
         document: unknown;
         expectedProjectSessionId?: string | null;
+        expectedCommandSequence?: string | null;
       }) => (await surface.projectOpenDocument(
         args.document,
         args.expectedProjectSessionId ?? undefined,
+        args.expectedCommandSequence ?? undefined,
       )).summary,
       newProjectFromTemplate: async (args: {
         templateId: string;
         expectedProjectSessionId?: string | null;
+        expectedCommandSequence?: string | null;
       }) => {
         const result = await surface.projectCreate(
           undefined,
           args.templateId,
           args.expectedProjectSessionId ?? undefined,
+          args.expectedCommandSequence ?? undefined,
         );
         const template = surface.listTemplates().find((item) => item.id === args.templateId);
         return {

@@ -206,15 +206,20 @@ interface HotPathClient {
       project_id?: string;
       template_id?: string;
       expected_project_session_id?: string;
+      expected_command_sequence?: string;
     },
     cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
   ): void;
   ProjectOpenDocument(
-    req: { document_json: string; expected_project_session_id?: string },
+    req: {
+      document_json: string;
+      expected_project_session_id?: string;
+      expected_command_sequence?: string;
+    },
     cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
   ): void;
   ProjectClose(
-    req: { expected_project_session_id?: string },
+    req: { expected_project_session_id?: string; expected_command_sequence?: string },
     cb: (err: grpc.ServiceError | null, reply: Record<string, unknown>) => void,
   ): void;
   ProjectStatus(
@@ -333,6 +338,23 @@ test("EditorSurface: snapshot completo e requestId impedem dispatch duplicado", 
   assert.equal(rig.sessions.current!.history.lastSequence, 0n);
 });
 
+test("EditorSurface: materialização exige identidade e opções completas", async () => {
+  const { surface } = await makeRig();
+
+  assert.throws(
+    () => surface.materializeProjectTemplate("platformer-2d", {}),
+    /projectId must be non-empty/,
+  );
+  const document = surface.materializeProjectTemplate("platformer-2d", {
+    projectId: "materialized-once",
+    name: "Materializado",
+    referenceResolution: { width: 1280, height: 720 },
+    tileSize: 16,
+  }) as { projectId: string; metadata: { name: string } };
+  assert.equal(document.projectId, "materialized-once");
+  assert.equal(document.metadata.name, "Materializado");
+});
+
 test("GraphQL: dispatch/query/eventBatch/templates/experience na mesma superfície canônica", async () => {
   const { surface, journal } = await makeRig();
   const gateway = new GraphQlGateway({
@@ -448,6 +470,30 @@ test("GraphQL: dispatch/query/eventBatch/templates/experience na mesma superfíc
     const templates = await graphqlRequest(socketPath, "{ templates { id label } }");
     assert.ok(
       (templates.data?.["templates"] as Array<{ id: string }>).some((t) => t.id === "platformer-2d"),
+    );
+
+    const materialized = await graphqlRequest(
+      socketPath,
+      `query ProjectTemplateDocument(
+        $templateId: String!
+        $options: ProjectTemplateOptionsInput!
+      ) {
+        projectTemplateDocument(templateId: $templateId, options: $options)
+      }`,
+      {
+        templateId: "platformer-2d",
+        options: {
+          projectId: "graphql-materialized",
+          name: "Materializado via GraphQL",
+          referenceResolution: { width: 1280, height: 720 },
+          tileSize: 16,
+        },
+      },
+    );
+    assert.equal(materialized.errors, undefined);
+    assert.equal(
+      (materialized.data?.["projectTemplateDocument"] as { projectId: string }).projectId,
+      "graphql-materialized",
     );
 
     const experience = await graphqlRequest(
@@ -711,6 +757,7 @@ test("sessão de projeto: paridade GraphQL, gRPC e gateway legado sobre a mesma 
         ) {
           status { active projectSessionId projectId commandSequence runtimeState }
           summary { applied }
+          templateId name
         }
       }`,
       { expected: rig.sessions.status.projectSessionId },
@@ -768,6 +815,20 @@ test("sessão de projeto: paridade GraphQL, gRPC e gateway legado sobre a mesma 
     assert.equal(rig.journal.lastSeq, seqAfterFirstDispatch, "retry não deve emitir evento");
     assert.equal(reused.code, grpc.status.INVALID_ARGUMENT);
     assert.match(reused.details, /different command/);
+
+    const staleClose = await graphqlRequest(
+      gql.endpoint.address,
+      `mutation ($session: String!) {
+        projectClose(
+          expectedProjectSessionId: $session
+          expectedCommandSequence: "0"
+        ) { active }
+      }`,
+      { session: createdStatus.projectSessionId },
+    );
+    assert.equal(staleClose.errors?.[0]?.extensions?.code, RpcErrorCode.ProjectSessionConflict);
+    assert.match(staleClose.errors?.[0]?.message ?? "", /command sequence changed before close/);
+    assert.equal(rig.sessions.status.active, true);
 
     const viaGrpc = await new Promise<{ result_json: string }>((resolve, reject) =>
       client.Query({ projection: "entityDefs" }, (err, reply) => (err ? reject(err) : resolve(reply))),
@@ -838,9 +899,27 @@ test("sessão de projeto: paridade GraphQL, gRPC e gateway legado sobre a mesma 
     );
     assert.equal(grpcAfterLegacyCreate["project_id"], "created-via-legacy");
 
+    const grpcTemplateCreated = await new Promise<Record<string, unknown>>((resolve, reject) =>
+      client.ProjectCreate(
+        {
+          project_id: "template-via-grpc",
+          template_id: "platformer-2d",
+          expected_project_session_id: legacyCreated.status.projectSessionId,
+          expected_command_sequence: "0",
+        },
+        (error, reply) => error ? reject(error) : resolve(reply),
+      ),
+    );
+    assert.equal(grpcTemplateCreated["template_id"], "platformer-2d");
+    assert.equal(grpcTemplateCreated["name"], "Plataforma 2D");
+    const grpcTemplateStatus = grpcTemplateCreated["status"] as Record<string, unknown>;
+
     const closed = await new Promise<Record<string, unknown>>((resolve, reject) =>
       client.ProjectClose(
-        { expected_project_session_id: legacyCreated.status.projectSessionId },
+        {
+          expected_project_session_id: grpcTemplateStatus["project_session_id"] as string,
+          expected_command_sequence: grpcTemplateStatus["command_sequence"] as string,
+        },
         (error, reply) => error ? reject(error) : resolve(reply),
       ),
     );

@@ -10,7 +10,6 @@ import { CanvasViewport } from "../core/canvasViewport.js";
 import { IntGridDocument } from "../core/intGridDocument.js";
 import {
   applyBrushAt,
-  cellCenter,
   commitDrag,
   dragCells,
   hitMarker,
@@ -18,7 +17,17 @@ import {
   type CellPoint,
   type LevelTool,
 } from "../core/levelEditorTools.js";
-import { LEVEL_PALETTE, TILE_COLORS, defaultLevelRules } from "../core/levelPresets.js";
+import { cellToWorldCenter } from "./vendor/GridCoordinates.js";
+import {
+  selectLevelEditorProjection,
+  type LevelEditorProjectionDocument,
+} from "../core/levelEditorProjection.js";
+import {
+  LEVEL_PALETTE,
+  TILE_COLORS,
+  defaultLevelRules,
+  type LevelRule,
+} from "../core/levelPresets.js";
 import type { ExperienceGate } from "../core/experienceGate.js";
 // type-only (apagado na compilação): o módulo real é vendorizado pelo build
 import type { resolveAutoTiles as ResolveAutoTilesFn } from "@p7m/middleware/dist/leveldesign/AutoTiler.js";
@@ -42,16 +51,20 @@ export interface LevelEditorContext {
   readonly setCleanup: (cleanup: () => void) => void;
   /** Gate da experiência (governança por runtime); pode não existir offline. */
   readonly gate: ExperienceGate | undefined;
+  /** ID vindo do documento/resultado de Open; nunca criado pelo renderer. */
+  readonly preferredLevelId?: string;
 }
 
 export function mountLevelEditor(ctx: LevelEditorContext): void {
   const { host, activeEditor, gate } = ctx;
-  const LEVEL_ID = "nivel-1";
-  let doc = new IntGridDocument(48, 27);
+  let levelId: string | undefined;
+  let doc = new IntGridDocument(1, 1);
   // integração com o save (P0.2 ⇄ P0.4): publicações viram level/define ou
   // level/update no Blueprint — e daí para o documento salvo do projeto
   let levelInBlueprint = false;
-  const tileSize = 16;
+  let tileSize = 16;
+  let levelSeed = 1;
+  let levelRules: readonly LevelRule[] = defaultLevelRules();
   let activeValue = 1;
   let tool: LevelTool = "pencil";
 
@@ -61,9 +74,8 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     entityId: string;
     position: [number, number];
   }
-  const ENTITY_DEF = { entityDefId: "jogador", archetypeId: "player" };
+  let entityDefinitionId: string | undefined;
   const entities = new Map<string, EntityMarker>();
-  let entityDefEnsured = false;
   let selectedEntityId: string | undefined;
   let draggingEntity: EntityMarker | undefined;
 
@@ -93,16 +105,21 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   toolButtons.set("rect", addButton("Retângulo", () => selectTool("rect"), "Arraste para preencher a área"));
   toolButtons.set("line", addButton("Linha", () => selectTool("line"), "Arraste para traçar uma linha"));
   toolButtons.set("picker", addButton("Conta-gotas", () => selectTool("picker"), "Clique para pegar o significado da célula"));
-  toolButtons.set("entity", addButton("Jogador", () => selectTool("entity"), "Clique posiciona, arraste move, Delete remove"));
+  const entityToolButton = addButton(
+    "Jogador",
+    () => selectTool("entity"),
+    "Clique posiciona, arraste move, Delete remove",
+  );
+  toolButtons.set("entity", entityToolButton);
+  entityToolButton.disabled = true; // habilitado somente após ler a definição real
   selectTool("pencil");
 
   // governança: a ferramenta de spawn segue a decisão do perfil/manifesto
   // (fail-safe, com a razão no tooltip — nunca um "indisponível" genérico)
   const spawnAnswer = gate?.feature("entities.spawn");
   if (spawnAnswer && !spawnAnswer.enabled) {
-    const entityButton = toolButtons.get("entity")!;
-    entityButton.disabled = true;
-    entityButton.title = spawnAnswer.reason;
+    entityToolButton.disabled = true;
+    entityToolButton.title = spawnAnswer.reason;
   }
 
   toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
@@ -150,8 +167,8 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       void loadAutoTiler().then((resolve) => {
         previewTiles = resolve(
           { width: doc.width, height: doc.height, values: doc.snapshot() },
-          defaultLevelRules() as never,
-          1,
+          levelRules as never,
+          levelSeed,
         ).tiles;
         repaint();
       });
@@ -265,25 +282,22 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   function snapToCellCenter(offsetX: number, offsetY: number): [number, number] | undefined {
     const cell = viewport.screenToCell(offsetX, offsetY, tileSize, doc.width, doc.height);
     if (!cell.inside) return undefined;
-    return cellCenter(cell.x, cell.y, tileSize);
+    return [...cellToWorldCenter({ x: cell.x, y: cell.y }, tileSize)];
   }
 
   async function ensureEntityDef(): Promise<void> {
-    if (entityDefEnsured) return;
-    try {
-      await window.p7m.dispatch("entitydef/define", { ...ENTITY_DEF, fields: [] });
-    } catch {
-      // já definida (projeto reaberto): a definição vive no Blueprint
+    if (!entityDefinitionId) {
+      throw new Error("O documento não contém uma definição de entidade Player");
     }
-    entityDefEnsured = true;
   }
 
   async function placeEntityAt(position: [number, number]): Promise<void> {
     await ensureEntityDef();
-    const entityId = nextEntityId(entities, ENTITY_DEF.entityDefId);
+    const definitionId = entityDefinitionId!;
+    const entityId = nextEntityId(entities, definitionId);
     await window.p7m.dispatch("entity/place", {
       entityId,
-      entityDefId: ENTITY_DEF.entityDefId,
+      entityDefId: definitionId,
       position,
       fields: {},
     });
@@ -433,12 +447,13 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   }, { passive: false });
 
   async function publish(): Promise<void> {
+    if (!levelId) throw new Error("O projeto não contém um nível editável");
     // as MESMAS regras do preview ("Ver arte"): preview ≡ publicação
     const payload = doc.toLevelPayload({
-      levelId: LEVEL_ID,
+      levelId,
       tileSize,
-      seed: 1,
-      rules: defaultLevelRules(),
+      seed: levelSeed,
+      rules: levelRules,
     });
     try {
       await window.p7m.dispatch(levelInBlueprint ? "level/update" : "level/define", payload);
@@ -453,15 +468,20 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   viewport.fit(doc.width, doc.height, tileSize);
   repaint();
 
-  // Hidratação: nível e entidades já publicados (projeto reaberto) voltam
-  // para o canvas
+  // Hidratação coerente por um único documento: IDs, dimensões, tile size,
+  // regras, entidades e definições vêm da sessão — nunca são recriados aqui.
   void (async () => {
     try {
-      const result = (await window.p7m.query("levels")) as {
-        levels?: Array<{ levelId: string; width: number; height: number; intGrid: number[] }>;
+      const projection = (await window.p7m.query("document")) as {
+        document?: LevelEditorProjectionDocument;
       };
-      const existing = result.levels?.find((level) => level.levelId === LEVEL_ID);
+      const selected = selectLevelEditorProjection(projection.document, ctx.preferredLevelId);
+      const existing = selected.level;
       if (existing) {
+        levelId = existing.levelId;
+        tileSize = existing.tileSize;
+        levelSeed = existing.seed;
+        levelRules = existing.rules;
         doc = new IntGridDocument(existing.width, existing.height, existing.intGrid);
         levelInBlueprint = true;
         viewport.fit(doc.width, doc.height, tileSize);
@@ -469,19 +489,17 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         status.textContent = "Nível carregado do projeto.";
       }
 
-      const placed = (await window.p7m.query("entities")) as {
-        entities?: Array<{ entityId: string; entityDefId: string; position: [number, number] }>;
-      };
-      for (const entity of placed.entities ?? []) {
+      for (const entity of selected.entities) {
         entities.set(entity.entityId, { entityId: entity.entityId, position: [...entity.position] });
       }
-      const defs = (await window.p7m.query("entityDefs")) as {
-        entityDefs?: Array<{ entityDefId: string }>;
-      };
-      entityDefEnsured = (defs.entityDefs ?? []).some((d) => d.entityDefId === ENTITY_DEF.entityDefId);
+      entityDefinitionId = selected.playerEntityDefinitionId;
+      entityToolButton.disabled = !entityDefinitionId || Boolean(spawnAnswer && !spawnAnswer.enabled);
+      if (!entityDefinitionId && !(spawnAnswer && !spawnAnswer.enabled)) {
+        entityToolButton.title = "O documento não possui uma definição Player";
+      }
       if (entities.size > 0) repaint();
-    } catch {
-      // gateway indisponível: o editor continua editável com um grid vazio
+    } catch (error) {
+      status.textContent = `Não foi possível abrir o nível do projeto: ${error instanceof Error ? error.message : error}`;
     }
   })();
 }

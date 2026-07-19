@@ -276,15 +276,17 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
         projectId: z.string().min(1).optional(),
         templateId: z.string().min(1).optional(),
         expectedProjectSessionId: z.string().min(1).optional(),
+        expectedCommandSequence: z.string().regex(/^(0|[1-9][0-9]*)$/u).optional(),
       },
     },
-    async ({ projectId, templateId, expectedProjectSessionId }) => ({
+    async ({ projectId, templateId, expectedProjectSessionId, expectedCommandSequence }) => ({
       content: [{
         type: "text",
         text: jsonText(await canonical.surface.projectCreate(
           projectId,
           templateId,
           expectedProjectSessionId,
+          expectedCommandSequence,
         )),
       }],
     }),
@@ -297,14 +299,16 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
       inputSchema: {
         document: z.record(z.unknown()),
         expectedProjectSessionId: z.string().min(1).optional(),
+        expectedCommandSequence: z.string().regex(/^(0|[1-9][0-9]*)$/u).optional(),
       },
     },
-    async ({ document, expectedProjectSessionId }) => ({
+    async ({ document, expectedProjectSessionId, expectedCommandSequence }) => ({
       content: [{
         type: "text",
         text: jsonText(await canonical.surface.projectOpenDocument(
           document,
           expectedProjectSessionId,
+          expectedCommandSequence,
         )),
       }],
     }),
@@ -314,12 +318,18 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
     "project_close",
     {
       description: "Fecha a sessão ativa, opcionalmente protegida por identidade esperada.",
-      inputSchema: { expectedProjectSessionId: z.string().min(1).optional() },
+      inputSchema: {
+        expectedProjectSessionId: z.string().min(1).optional(),
+        expectedCommandSequence: z.string().regex(/^(0|[1-9][0-9]*)$/u).optional(),
+      },
     },
-    async ({ expectedProjectSessionId }) => ({
+    async ({ expectedProjectSessionId, expectedCommandSequence }) => ({
       content: [{
         type: "text",
-        text: jsonText(await canonical.surface.projectClose(expectedProjectSessionId)),
+        text: jsonText(await canonical.surface.projectClose(
+          expectedProjectSessionId,
+          expectedCommandSequence,
+        )),
       }],
     }),
   );

@@ -14,13 +14,40 @@ import type {
   LightSpec,
   WorldPlacement,
 } from "../domain/BlueprintStore.js";
-import { BLUEPRINT_DOCUMENT_VERSION, type BlueprintDocument } from "./BlueprintSerializer.js";
+import { MAX_TILE_SIZE } from "../domain/BlueprintStore.js";
+import {
+  BLUEPRINT_DOCUMENT_VERSION,
+  DEFAULT_PROJECT_METADATA,
+  type BlueprintDocument,
+  type ProjectMetadata,
+} from "./BlueprintSerializer.js";
+import { cellToWorldCenter } from "../leveldesign/GridCoordinates.js";
+
+export interface ProjectTemplateOptions {
+  readonly projectId: string;
+  readonly name: string;
+  readonly referenceResolution: {
+    readonly width: number;
+    readonly height: number;
+  };
+  readonly tileSize: number;
+}
+
+export interface ProjectTemplatePreview {
+  readonly kind: "level-schematic";
+  readonly widthCells: number;
+  readonly heightCells: number;
+  readonly playerCell: readonly [number, number];
+  readonly accent: string;
+}
 
 export interface ProjectTemplate {
   readonly id: string;
   readonly label: string;
   readonly description: string;
-  readonly create: () => BlueprintDocument;
+  readonly preview: ProjectTemplatePreview;
+  readonly defaults: Omit<ProjectTemplateOptions, "projectId" | "name">;
+  readonly create: (options?: Partial<ProjectTemplateOptions>) => BlueprintDocument;
 }
 
 const PLATFORMER_WIDTH = 16;
@@ -46,12 +73,16 @@ function platformerIntGrid(): number[] {
  * câmera cinemática, uma luz e um Player posicionado. É o alvo do passo 2 da
  * jornada de aceite ("escolher Novo projeto de Plataforma 2D").
  */
-export function createPlatformer2DDocument(): BlueprintDocument {
+export function createPlatformer2DDocument(
+  requested: Partial<ProjectTemplateOptions> = {},
+): BlueprintDocument {
+  const options = normalizeOptions(requested);
+  const tileSize = options.tileSize;
   const level: LevelSpec = {
     levelId: "level-1",
     width: PLATFORMER_WIDTH,
     height: PLATFORMER_HEIGHT,
-    tileSize: 16,
+    tileSize,
     seed: 1,
     intGrid: platformerIntGrid(),
     // Regra default: célula sólida (1) → tile 1. O editor refina depois.
@@ -72,14 +103,17 @@ export function createPlatformer2DDocument(): BlueprintDocument {
   const player: EntityInstance = {
     entityId: "player-1",
     entityDefId: "player",
-    position: [2, PLATFORMER_HEIGHT - 2],
+    position: cellToWorldCenter({ x: 2, y: PLATFORMER_HEIGHT - 2 }, tileSize),
     fields: {},
   };
 
   const light: LightSpec = {
     lightId: "key-light",
     type: "point",
-    position: [PLATFORMER_WIDTH / 2, PLATFORMER_HEIGHT / 2],
+    position: cellToWorldCenter(
+      { x: Math.floor(PLATFORMER_WIDTH / 2), y: Math.floor(PLATFORMER_HEIGHT / 2) },
+      tileSize,
+    ),
     height: 1,
     color: [1, 1, 1],
     intensity: 1.2,
@@ -90,7 +124,8 @@ export function createPlatformer2DDocument(): BlueprintDocument {
 
   return {
     schemaVersion: BLUEPRINT_DOCUMENT_VERSION,
-    projectId: "template-platformer-2d",
+    projectId: options.projectId,
+    metadata: projectMetadata(options),
     skeletons: [],
     meshes: [],
     camera: { frequency: 2, damping: 1, response: 2, anticipationSeconds: 0.15 },
@@ -109,10 +144,57 @@ export const PROJECT_TEMPLATES: readonly ProjectTemplate[] = [
     label: "Plataforma 2D",
     description:
       "Cena inicial de plataforma: nível com chão e paredes, câmera cinemática, uma luz e um Player posicionado.",
+    preview: Object.freeze({
+      kind: "level-schematic",
+      widthCells: PLATFORMER_WIDTH,
+      heightCells: PLATFORMER_HEIGHT,
+      playerCell: Object.freeze([2, PLATFORMER_HEIGHT - 2]) as readonly [number, number],
+      accent: "#3aa0ff",
+    }),
+    defaults: Object.freeze({
+      referenceResolution: DEFAULT_PROJECT_METADATA.referenceResolution,
+      tileSize: 16,
+    }),
     create: createPlatformer2DDocument,
   },
 ];
 
 export function getProjectTemplate(id: string): ProjectTemplate | undefined {
   return PROJECT_TEMPLATES.find((template) => template.id === id);
+}
+
+function normalizeOptions(requested: Partial<ProjectTemplateOptions>): ProjectTemplateOptions {
+  const projectId = requested.projectId ?? "template-platformer-2d";
+  const name = requested.name?.trim() || "Plataforma 2D";
+  const referenceResolution = requested.referenceResolution ??
+    DEFAULT_PROJECT_METADATA.referenceResolution;
+  const tileSize = requested.tileSize ?? 16;
+  if (!projectId.trim() || projectId.length > 256) {
+    throw new TypeError("projectId must be non-empty and at most 256 characters");
+  }
+  if (
+    !Number.isInteger(referenceResolution.width) ||
+    referenceResolution.width < 1 ||
+    !Number.isInteger(referenceResolution.height) ||
+    referenceResolution.height < 1
+  ) {
+    throw new TypeError("referenceResolution must contain positive integer width/height");
+  }
+  if (!Number.isInteger(tileSize) || tileSize < 1 || tileSize > MAX_TILE_SIZE) {
+    throw new TypeError(`tileSize must be an integer between 1 and ${MAX_TILE_SIZE}`);
+  }
+  return Object.freeze({
+    projectId,
+    name,
+    referenceResolution: Object.freeze({ ...referenceResolution }),
+    tileSize,
+  });
+}
+
+function projectMetadata(options: ProjectTemplateOptions): ProjectMetadata {
+  return Object.freeze({
+    name: options.name,
+    referenceResolution: options.referenceResolution,
+    spatial: DEFAULT_PROJECT_METADATA.spatial,
+  });
 }

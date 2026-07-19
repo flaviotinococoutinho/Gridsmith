@@ -23,6 +23,9 @@ import {
   parseBlueprintDocument,
   replayDocument,
   type ReplaySummary,
+  DEFAULT_PROJECT_METADATA,
+  type ProjectMetadata,
+  validateProjectMetadata,
 } from "./BlueprintSerializer.js";
 import { CanonicalOrchestrator } from "./CanonicalOrchestrator.js";
 import { CommandHistory } from "./CommandHistory.js";
@@ -36,6 +39,8 @@ export interface ProjectSession {
   readonly orchestrator: CanonicalOrchestrator;
   readonly history: CommandHistory;
   readonly createdAt: number;
+  /** Metadata imutável persistida junto do documento, fora do estado mutável. */
+  readonly metadata: ProjectMetadata;
 }
 
 export type ProjectRuntimeState = "synchronized" | "deferred" | "failed";
@@ -144,9 +149,12 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
     });
   }
 
-  createEmptySession(projectId = this.createId()): PreparedProjectSession {
+  createEmptySession(
+    projectId = this.createId(),
+    metadata: ProjectMetadata = DEFAULT_PROJECT_METADATA,
+  ): PreparedProjectSession {
     validateId(projectId, "projectId");
-    return this.prepareSession(projectId, 0);
+    return this.prepareSession(projectId, 0, metadata);
   }
 
   async createFromTemplate(
@@ -155,7 +163,7 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
   ): Promise<PreparedProjectSession> {
     const template = getProjectTemplate(templateId);
     if (!template) throw new BlueprintDocumentError(`Unknown project template "${templateId}"`);
-    return this.prepareFromDocument({ ...template.create(), projectId });
+    return this.prepareFromDocument(template.create({ projectId }));
   }
 
   async prepareFromDocument(raw: unknown): Promise<PreparedProjectSession> {
@@ -163,7 +171,7 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
     const parsed = parseBlueprintDocument(raw);
     const document = migrateBlueprintDocument(parsed);
     validateId(document.projectId, "projectId");
-    const prepared = this.prepareSession(document.projectId, 0);
+    const prepared = this.prepareSession(document.projectId, 0, document.metadata);
 
     // criar sessão temporária → replay completo → validações semânticas
     const summary = await replayDocument(
@@ -185,22 +193,30 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
   replaceAtomically(
     prepared: PreparedProjectSession,
     expectedProjectSessionId?: string,
+    expectedCommandSequence?: string,
   ): Promise<ProjectActivationResult> {
     return this.enqueue(() => this.withTransition(async () => {
-      this.assertExpectedSession(expectedProjectSessionId, "replace");
+      this.assertExpectedRevision(
+        expectedProjectSessionId,
+        expectedCommandSequence,
+        "replace",
+      );
       return this.activateUnlocked(prepared);
     }));
   }
 
-  close(expectedProjectSessionId?: string): Promise<ProjectStatus> {
+  close(
+    expectedProjectSessionId?: string,
+    expectedCommandSequence?: string,
+  ): Promise<ProjectStatus> {
     return this.enqueue(() => this.withTransition(async () => {
+      this.assertExpectedRevision(
+        expectedProjectSessionId,
+        expectedCommandSequence,
+        "close",
+      );
       const previous = this.activeSession;
       if (!previous) return this.status;
-      if (expectedProjectSessionId !== undefined && expectedProjectSessionId !== previous.sessionId) {
-        throw new ProjectSessionConflictError(
-          `Active project session changed (expected ${expectedProjectSessionId}, got ${previous.sessionId})`,
-        );
-      }
 
       try {
         await this.options.adapter.resetSession();
@@ -287,7 +303,11 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
     }));
   }
 
-  private prepareSession(projectId: string, applied: number): PreparedProjectSession {
+  private prepareSession(
+    projectId: string,
+    applied: number,
+    metadata: ProjectMetadata,
+  ): PreparedProjectSession {
     const store = new BlueprintStore();
     const history = new CommandHistory(this.now);
     const session: ProjectSession = Object.freeze({
@@ -297,6 +317,7 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
       history,
       orchestrator: new CanonicalOrchestrator(store, this.options.hooks, this.options.adapter, history),
       createdAt: this.now(),
+      metadata: cloneProjectMetadata(metadata),
     });
     this.prepared.add(session);
     return Object.freeze({ session, summary: emptySummary(applied) });
@@ -384,13 +405,40 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
     return this.activeSession;
   }
 
-  private assertExpectedSession(expected: string | undefined, operation: string): void {
-    if (expected === undefined) return;
-    const actual = this.activeSession?.sessionId;
-    if (actual !== expected) {
+  private assertExpectedRevision(
+    expectedSessionId: string | undefined,
+    expectedCommandSequence: string | undefined,
+    operation: string,
+  ): void {
+    const session = this.activeSession;
+    const actualSessionId = session?.sessionId;
+    if (expectedSessionId !== undefined && actualSessionId !== expectedSessionId) {
       throw new ProjectSessionConflictError(
         `Active project session changed before ${operation} ` +
-          `(expected ${expected}, got ${actual ?? "none"})`,
+          `(expected ${expectedSessionId}, got ${actualSessionId ?? "none"})`,
+      );
+    }
+    // Sequência informada sem ID significa compare-and-swap explícito contra
+    // a ausência de sessão. Isso permite que o primeiro Open/New também seja
+    // protegido contra uma sessão remota que o cliente ainda não observou.
+    if (
+      expectedCommandSequence !== undefined &&
+      expectedSessionId === undefined &&
+      session !== undefined
+    ) {
+      throw new ProjectSessionConflictError(
+        `Active project session appeared before ${operation} ` +
+          `(expected none at sequence ${expectedCommandSequence}, got ${session.sessionId})`,
+      );
+    }
+    const actualCommandSequence = session?.history.lastSequence.toString() ?? "0";
+    if (
+      expectedCommandSequence !== undefined &&
+      actualCommandSequence !== expectedCommandSequence
+    ) {
+      throw new ProjectSessionConflictError(
+        `Project command sequence changed before ${operation} ` +
+          `(expected ${expectedCommandSequence}, got ${actualCommandSequence})`,
       );
     }
   }
@@ -424,6 +472,23 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
     );
     return result;
   }
+}
+
+function cloneProjectMetadata(metadata: ProjectMetadata): ProjectMetadata {
+  validateProjectMetadata(metadata);
+  return Object.freeze({
+    name: metadata.name,
+    referenceResolution: Object.freeze({
+      width: metadata.referenceResolution.width,
+      height: metadata.referenceResolution.height,
+    }),
+    spatial: Object.freeze({
+      positionUnit: metadata.spatial.positionUnit,
+      cellOrigin: metadata.spatial.cellOrigin,
+      yAxis: metadata.spatial.yAxis,
+      entityAnchor: metadata.spatial.entityAnchor,
+    }),
+  });
 }
 
 export class ProjectNotOpenError extends Error {

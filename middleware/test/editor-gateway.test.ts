@@ -357,6 +357,18 @@ test("project/templates lista o Plataforma 2D e project/new o reproduz no AST", 
     };
     assert.ok(templates.some((t) => t.id === "platformer-2d"));
 
+    const materialized = await editor.request("project/templateDocument", {
+      templateId: "platformer-2d",
+      options: {
+        projectId: "legacy-materialized",
+        name: "Materializado no legado",
+        referenceResolution: { width: 1280, height: 720 },
+        tileSize: 16,
+      },
+    }) as { projectId: string; metadata: { name: string } };
+    assert.equal(materialized.projectId, "legacy-materialized");
+    assert.equal(materialized.metadata.name, "Materializado no legado");
+
     const summary = (await editor.request("project/new", { templateId: "platformer-2d" })) as {
       templateId: string;
       applied: number;

@@ -99,17 +99,23 @@ message ProjectCreateRequest {
   string template_id = 2;
   // Compare-and-swap: recusa substituir uma sessão diferente da observada.
   string expected_project_session_id = 3;
+  // Decimal uint64; junto do ID impede perder comando concorrente antes da troca.
+  string expected_command_sequence = 4;
 }
 
 message ProjectOpenDocumentRequest {
   string document_json = 1;
   // Compare-and-swap: recusa candidato preparado sobre sessão obsoleta.
   string expected_project_session_id = 2;
+  // Decimal uint64 da revisão observada.
+  string expected_command_sequence = 3;
 }
 
 message ProjectCloseRequest {
   // Evita que um cliente atrasado feche uma sessão que já foi substituída.
   string expected_project_session_id = 1;
+  // Decimal uint64; Close falha se outro cliente confirmou um comando depois.
+  string expected_command_sequence = 2;
 }
 
 message ProjectStatusRequest {}

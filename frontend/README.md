@@ -15,13 +15,16 @@ governança de runtime.
 | `src/core/experienceGate.ts` | Gate da UI sobre a matriz de decisões da governança — painéis desabilitados carregam a RAZÃO do perfil/manifesto |
 | `src/core/transportRouter.ts` | Política **pura** de transporte: gRPC prioritário, fallback imediato para GraphQL em falha DE TRANSPORTE, sondas com backoff e histerese — falha de domínio nunca troca transporte (ADR-017) |
 | `src/core/projectLifecycle.ts` | Máquina de estados do documento vinculada a `projectSessionId`; dirty tracking e autosave só avançam para a sessão confirmada |
+| `src/core/projectApi.ts` | Contratos tipados compartilhados por main/preload/renderer para New/Open/Save/Save As/Close/Recovery/Recentes |
+| `src/core/projectWizardModel.ts` | Estado e validação puros do wizard de projeto, alimentado pelos templates reais do middleware |
 | `src/core/levelEditorTools.ts` | Ferramentas puras do editor de níveis (brush/rect/line/picker, drag de células, hit-test de marcadores) |
 | `src/core/logging.ts` | Logger puro com escopo hierárquico e sink injetável (`P7M_VERBOSITY`) |
 | `src/main/transport/` | Clientes dos transports (`GrpcTransport`, `GraphQlTransport`) — os **únicos** módulos com SDKs de transporte (regra F5) |
 | `src/main/EditorClient.ts` | Cliente do middleware: gRPC quente/fallback GraphQL, cursor `(middlewareInstanceId, projectSessionId, seq)`, snapshot integral em resync e operações transacionais de projeto |
 | `src/main/appConfig.ts` | Configuração refinada do Electron: instância única, estado de janela persistido, `sandbox` + navegação/popups bloqueados |
-| `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation, API `window.p7m` (connect/dispatch/query/projectStatus/experience/eventos e notificação de resync) |
-| `src/renderer/` | Shell da UI: régua de painéis do ExperienceGate + log de eventos; editor de níveis montado por contexto em `levelEditorView.ts` |
+| `src/main/project/` | `ProjectController` e adapters injetáveis de dialogs/filesystem: escrita durável (rename POSIX; swap recuperável no Windows), backup, recovery, lease e composição segura com a sessão transacional |
+| `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation; lifecycle exposto apenas por APIs tipadas e nomeadas, sem comando genérico |
+| `src/renderer/` | Start screen + wizard “Novo projeto”, régua de painéis do ExperienceGate e editor de níveis hidratado pelos IDs/dimensões do documento real |
 
 ### Modelo de processos
 
@@ -54,6 +57,7 @@ cd ../middleware && npm run build && cd ../frontend
 npm install        # ELECTRON_SKIP_BINARY_DOWNLOAD=1 para pular o binário (CI)
 npm run build
 npm test           # núcleos + integração real com o EditorGateway
+npm run test:project-lifecycle-product  # gate explícito de New/Open/Save/Recovery/Recentes
 
 # execução (requer o binário do Electron e um middleware rodando):
 node ../middleware/dist/index.js --pipe p7m-engine --no-mcp &
@@ -70,13 +74,40 @@ Verbosidade dos dois lados: `P7M_VERBOSITY=silent|error|warn|info|debug|trace`
 (default `info`).
 
 Create/open/close consultam `project/status` e usam
-`expectedProjectSessionId` como compare-and-swap. O lifecycle local só troca o
+`expectedProjectSessionId` + `expectedCommandSequence` como compare-and-swap.
+O lifecycle local só troca o
 descritor depois da confirmação do middleware; documento inválido ou falha de
 replay deixa projeto e dirty state anteriores intactos. `runtimeState` distingue
 `synchronized`, `deferred` (engine ausente) e `failed` (fail-closed). Ao detectar
 restart, gap ou `project_session_changed`, o `EditorClient` busca um snapshot
 completo, substitui todas as projeções e só então retoma stream/polling da nova
 tripla de cursor.
+
+## Ciclo de vida do projeto
+
+New, Open, Save, Save As, Close, Recovery, exemplo e Recentes passam por um
+único `ProjectController`. Menu, toolbar e argumentos da segunda instância não
+possuem caminhos alternativos. O preload publica apenas
+`listProjectTemplates`, `createProjectFromTemplate`, `openProject`,
+`saveProject`, `saveProjectAs`, `closeProject`, `restoreAutosave`,
+`discardAutosave` e `openRecent` para essas operações.
+
+O wizard materializa o template canônico `platformer-2d` com nome, resolução e
+tile size escolhidos, grava o `.p7m.json` com temporário + flush + publicação
+exclusiva no-clobber e só
+então ativa a sessão transacional. O editor abre o primeiro nível do documento
+e preserva IDs, dimensões e posições; células são convertidas para
+`world-pixel` pela função canônica do middleware.
+
+Close dirty nunca prossegue depois de Save cancelado ou com erro. Um projeto
+sem caminho usa Save As. `.autosave` posterior ao arquivo confirmado oferece
+Restaurar, Abrir cópia, Ignorar ou Cancelar e só é removido por Save confirmado
+ou descarte explícito. O exemplo distribuído sempre abre como cópia sem caminho.
+Recentes usam menu nativo, canonicalização e lease; segunda instância encaminha
+o arquivo à janela ativa. Rebind após restart exige documento e watermark
+iguais ao cache; `projectId` sozinho nunca associa conteúdo remoto ao caminho
+local. Decisão completa:
+[ADR-021](../docs/adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md).
 
 ## Regras da casa
 

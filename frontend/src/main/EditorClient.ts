@@ -26,6 +26,7 @@ import {
   type HotJournalStatus,
 } from "./transport/GrpcTransport.js";
 import type { ResolvedExperienceLike } from "../core/experienceGate.js";
+import type { ProjectTemplateDescriptor } from "../core/projectApi.js";
 
 export interface BlueprintEventPayload {
   readonly kind: string;
@@ -68,6 +69,24 @@ export interface ProjectOperationResult {
   readonly summary: ProjectOperationSummary;
   readonly templateId?: string;
   readonly name?: string;
+}
+
+export interface CapturedProjectSnapshot {
+  readonly document: unknown;
+  readonly status: ProjectStatus;
+}
+
+/** Compare-and-swap da operação de sessão observado pelo caller. */
+export interface ProjectRevisionExpectation {
+  readonly projectSessionId?: string;
+  readonly commandSequence?: string;
+}
+
+export interface ProjectTemplateCreationOptions {
+  readonly projectId: string;
+  readonly name: string;
+  readonly referenceResolution: { readonly width: number; readonly height: number };
+  readonly tileSize: number;
 }
 
 export interface ResynchronizationRecord {
@@ -317,9 +336,9 @@ export class EditorClient {
     return () => this.resyncListeners.delete(listener);
   }
 
-  dispatch(kind: string, payload: Record<string, unknown>): Promise<DispatchOutcome> {
+  async dispatch(kind: string, payload: Record<string, unknown>): Promise<DispatchOutcome> {
     const requestId = randomUUID();
-    return this.hotCall(
+    const outcome = await this.hotCall(
       async () => (await this.grpc.dispatch(kind, payload, requestId)) as DispatchOutcome,
       async () => {
         const data = await this.graphql.execute<{
@@ -338,6 +357,14 @@ export class EditorClient {
         } as DispatchOutcome;
       },
     );
+    // A resposta de dispatch já confirma o commit. O stream/poll pode chegar
+    // depois; manter a revisão observada aqui evita um falso CAS conflict se
+    // uma operação de sessão for solicitada nesse intervalo.
+    this.advanceObservedRevision(
+      outcome.event.projectSessionId,
+      outcome.event.commandSequence,
+    );
+    return outcome;
   }
 
   query<T = unknown>(projection: string): Promise<T> {
@@ -363,7 +390,9 @@ export class EditorClient {
     });
   }
 
-  async saveDocument(expectedProjectSessionId?: string): Promise<unknown> {
+  async captureProjectSnapshot(
+    expectedProjectSessionId?: string,
+  ): Promise<CapturedProjectSnapshot> {
     // Documento e identidade vêm do MESMO snapshot GraphQL. Assim uma troca
     // concorrente nunca faz o conteúdo de B ser escrito no caminho de A.
     return this.coldCall(async () => {
@@ -381,18 +410,30 @@ export class EditorClient {
       if (!snapshot.status.active || !projection || !("document" in projection)) {
         throw new Error("cannot save without an active project document");
       }
-      return projection.document;
+      return Object.freeze({ document: projection.document, status: snapshot.status });
     });
   }
 
-  createProject(templateId?: string): Promise<ProjectOperationResult> {
-    const expectedProjectSessionId = this.activeProjectSessionId;
+  async saveDocument(expectedProjectSessionId?: string): Promise<unknown> {
+    return (await this.captureProjectSnapshot(expectedProjectSessionId)).document;
+  }
+
+  createProject(
+    templateId?: string,
+    expectation?: ProjectRevisionExpectation,
+  ): Promise<ProjectOperationResult> {
+    const expected = expectation ?? this.currentProjectExpectation();
     return this.runProjectOperation(async () => {
       const data = await this.graphql.execute<{ projectCreate: ProjectOperationResult }>(
-        `mutation ProjectCreate($templateId: String, $expectedProjectSessionId: String) {
+        `mutation ProjectCreate(
+          $templateId: String
+          $expectedProjectSessionId: String
+          $expectedCommandSequence: String
+        ) {
           projectCreate(
             templateId: $templateId
             expectedProjectSessionId: $expectedProjectSessionId
+            expectedCommandSequence: $expectedCommandSequence
           ) {
             status { ${PROJECT_STATUS_FIELDS} }
             summary { applied projected deferred skipped }
@@ -401,41 +442,64 @@ export class EditorClient {
         }`,
         {
           templateId: templateId ?? null,
-          expectedProjectSessionId: expectedProjectSessionId ?? null,
+          expectedProjectSessionId: expected?.projectSessionId ?? null,
+          expectedCommandSequence: expected?.commandSequence ?? null,
         },
       );
       return validateProjectOperationResult(data.projectCreate);
     });
   }
 
-  openProjectDocument(document: unknown): Promise<ProjectOperationResult> {
-    const expectedProjectSessionId = this.activeProjectSessionId;
+  openProjectDocument(
+    document: unknown,
+    expectation?: ProjectRevisionExpectation,
+  ): Promise<ProjectOperationResult> {
+    const expected = expectation ?? this.currentProjectExpectation();
     return this.runProjectOperation(async () => {
       const data = await this.graphql.execute<{ projectOpenDocument: ProjectOperationResult }>(
-        `mutation ProjectOpenDocument($document: JSON!, $expectedProjectSessionId: String) {
+        `mutation ProjectOpenDocument(
+          $document: JSON!
+          $expectedProjectSessionId: String
+          $expectedCommandSequence: String
+        ) {
           projectOpenDocument(
             document: $document
             expectedProjectSessionId: $expectedProjectSessionId
+            expectedCommandSequence: $expectedCommandSequence
           ) {
             status { ${PROJECT_STATUS_FIELDS} }
             summary { applied projected deferred skipped }
           }
         }`,
-        { document, expectedProjectSessionId: expectedProjectSessionId ?? null },
+        {
+          document,
+          expectedProjectSessionId: expected?.projectSessionId ?? null,
+          expectedCommandSequence: expected?.commandSequence ?? null,
+        },
       );
       return validateProjectOperationResult(data.projectOpenDocument);
     });
   }
 
-  closeProject(expectedProjectSessionId?: string): Promise<ProjectStatus> {
+  closeProject(expectation?: ProjectRevisionExpectation): Promise<ProjectStatus> {
+    const expected = expectation ?? this.currentProjectExpectation();
     return this.runProjectOperation(async () => {
       const data = await this.graphql.execute<{ projectClose: ProjectStatus }>(
-        `mutation ProjectClose($expectedProjectSessionId: String) {
-          projectClose(expectedProjectSessionId: $expectedProjectSessionId) {
+        `mutation ProjectClose(
+          $expectedProjectSessionId: String
+          $expectedCommandSequence: String
+        ) {
+          projectClose(
+            expectedProjectSessionId: $expectedProjectSessionId
+            expectedCommandSequence: $expectedCommandSequence
+          ) {
             ${PROJECT_STATUS_FIELDS}
           }
         }`,
-        { expectedProjectSessionId: expectedProjectSessionId ?? null },
+        {
+          expectedProjectSessionId: expected?.projectSessionId ?? null,
+          expectedCommandSequence: expected?.commandSequence ?? null,
+        },
       );
       return validateProjectStatus(data.projectClose);
     });
@@ -454,9 +518,29 @@ export class EditorClient {
           (status.active && status.projectSessionId !== observed.projectSessionId))
       ) {
         this.requestResync("project_session_changed");
+      } else if (status.active && status.projectSessionId) {
+        // ProjectStatus também pode observar um comando confirmado por outro
+        // cliente antes de o event pump local alcançá-lo.
+        this.advanceObservedRevision(status.projectSessionId, status.commandSequence);
       }
       return status;
     });
+  }
+
+  private currentProjectExpectation(): ProjectRevisionExpectation | undefined {
+    const cursor = this.cursor;
+    if (cursor) {
+      return {
+        projectSessionId: cursor.projectSessionId,
+        commandSequence: cursor.commandSequence,
+      };
+    }
+    const status = this.projectionState?.status;
+    if (!status) return undefined;
+    return {
+      ...(status.projectSessionId ? { projectSessionId: status.projectSessionId } : {}),
+      commandSequence: status.commandSequence,
+    };
   }
 
   /** Compatibilidade temporária: todo load usa a operação transacional nova. */
@@ -464,14 +548,30 @@ export class EditorClient {
     return (await this.openProjectDocument(document)).summary;
   }
 
-  listProjectTemplates(): Promise<{
-    templates: Array<{ id: string; label: string; description: string }>;
-  }> {
+  listProjectTemplates(): Promise<{ templates: ProjectTemplateDescriptor[] }> {
     return this.coldCall(async () => {
-      const data = await this.graphql.execute<{
-        templates: Array<{ id: string; label: string; description: string }>;
-      }>("{ templates { id label description } }");
+      const data = await this.graphql.execute<{ templates: ProjectTemplateDescriptor[] }>(
+        "{ templates { id label description preview defaults } }",
+      );
       return { templates: data.templates };
+    });
+  }
+
+  materializeProjectTemplate(
+    templateId: string,
+    options: ProjectTemplateCreationOptions,
+  ): Promise<unknown> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ projectTemplateDocument: unknown }>(
+        `query ProjectTemplateDocument(
+          $templateId: String!
+          $options: ProjectTemplateOptionsInput!
+        ) {
+          projectTemplateDocument(templateId: $templateId, options: $options)
+        }`,
+        { templateId, options },
+      );
+      return data.projectTemplateDocument;
     });
   }
 
@@ -776,9 +876,9 @@ export class EditorClient {
     }
     this.cursor = {
       ...cursor,
-      commandSequence: event.commandSequence,
       lastEventSeq: event.seq,
     };
+    this.advanceObservedRevision(event.projectSessionId, event.commandSequence);
     // Trocas/fechamentos de sessão são eventos de controle, não mutações do
     // Blueprint. Eles invalidam a projeção inteira e nunca devem sujar o
     // documento nem chegar aos consumidores como um comando editável.
@@ -805,6 +905,34 @@ export class EditorClient {
       }
     }
     return true;
+  }
+
+  private advanceObservedRevision(
+    projectSessionId: string,
+    commandSequence: string,
+  ): void {
+    const next = parseSequence(commandSequence);
+    if (next === undefined) return;
+
+    const cursor = this.cursor;
+    if (
+      cursor?.projectSessionId === projectSessionId &&
+      next >= (parseSequence(cursor.commandSequence) ?? -1n)
+    ) {
+      this.cursor = { ...cursor, commandSequence };
+    }
+
+    const snapshot = this.projectionState;
+    if (
+      snapshot?.status.projectSessionId === projectSessionId &&
+      next >= (parseSequence(snapshot.status.commandSequence) ?? -1n)
+    ) {
+      this.projectionState = Object.freeze({
+        ...snapshot,
+        commandSequence,
+        status: Object.freeze({ ...snapshot.status, commandSequence }),
+      });
+    }
   }
 
   private onFellBack(): void {

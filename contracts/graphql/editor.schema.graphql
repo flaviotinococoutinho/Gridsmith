@@ -123,6 +123,23 @@ type ProjectTemplate {
   id: String!
   label: String!
   description: String!
+  "Preview declarativo renderizado pelo wizard; não contém caminho local."
+  preview: JSON!
+  "Resolução de referência e tile size sugeridos pelo template."
+  defaults: JSON!
+}
+
+input ReferenceResolutionInput {
+  width: Int!
+  height: Int!
+}
+
+"Opções completas; materializações nunca reutilizam a identidade fixa do catálogo."
+input ProjectTemplateOptionsInput {
+  projectId: String!
+  name: String!
+  referenceResolution: ReferenceResolutionInput!
+  tileSize: Int!
 }
 
 type ReplaySummary {
@@ -183,6 +200,8 @@ type Query {
   "Matriz de decisões da governança de experiência."
   experience(family: String, version: String): Experience!
   templates: [ProjectTemplate!]!
+  "Materializa um documento válido sem ativar/trocar a sessão corrente."
+  projectTemplateDocument(templateId: String!, options: ProjectTemplateOptionsInput!): JSON!
   "Sessão de projeto observada por todos os transports."
   projectStatus: ProjectStatus!
   "Janela segura; projectSessionId opcional só para compatibilidade, omiti-lo exige resync."
@@ -195,14 +214,14 @@ type Query {
 type Mutation {
   "Despacha um comando canônico pelo orquestrador (filters → AST → actions → projeção)."
   dispatch(kind: CommandKind!, payload: JSON!, requestId: String): DispatchResult!
-  "Cria e ativa, atomicamente, uma sessão vazia ou baseada em template."
-  projectCreate(projectId: String, templateId: String, expectedProjectSessionId: String): ProjectOperationResult!
-  "Prepara o documento fora da sessão ativa e só então a substitui atomicamente."
-  projectOpenDocument(document: JSON!, expectedProjectSessionId: String): ProjectOperationResult!
-  "Fecha somente a sessão esperada, quando informada."
-  projectClose(expectedProjectSessionId: String): ProjectStatus!
+  "Cria e ativa atomicamente; identidade + sequência formam o compare-and-swap."
+  projectCreate(projectId: String, templateId: String, expectedProjectSessionId: String, expectedCommandSequence: String): ProjectOperationResult!
+  "Prepara fora da sessão ativa e substitui somente a identidade/revisão observada."
+  projectOpenDocument(document: JSON!, expectedProjectSessionId: String, expectedCommandSequence: String): ProjectOperationResult!
+  "Fecha somente a identidade/revisão observada, quando informada."
+  projectClose(expectedProjectSessionId: String, expectedCommandSequence: String): ProjectStatus!
   "Alias legado transacional de projectOpenDocument."
-  loadDocument(document: JSON!, expectedProjectSessionId: String): ReplaySummary!
+  loadDocument(document: JSON!, expectedProjectSessionId: String, expectedCommandSequence: String): ReplaySummary!
   "Alias legado transacional de projectCreate(templateId: ...)."
-  newProjectFromTemplate(templateId: String!, expectedProjectSessionId: String): NewProjectResult!
+  newProjectFromTemplate(templateId: String!, expectedProjectSessionId: String, expectedCommandSequence: String): NewProjectResult!
 }

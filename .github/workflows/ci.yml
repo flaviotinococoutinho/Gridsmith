@@ -46,6 +46,8 @@ jobs:
       - run: cd middleware && npm ci && npm run build
       - run: cd frontend && npm ci && npm run build
       - run: cd frontend && npm test
+      - name: Teste explícito — ciclo de vida durável do projeto
+        run: cd frontend && npm run test:project-lifecycle-product
       - name: Teste explícito — clientes observam troca atômica de projeto
         run: cd frontend && npm run test:project-session
       - name: Teste explícito — fallback gRPC → GraphQL

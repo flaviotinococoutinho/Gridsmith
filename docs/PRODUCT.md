@@ -102,7 +102,8 @@ graph LR
   instâncias validadas com defaults.
 - **Estados visuais**: máquina Gum-like com interpolação interrupt-safe e
   easing Bézier.
-- **Projeto**: export/load do blueprint completo com replay canônico
+- **Projeto**: wizard de template real, export/load por replay canônico, escrita
+  durável/recuperável com backup, recovery de autosave, exemplo editável e Recentes
   (persistência sem perdas, documento diffável).
 - **Governança de runtime**: perfis versionados (monogame@3.8.0/3.8.2) ×
   manifesto vivo → matriz de decisões com razões.

@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import {
   BLUEPRINT_DOCUMENT_VERSION,
+  DEFAULT_PROJECT_METADATA,
   exportBlueprint,
   type BlueprintDocument,
 } from "../src/canonical/BlueprintSerializer.js";
@@ -135,6 +136,7 @@ function document(projectId: string, lights: readonly LightSpec[] = []): Bluepri
   return {
     schemaVersion: BLUEPRINT_DOCUMENT_VERSION,
     projectId,
+    metadata: DEFAULT_PROJECT_METADATA,
     skeletons: [],
     meshes: [],
     camera: {},
@@ -190,6 +192,7 @@ test("documento inválido mantém sessão A, dirty-equivalent sequence e runtime
     sessions.prepareFromDocument({
       schemaVersion: BLUEPRINT_DOCUMENT_VERSION,
       projectId: "B",
+      metadata: DEFAULT_PROJECT_METADATA,
       skeletons: "not-an-array",
       meshes: [], camera: {}, lights: [], entityDefs: [], entities: [], levels: [], placements: [],
     }),
@@ -201,6 +204,47 @@ test("documento inválido mantém sessão A, dirty-equivalent sequence e runtime
   assert.equal(before.history.lastSequence, beforeSequence);
   assert.equal(runtime.resetCount, resetCount, "invalid input never touched runtime");
   assert.equal(changes, 0, "invalid input published no session event");
+});
+
+test("posição não finita/numérica é rejeitada antes de tocar sessão ou runtime", async () => {
+  const { sessions, runtime } = manager();
+  await sessions.replaceAtomically(
+    await sessions.prepareFromDocument(document("A", [light(1)])),
+  );
+  const before = sessions.current;
+  const resets = runtime.resetCount;
+  const invalid = {
+    ...light(2),
+    position: ["not-a-world-coordinate", 0],
+  } as unknown as LightSpec;
+
+  await assert.rejects(
+    sessions.prepareFromDocument(document("B", [invalid])),
+    /position.*finite|position.*numbers/,
+  );
+
+  assert.equal(sessions.current, before);
+  assert.equal(runtime.resetCount, resets);
+});
+
+test("metadata preparada é clonada e congelada fora do objeto de entrada", async () => {
+  const { sessions } = manager();
+  const mutableMetadata = {
+    name: "Original",
+    referenceResolution: { width: 1280, height: 720 },
+    spatial: { ...DEFAULT_PROJECT_METADATA.spatial },
+  };
+  const input = { ...document("immutable"), metadata: mutableMetadata };
+  const prepared = await sessions.prepareFromDocument(input);
+
+  mutableMetadata.name = "Mutado externamente";
+  mutableMetadata.referenceResolution.width = 1;
+
+  assert.equal(prepared.session.metadata.name, "Original");
+  assert.equal(prepared.session.metadata.referenceResolution.width, 1280);
+  assert.ok(Object.isFrozen(prepared.session.metadata));
+  assert.ok(Object.isFrozen(prepared.session.metadata.referenceResolution));
+  assert.ok(Object.isFrozen(prepared.session.metadata.spatial));
 });
 
 test("falha no quinto comando de replay não produz efeitos parciais fora da sessão temporária", async () => {
@@ -369,6 +413,49 @@ test("replaceAtomically usa compare-and-swap e recusa candidato preparado sobre 
     /Active project session changed before replace/,
   );
   assert.equal(sessions.current?.projectId, "B");
+});
+
+test("replace e close recusam commandSequence obsoleto sem descartar comando concorrente", async () => {
+  const { sessions } = manager();
+  const active = await sessions.replaceAtomically(
+    sessions.createEmptySession("revision-a"),
+    undefined,
+    "0",
+  );
+  const sessionId = active.status.projectSessionId!;
+  await sessions.dispatch({ kind: "light/add", light: light(1) }, sessionId);
+
+  await assert.rejects(
+    sessions.replaceAtomically(
+      sessions.createEmptySession("revision-b"),
+      sessionId,
+      "0",
+    ),
+    /command sequence changed before replace.*expected 0, got 1/,
+  );
+  await assert.rejects(
+    sessions.close(sessionId, "0"),
+    /command sequence changed before close.*expected 0, got 1/,
+  );
+  assert.equal(sessions.current?.projectId, "revision-a");
+  assert.equal(sessions.current?.history.lastSequence, 1n);
+
+  await sessions.replaceAtomically(
+    sessions.createEmptySession("revision-b"),
+    sessionId,
+    "1",
+  );
+  assert.equal(sessions.current?.projectId, "revision-b");
+});
+
+test("sequência zero sem sessionId protege o primeiro Open contra sessão surgida", async () => {
+  const { sessions } = manager();
+  await sessions.replaceAtomically(sessions.createEmptySession("first"), undefined, "0");
+  await assert.rejects(
+    sessions.replaceAtomically(sessions.createEmptySession("stale-first"), undefined, "0"),
+    /Active project session appeared before replace/,
+  );
+  assert.equal(sessions.current?.projectId, "first");
 });
 
 test("porta de leitura fecha durante reset/rehydrate e reabre somente após o commit", async () => {

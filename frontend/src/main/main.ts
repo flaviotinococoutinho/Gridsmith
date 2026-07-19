@@ -14,24 +14,44 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, Menu, app, dialog, ipcMain } from "electron";
+import { BrowserWindow, Menu, app, dialog, ipcMain, type MenuItemConstructorOptions } from "electron";
 import {
   EDITOR_AUTH_TOKEN_ENV,
   EDITOR_AUTH_TOKEN_FILE_ENV,
   generateTransportAuthToken,
   loadTransportAuthToken,
 } from "@p7m/middleware/dist/transport/auth.js";
-import { ProjectLifecycle, type ProjectDescriptor } from "../core/projectLifecycle.js";
+import { ProjectLifecycle, type RecentProject } from "../core/projectLifecycle.js";
+import type {
+  CreateProjectFromTemplateRequest,
+  DiscardAutosaveRequest,
+  OpenProjectRequest,
+  ProjectMenuAction,
+  RestoreAutosaveRequest,
+} from "../core/projectApi.js";
 import {
   ProcessSupervisor,
   type ManagedProcess,
   type ServiceReadiness,
   type ServiceStatus,
 } from "./ProcessSupervisor.js";
-import { EditorClient, type ProjectStatus } from "./EditorClient.js";
+import { EditorClient } from "./EditorClient.js";
+import { ElectronProjectDialogs } from "./project/ElectronProjectDialogs.js";
+import { NodeProjectFileSystem } from "./project/NodeProjectFileSystem.js";
+import { ProjectFileService } from "./project/ProjectFileService.js";
+import {
+  focusExistingProjectWindow,
+  projectPathFromArgs,
+} from "./project/ProjectLaunchRouting.js";
+import {
+  ProjectController,
+  SingleInstanceProjectLeaseRegistry,
+  statusOf,
+} from "./project/ProjectController.js";
 import {
   ensureSingleInstance,
   hardenNavigation,
@@ -41,7 +61,6 @@ import {
 } from "./appConfig.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_FILTER = [{ name: "Projeto P7M", extensions: ["p7m.json"] }];
 
 function pipeNameFromArgs(): string {
   const index = process.argv.indexOf("--pipe");
@@ -222,42 +241,32 @@ function recentsFile(): string {
   return path.join(app.getPath("userData"), "recent-projects.json");
 }
 
-function loadRecents(): [] {
+async function loadRecents(files: ProjectFileService): Promise<RecentProject[]> {
   try {
-    return JSON.parse(fs.readFileSync(recentsFile(), "utf8"));
+    const parsed = await files.readDocument(recentsFile());
+    return Array.isArray(parsed) ? parsed as RecentProject[] : [];
   } catch {
     return [];
   }
 }
 
-interface ProjectStatusPayload {
-  state: string;
-  windowTitle: string;
-  isDirty: boolean;
-  project?: {
-    filePath?: string;
-    name: string;
-    projectSessionId?: string;
-    projectId?: string;
-  };
-  recents: readonly unknown[];
-}
-
-function statusOf(lifecycle: ProjectLifecycle): ProjectStatusPayload {
-  return {
-    state: lifecycle.currentState,
-    windowTitle: lifecycle.windowTitle,
-    isDirty: lifecycle.isDirty,
-    ...(lifecycle.project !== undefined ? { project: lifecycle.project } : {}),
-    recents: lifecycle.recentProjects,
-  };
-}
-
 let mainWindow: BrowserWindow | undefined;
+const pendingOpenPaths: string[] = [];
+let routeOpenPath: ((filePath: string) => void) | undefined;
 
-void app.whenReady().then(async () => {
-  // instância única: a segunda sai; a primeira ganha foco (appConfig.ts)
-  if (!ensureSingleInstance(() => mainWindow)) return;
+// O lock precisa existir antes de `ready`: duas instâncias iniciadas juntas
+// não podem criar janelas/sessões concorrentes antes de o handler ser ligado.
+const isPrimaryInstance = ensureSingleInstance(
+  () => mainWindow,
+  (argv, workingDirectory) => {
+    const filePath = projectPathFromArgs(argv, workingDirectory);
+    if (!filePath) return;
+    if (routeOpenPath) routeOpenPath(filePath);
+    else pendingOpenPaths.push(filePath);
+  },
+);
+
+if (isPrimaryInstance) void app.whenReady().then(async () => {
 
   const pipeName = pipeNameFromArgs();
   const externalServices = process.argv.includes("--external-services");
@@ -267,7 +276,9 @@ void app.whenReady().then(async () => {
     ? loadTransportAuthToken()
     : generateTransportAuthToken();
   const client = new EditorClient(pipeName, { authToken });
-  const lifecycle = new ProjectLifecycle(Date.now, {}, loadRecents());
+  const nodeFiles = new NodeProjectFileSystem();
+  const projectFiles = new ProjectFileService(nodeFiles, randomUUID);
+  const lifecycle = new ProjectLifecycle(Date.now, {}, await loadRecents(projectFiles));
   let window: BrowserWindow;
 
   // P0.1: por padrão o Electron é o supervisor do ecossistema (executável
@@ -287,187 +298,42 @@ void app.whenReady().then(async () => {
     }
   });
 
+  const projectDialogs = new ElectronProjectDialogs(() => window);
+  const controller = new ProjectController({
+    lifecycle,
+    editor: client,
+    files: projectFiles,
+    dialogs: projectDialogs,
+    leases: new SingleInstanceProjectLeaseRegistry(),
+    exampleProjectPath: path.join(dirname, "../examples/platformer-2d-example.p7m.json"),
+    createId: randomUUID,
+  });
+
+  let rebuildMenu = (): void => undefined;
+  let recentsWrite = Promise.resolve();
   const broadcast = (): void => {
     if (window && !window.isDestroyed()) {
       window.setTitle(lifecycle.windowTitle);
       window.webContents.send("p7m:project-status", statusOf(lifecycle));
     }
-    fs.writeFileSync(recentsFile(), JSON.stringify(lifecycle.recentProjects));
+    rebuildMenu();
   };
-  lifecycle.onEvent(() => broadcast());
-
-  const descriptorFromStatus = (
-    status: ProjectStatus,
-    name: string,
-    filePath?: string,
-  ): ProjectDescriptor => {
-    if (!status.active || !status.projectSessionId || !status.projectId) {
-      throw new Error("middleware did not activate the requested project session");
+  lifecycle.onEvent((event) => {
+    broadcast();
+    if (event.kind === "recentsChanged") {
+      // Persistência auxiliar nunca participa da transação de sessão.
+      recentsWrite = recentsWrite
+        .then(() => projectFiles.writeJsonFile(recentsFile(), lifecycle.recentProjects))
+        .catch((error) => console.error("[project-recents]", error));
     }
-    return {
-      name,
-      projectSessionId: status.projectSessionId,
-      projectId: status.projectId,
-      ...(filePath ? { filePath } : {}),
-    };
-  };
-
-  const writeDocument = async (
-    filePath: string,
-    expectedProjectSessionId: string,
-  ): Promise<void> => {
-    const document = await client.saveDocument(expectedProjectSessionId);
-    if (
-      lifecycle.project?.projectSessionId !== expectedProjectSessionId ||
-      client.activeProjectSessionId !== expectedProjectSessionId
-    ) {
-      throw new Error("project session changed before the document could be written");
-    }
-    fs.writeFileSync(filePath, JSON.stringify(document, null, 2));
-  };
+  });
 
   // Autosave: limiar de comandos (via commandApplied) + intervalo (tick)
-  const autosave = async (): Promise<void> => {
-    const descriptor = lifecycle.project;
-    const filePath = descriptor?.filePath;
-    const expectedProjectSessionId = descriptor?.projectSessionId;
-    if (!filePath || !expectedProjectSessionId) return;
-    try {
-      const document = await client.saveDocument(expectedProjectSessionId);
-      if (
-        lifecycle.project?.projectSessionId !== expectedProjectSessionId ||
-        lifecycle.project.filePath !== filePath ||
-        client.activeProjectSessionId !== expectedProjectSessionId
-      ) return;
-      fs.writeFileSync(`${filePath}.autosave`, JSON.stringify(document));
-    } catch {
-      // autosave é best-effort; o save explícito reporta erros
-    }
-  };
   setInterval(() => {
-    if (lifecycle.autosaveTick()) void autosave();
+    if (lifecycle.autosaveTick()) {
+      void controller.autosave().catch((error) => console.error("[project-autosave]", error));
+    }
   }, 5_000).unref();
-
-  const saveCurrentProject = async (forceSaveAs: boolean): Promise<boolean> => {
-    const descriptor = lifecycle.project;
-    const expectedProjectSessionId = descriptor?.projectSessionId;
-    if (!descriptor || !expectedProjectSessionId) {
-      throw new Error("cannot save without an active project session");
-    }
-    let filePath = forceSaveAs ? undefined : descriptor.filePath;
-    if (!filePath) {
-      const picked = await dialog.showSaveDialog(window, {
-        title: "Salvar projeto P7M",
-        filters: PROJECT_FILTER,
-        defaultPath: `${descriptor.name}.p7m.json`,
-      });
-      if (picked.canceled || !picked.filePath) return false;
-      filePath = picked.filePath;
-    }
-    lifecycle.beginSave();
-    try {
-      await writeDocument(filePath, expectedProjectSessionId);
-      lifecycle.saved(filePath);
-      return true;
-    } catch (error) {
-      lifecycle.saveFailed();
-      throw error;
-    }
-  };
-
-  const projectCommand = async (
-    command: "new" | "open" | "openPath" | "save" | "saveAs" | "close",
-    payload?: { filePath?: string },
-  ): Promise<ProjectStatusPayload> => {
-    switch (command) {
-      case "new": {
-        lifecycle.beginOpen();
-        try {
-          const result = await client.createProject();
-          lifecycle.opened(descriptorFromStatus(result.status, "Projeto sem título"));
-        } catch (error) {
-          lifecycle.openFailed();
-          throw error;
-        }
-        break;
-      }
-      case "open":
-      case "openPath": {
-        let filePath = payload?.filePath;
-        if (command === "open") {
-          const picked = await dialog.showOpenDialog(window, {
-            title: "Abrir projeto P7M",
-            filters: PROJECT_FILTER,
-            properties: ["openFile"],
-          });
-          if (picked.canceled || picked.filePaths.length === 0) break;
-          filePath = picked.filePaths[0]!;
-        }
-        if (!filePath) break;
-        // Parse local acontece antes da transação; JSON inválido sequer altera
-        // a máquina de estados e a sessão A continua íntegra.
-        const document: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
-        lifecycle.beginOpen();
-        try {
-          const result = await client.openProjectDocument(document);
-          lifecycle.opened(
-            descriptorFromStatus(
-              result.status,
-              path.basename(filePath).replace(/\.p7m\.json$/, ""),
-              filePath,
-            ),
-          );
-        } catch (err) {
-          lifecycle.openFailed();
-          throw err;
-        }
-        break;
-      }
-      case "save":
-      case "saveAs": {
-        await saveCurrentProject(command === "saveAs");
-        break;
-      }
-      case "close": {
-        if (!lifecycle.project) {
-          await client.closeProject();
-          break;
-        }
-        const decision = lifecycle.requestClose();
-        if (decision === "confirm-discard") {
-          const { response } = await dialog.showMessageBox(window, {
-            type: "warning",
-            title: "Alterações não salvas",
-            message: `"${lifecycle.project?.name}" tem alterações não salvas.`,
-            buttons: ["Salvar", "Descartar", "Cancelar"],
-            defaultId: 0,
-            cancelId: 2,
-          });
-          if (response === 2) {
-            lifecycle.cancelClose();
-            break;
-          }
-          if (response === 0) {
-            // Save usa sua própria transação; só depois voltamos a closing.
-            lifecycle.cancelClose();
-            if (!(await saveCurrentProject(false))) break;
-            lifecycle.requestClose();
-          }
-        }
-        const expectedProjectSessionId = lifecycle.project?.projectSessionId;
-        try {
-          const status = await client.closeProject(expectedProjectSessionId);
-          if (status.active) throw new Error("middleware kept the project session active");
-          lifecycle.confirmClose();
-        } catch (error) {
-          lifecycle.cancelClose();
-          throw error;
-        }
-        break;
-      }
-    }
-    return statusOf(lifecycle);
-  };
 
   // Conexão idempotente: com supervisão, o próprio waitReady da engine já
   // conecta o cliente — reconectar criaria uma segunda sessão de editor.
@@ -480,6 +346,9 @@ void app.whenReady().then(async () => {
     }
     try {
       session = await client.connect();
+      if (routeOpenPath) {
+        for (const filePath of pendingOpenPaths.splice(0)) routeOpenPath(filePath);
+      }
       return session;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -501,15 +370,37 @@ void app.whenReady().then(async () => {
     // engine nova = sessão nova: o middleware reidrata o Blueprint sozinho
     return ok;
   });
-  ipcMain.handle("p7m:dispatch", (_event, kind: string, payload: Record<string, unknown>) =>
-    client.dispatch(kind, payload),
-  );
+  ipcMain.handle("p7m:dispatch", async (_event, kind: string, payload: Record<string, unknown>) => {
+    const result = await controller.dispatch(kind, payload);
+    if (result.autosaveDue) {
+      void controller.autosave().catch((error) => console.error("[project-autosave]", error));
+    }
+    return result.outcome;
+  });
   ipcMain.handle("p7m:query", (_event, projection: string) => client.query(projection));
   ipcMain.handle("p7m:experience", (_event, family?: string, version?: string) =>
     client.resolveExperience(family, version),
   );
-  ipcMain.handle("p7m:project-command", (_event, command, payload) =>
-    projectCommand(command, payload),
+  ipcMain.handle("p7m:list-project-templates", () => controller.listProjectTemplates());
+  ipcMain.handle(
+    "p7m:create-project-from-template",
+    (_event, request: CreateProjectFromTemplateRequest) =>
+      controller.createProjectFromTemplate(request),
+  );
+  ipcMain.handle("p7m:open-project", (_event, request?: OpenProjectRequest) =>
+    controller.openProject(request),
+  );
+  ipcMain.handle("p7m:save-project", () => controller.saveProject());
+  ipcMain.handle("p7m:save-project-as", () => controller.saveProjectAs());
+  ipcMain.handle("p7m:close-project", () => controller.closeProject());
+  ipcMain.handle("p7m:restore-autosave", (_event, request: RestoreAutosaveRequest) =>
+    controller.restoreAutosave(request),
+  );
+  ipcMain.handle("p7m:discard-autosave", (_event, request: DiscardAutosaveRequest) =>
+    controller.discardAutosave(request),
+  );
+  ipcMain.handle("p7m:open-recent", (_event, filePath: string) =>
+    controller.openRecent(filePath),
   );
   ipcMain.handle("p7m:project-status", () => statusOf(lifecycle));
 
@@ -521,23 +412,41 @@ void app.whenReady().then(async () => {
   trackWindowState(window);
   hardenNavigation(window);
 
-  // Menu nativo com atalhos (ALPHA-0.1 P0.3): projeto no main, edição no renderer
-  const sendMenuAction = (action: "undo" | "redo") => (): void => {
+  const reportProjectError = (error: unknown): void => {
+    dialog.showErrorBox(
+      "Não foi possível concluir a operação",
+      error instanceof Error ? error.message : String(error),
+    );
+  };
+  const runNative = (operation: () => Promise<unknown>) => (): void => {
+    void operation().catch(reportProjectError);
+  };
+  // Menu nativo: o wizard vive no renderer; IO/recentes permanecem no main.
+  const sendMenuAction = (action: ProjectMenuAction) => (): void => {
     if (!window.isDestroyed()) window.webContents.send("p7m:menu-action", action);
   };
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
+  rebuildMenu = (): void => {
+    const recentSubmenu: MenuItemConstructorOptions[] = lifecycle.recentProjects.length === 0
+      ? [{ label: "Nenhum projeto recente", enabled: false }]
+      : lifecycle.recentProjects.map((recent) => ({
+          label: recent.name,
+          sublabel: recent.filePath,
+          click: runNative(() => controller.openRecent(recent.filePath)),
+        }));
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
       {
         label: "Arquivo",
         submenu: [
-          { label: "Novo projeto", accelerator: "CmdOrCtrl+N", click: () => void projectCommand("new") },
-          { label: "Abrir projeto…", accelerator: "CmdOrCtrl+O", click: () => void projectCommand("open") },
+          { label: "Novo projeto…", accelerator: "CmdOrCtrl+N", click: sendMenuAction("new") },
+          { label: "Abrir projeto…", accelerator: "CmdOrCtrl+O", click: sendMenuAction("open") },
+          { label: "Abrir exemplo", click: sendMenuAction("open-example") },
+          { label: "Recentes", submenu: recentSubmenu },
           { type: "separator" },
-          { label: "Salvar", accelerator: "CmdOrCtrl+S", click: () => void projectCommand("save") },
-          { label: "Salvar como…", accelerator: "CmdOrCtrl+Shift+S", click: () => void projectCommand("saveAs") },
+          { label: "Salvar", accelerator: "CmdOrCtrl+S", click: runNative(() => controller.saveProject()) },
+          { label: "Salvar como…", accelerator: "CmdOrCtrl+Shift+S", click: runNative(() => controller.saveProjectAs()) },
           { type: "separator" },
-          { label: "Fechar projeto", accelerator: "CmdOrCtrl+W", click: () => void projectCommand("close") },
-          { role: "quit", label: "Sair" },
+          { label: "Fechar projeto", accelerator: "CmdOrCtrl+W", click: runNative(() => controller.closeProject()) },
+          { label: "Sair", click: () => window.close() },
         ],
       },
       {
@@ -558,60 +467,78 @@ void app.whenReady().then(async () => {
           { role: "zoomOut", label: "Diminuir zoom" },
         ],
       },
-    ]),
-  );
+    ]));
+  };
+  rebuildMenu();
 
-  let projectReconciliationGeneration = 0;
+  let allowWindowClose = false;
+  let closeInFlight = false;
+  window.on("close", (event) => {
+    if (allowWindowClose || !lifecycle.project) return;
+    event.preventDefault();
+    if (closeInFlight) return;
+    closeInFlight = true;
+    void controller.closeProject().then(
+      (result) => {
+        if (result.outcome === "completed" && !lifecycle.project) {
+          allowWindowClose = true;
+          window.close();
+        }
+      },
+      reportProjectError,
+    ).finally(() => {
+      closeInFlight = false;
+    });
+  });
+
   client.onBlueprintEvent((event) => {
     // Um callback atrasado de A nunca suja nem chega ao renderer de B.
     if (event.projectSessionId !== lifecycle.project?.projectSessionId) return;
-    if (lifecycle.commandApplied()) void autosave();
+    void controller.observeCommittedCommand(event).then((autosaveDue) => {
+      if (autosaveDue) {
+        void controller.autosave().catch((error) => console.error("[project-autosave]", error));
+      }
+    }, (error) => console.error("[project-dirty-tracking]", error));
     if (!window.isDestroyed()) {
       window.webContents.send("p7m:blueprint-event", event);
     }
   });
   client.onResynchronized((snapshot, record) => {
-    const generation = ++projectReconciliationGeneration;
-    const reconcileProjectSession = (): void => {
-      if (generation !== projectReconciliationGeneration) return;
-      if (
-        lifecycle.currentState === "opening" ||
-        lifecycle.currentState === "saving" ||
-        lifecycle.currentState === "closing"
-      ) {
-        const retry = setTimeout(reconcileProjectSession, 25);
-        retry.unref();
-        return;
+    void controller.reconcileRemoteSnapshot(snapshot).then((outcome) => {
+      // Um snapshot vazio que acaba de ser compensado nunca substitui a UI;
+      // a reabertura emite em seguida o snapshot completo da nova sessão.
+      if (outcome === "applied" && !window.isDestroyed()) {
+        window.webContents.send("p7m:projection-resync", { snapshot, record });
       }
-      const remote = snapshot.status;
-      const localSessionId = lifecycle.project?.projectSessionId;
-      if (remote.active && remote.projectSessionId && remote.projectId) {
-        if (remote.projectSessionId !== localSessionId) {
-          lifecycle.beginOpen();
-          lifecycle.opened(
-            descriptorFromStatus(remote, `Projeto ${remote.projectId}`),
-          );
-        }
-      } else if (lifecycle.project) {
-        lifecycle.requestClose();
-        lifecycle.confirmClose();
-      }
-    };
-    reconcileProjectSession();
-    if (!window.isDestroyed()) {
-      window.webContents.send("p7m:projection-resync", { snapshot, record });
-    }
+    }, (error) => console.error("[project-reconciliation]", error));
   });
 
   await window.loadFile(path.join(dirname, "../renderer/index.html"));
+  await controller.pruneMissingRecents();
   broadcast();
   window.webContents.send("p7m:service-status", serviceStatusPayload());
+
+  routeOpenPath = (filePath): void => {
+    if (!client.isConnected) {
+      pendingOpenPaths.push(filePath);
+      return;
+    }
+    focusExistingProjectWindow(window);
+    void controller.openRecent(filePath).catch(reportProjectError);
+  };
+  const initialPath = projectPathFromArgs(process.argv);
+  if (initialPath) pendingOpenPaths.unshift(initialPath);
+  if (client.isConnected) {
+    for (const filePath of pendingOpenPaths.splice(0)) routeOpenPath(filePath);
+  }
 
   app.on("window-all-closed", () => {
     client.close();
     // encerramento coordenado, ordem inversa da subida (engine → middleware)
-    const finish = (): void => app.quit();
-    if (supervisor) void supervisor.shutdown().then(finish, finish);
-    else finish();
+    void (async () => {
+      await recentsWrite.catch(() => undefined);
+      await supervisor?.shutdown().catch(() => undefined);
+      app.quit();
+    })();
   });
 });

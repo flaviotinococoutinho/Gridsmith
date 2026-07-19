@@ -16,7 +16,11 @@ import {
   exportBlueprint,
   type ReplaySummary,
 } from "./BlueprintSerializer.js";
-import { getProjectTemplate, PROJECT_TEMPLATES } from "./ProjectTemplates.js";
+import {
+  getProjectTemplate,
+  PROJECT_TEMPLATES,
+  type ProjectTemplateOptions,
+} from "./ProjectTemplates.js";
 import type { DispatchResult } from "./CanonicalOrchestrator.js";
 import {
   ProjectNotOpenError,
@@ -60,6 +64,11 @@ export interface ProjectTemplateInfo {
   readonly id: string;
   readonly label: string;
   readonly description: string;
+  readonly preview: Record<string, unknown>;
+  readonly defaults: {
+    readonly referenceResolution: { readonly width: number; readonly height: number };
+    readonly tileSize: number;
+  };
 }
 
 export interface EditorSurfaceOptions {
@@ -205,7 +214,7 @@ export class EditorSurface {
         };
       }
       case "document":
-        return { document: exportBlueprint(store, session.projectId) };
+        return { document: exportBlueprint(store, session.projectId, session.metadata) };
       default:
         throw new JsonRpcError(
           RpcErrorCode.InvalidParams,
@@ -242,22 +251,35 @@ export class EditorSurface {
     projectId?: unknown,
     templateId?: unknown,
     expectedProjectSessionId?: unknown,
-  ): Promise<ProjectActivationResult> {
+    expectedCommandSequence?: unknown,
+  ): Promise<ProjectActivationResult & { readonly templateId?: string; readonly name?: string }> {
     if (projectId !== undefined && (typeof projectId !== "string" || projectId.length === 0)) {
       throw new JsonRpcError(RpcErrorCode.InvalidParams, `"projectId" must be a non-empty string`);
     }
     if (templateId !== undefined && (typeof templateId !== "string" || templateId.length === 0)) {
       throw new JsonRpcError(RpcErrorCode.InvalidParams, `"templateId" must be a non-empty string`);
     }
+    const template = typeof templateId === "string" ? getProjectTemplate(templateId) : undefined;
+    if (templateId !== undefined && !template) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `Unknown project template "${String(templateId)}"`,
+      );
+    }
     this.validateExpectedSessionId(expectedProjectSessionId);
+    this.validateExpectedCommandSequence(expectedCommandSequence);
     try {
-      const prepared = templateId
-        ? await this.options.sessions.createFromTemplate(templateId as string, projectId as string | undefined)
+      const prepared = template
+        ? await this.options.sessions.createFromTemplate(template.id, projectId as string | undefined)
         : this.options.sessions.createEmptySession(projectId as string | undefined);
-      return await this.options.sessions.replaceAtomically(
+      const activation = await this.options.sessions.replaceAtomically(
         prepared,
         expectedProjectSessionId as string | undefined,
+        expectedCommandSequence as string | undefined,
       );
+      return template
+        ? { ...activation, templateId: template.id, name: template.label }
+        : activation;
     } catch (error) {
       throw this.toApplicationError(error);
     }
@@ -266,6 +288,7 @@ export class EditorSurface {
   async projectOpenDocument(
     document: unknown,
     expectedProjectSessionId?: unknown,
+    expectedCommandSequence?: unknown,
   ): Promise<ProjectActivationResult> {
     if ((typeof document !== "object" || document === null) && typeof document !== "string") {
       throw new JsonRpcError(
@@ -274,37 +297,46 @@ export class EditorSurface {
       );
     }
     this.validateExpectedSessionId(expectedProjectSessionId);
+    this.validateExpectedCommandSequence(expectedCommandSequence);
     try {
       const prepared = await this.options.sessions.prepareFromDocument(document);
       return await this.options.sessions.replaceAtomically(
         prepared,
         expectedProjectSessionId as string | undefined,
+        expectedCommandSequence as string | undefined,
       );
     } catch (error) {
       throw this.toApplicationError(error);
     }
   }
 
-  async projectClose(expectedProjectSessionId?: unknown): Promise<ProjectStatus> {
-    if (
-      expectedProjectSessionId !== undefined &&
-      (typeof expectedProjectSessionId !== "string" || expectedProjectSessionId.length === 0)
-    ) {
-      throw new JsonRpcError(
-        RpcErrorCode.InvalidParams,
-        `"expectedProjectSessionId" must be a non-empty string`,
-      );
-    }
+  async projectClose(
+    expectedProjectSessionId?: unknown,
+    expectedCommandSequence?: unknown,
+  ): Promise<ProjectStatus> {
+    this.validateExpectedSessionId(expectedProjectSessionId);
+    this.validateExpectedCommandSequence(expectedCommandSequence);
     try {
-      return await this.options.sessions.close(expectedProjectSessionId as string | undefined);
+      return await this.options.sessions.close(
+        expectedProjectSessionId as string | undefined,
+        expectedCommandSequence as string | undefined,
+      );
     } catch (error) {
       throw this.toApplicationError(error);
     }
   }
 
   /** Alias compatível; a implementação agora é transacional e substitui A por B. */
-  async loadDocument(document: unknown, expectedProjectSessionId?: unknown): Promise<ReplaySummary> {
-    return (await this.projectOpenDocument(document, expectedProjectSessionId)).summary;
+  async loadDocument(
+    document: unknown,
+    expectedProjectSessionId?: unknown,
+    expectedCommandSequence?: unknown,
+  ): Promise<ReplaySummary> {
+    return (await this.projectOpenDocument(
+      document,
+      expectedProjectSessionId,
+      expectedCommandSequence,
+    )).summary;
   }
 
   listTemplates(): readonly ProjectTemplateInfo[] {
@@ -312,12 +344,37 @@ export class EditorSurface {
       id: template.id,
       label: template.label,
       description: template.description,
+      preview: template.preview as unknown as Record<string, unknown>,
+      defaults: template.defaults,
     }));
+  }
+
+  /** Materialização pura: não toca sessão, runtime, journal nem clientes. */
+  materializeProjectTemplate(templateId: unknown, options: unknown): unknown {
+    if (typeof templateId !== "string" || templateId.length === 0) {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `"templateId" must be a non-empty string`);
+    }
+    const template = getProjectTemplate(templateId);
+    if (!template) {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `Unknown project template "${templateId}"`);
+    }
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `"options" must be an object`);
+    }
+    try {
+      return template.create(requireCompleteTemplateOptions(options));
+    } catch (error) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        error instanceof Error ? error.message : "Invalid project template options",
+      );
+    }
   }
 
   async newProjectFromTemplate(
     templateId: unknown,
     expectedProjectSessionId?: unknown,
+    expectedCommandSequence?: unknown,
   ): Promise<ReplaySummary & { templateId: string; name: string }> {
     if (typeof templateId !== "string" || templateId.length === 0) {
       throw new JsonRpcError(RpcErrorCode.InvalidParams, `"templateId" must be a non-empty string`);
@@ -326,7 +383,12 @@ export class EditorSurface {
     if (!template) {
       throw new JsonRpcError(RpcErrorCode.InvalidParams, `Unknown project template "${templateId}"`);
     }
-    const activation = await this.projectCreate(undefined, template.id, expectedProjectSessionId);
+    const activation = await this.projectCreate(
+      undefined,
+      template.id,
+      expectedProjectSessionId,
+      expectedCommandSequence,
+    );
     return { templateId: template.id, name: template.label, ...activation.summary };
   }
 
@@ -366,6 +428,18 @@ export class EditorSurface {
       throw new JsonRpcError(
         RpcErrorCode.InvalidParams,
         `"expectedProjectSessionId" must be a non-empty string`,
+      );
+    }
+  }
+
+  private validateExpectedCommandSequence(value: unknown): void {
+    if (
+      value !== undefined &&
+      (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/u.test(value))
+    ) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"expectedCommandSequence" must be a canonical non-negative decimal string`,
       );
     }
   }
@@ -426,6 +500,33 @@ export class EditorSurface {
       this.completedDispatches.delete(oldest);
     }
   }
+}
+
+function requireCompleteTemplateOptions(value: unknown): ProjectTemplateOptions {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("project template options must be an object");
+  }
+  const options = value as Record<string, unknown>;
+  const resolution = options["referenceResolution"];
+  if (typeof options["projectId"] !== "string" || !options["projectId"].trim()) {
+    throw new TypeError("projectId must be non-empty");
+  }
+  if (typeof options["name"] !== "string" || !options["name"].trim()) {
+    throw new TypeError("name must be non-empty");
+  }
+  if (!resolution || typeof resolution !== "object" || Array.isArray(resolution)) {
+    throw new TypeError("referenceResolution must contain width/height");
+  }
+  const dimensions = resolution as Record<string, unknown>;
+  return {
+    projectId: options["projectId"],
+    name: options["name"],
+    referenceResolution: {
+      width: dimensions["width"] as number,
+      height: dimensions["height"] as number,
+    },
+    tileSize: options["tileSize"] as number,
+  };
 }
 
 function emptyProjectionSnapshot(): CompleteProjectionSnapshot {

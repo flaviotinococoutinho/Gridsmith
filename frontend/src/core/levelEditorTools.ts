@@ -59,11 +59,6 @@ export function commitDrag(
   return false;
 }
 
-/** Posição no mundo (pixels) ancorada ao CENTRO da célula. */
-export function cellCenter(cellX: number, cellY: number, tileSize: number): [number, number] {
-  return [cellX * tileSize + tileSize / 2, cellY * tileSize + tileSize / 2];
-}
-
 export interface MarkerLike {
   readonly entityId: string;
   readonly position: readonly [number, number];

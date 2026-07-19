@@ -22,11 +22,11 @@ sessão temporária sem actions, journal ou runtime. Depois de preparar a proje�
 o manager reseta e reidrata o runtime sob exclusão; só publica a nova referência
 após sucesso. Em falha, reseta e reidrata A antes de propagar o erro.
 
-Create e open aceitam `expectedProjectSessionId` como compare-and-swap. A
-identidade é validada somente no commit, depois da preparação privada; um
-candidato preparado sobre A não pode sobrescrever B se outro cliente já trocou
-a sessão. Close e dispatch usam a mesma proteção quando o chamador informa a
-identidade esperada.
+Create, open e close aceitam `expectedProjectSessionId` e, após a extensão da
+ADR-021, `expectedCommandSequence` como compare-and-swap. Identidade e revisão
+são validadas somente no commit, depois da preparação privada; um candidato
+preparado sobre A não pode sobrescrever B nem descartar um comando concorrente.
+Dispatch usa a proteção de identidade da sessão de origem.
 
 Todos os transports recebem a mesma `EditorSurface`, que consulta o manager a
 cada operação. Eventos são enriquecidos com `projectSessionId`, `projectId` e
@@ -83,9 +83,10 @@ observáveis enquanto o runtime está parcialmente reconstruído.
 - Reset/reidratação são side-effects externos e não oferecem rollback nativo. O
   manager compensa reidratando A; se a compensação também falhar, conserva a
   referência de A, marca `failed` e bloqueia mutações em vez de alegar sucesso.
-- `expectedProjectSessionId` é opcional no fio por compatibilidade. O
-  `EditorClient` sempre o envia ao substituir uma sessão observada; clientes
-  externos que o omitem aceitam explicitamente semântica last-writer-wins.
+- Os campos esperados são opcionais no fio por compatibilidade. O
+  `EditorClient` envia identidade e sequência ao substituir/fechar uma sessão
+  observada; clientes externos que os omitem aceitam explicitamente semântica
+  last-writer-wins.
 - Aliases `blueprint/load` e `project/new` permanecem durante a migração, mas
   delegam nas operações transacionais e não mantêm um segundo caminho de load.
 

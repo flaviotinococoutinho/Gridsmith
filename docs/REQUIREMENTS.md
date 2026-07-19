@@ -35,7 +35,7 @@ Legenda: ✅ completo · 🔶 parcial · ❌ ausente · — não se aplica.
 | Pipeline Aseprite/MGCB | ✅ | ✅ MCP | ✅ compilação | ❌ | ❌ | **Parcial** |
 | Câmera cinemática | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
 | Iluminação deferred | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
-| Save/load + criação de projeto | ✅ (Blueprint v2 com `projectId`; sessão temporária, replay e troca atômica testados) | ✅ (`project/create`, `project/openDocument`, `project/close`, `project/status` em JSON-RPC/GraphQL/gRPC/MCP) | ✅ reset antes de reidratar; `runtimeState` explícito | 🔶 (diálogos nativos + escrita `.p7m.json` no `main`; template "Plataforma 2D" ainda não conectado ao botão "Novo") | 🔶 (troca/rollback multi-cliente automatizados; falta jornada visual por usuário) | **Em fechamento** (P0.2) |
+| Save/load + criação de projeto | ✅ (Blueprint v3 com `projectId`, metadata/unidades; sessão temporária, replay e troca atômica testados) | ✅ (sessão nas quatro bordas + API tipada de lifecycle no preload) | ✅ reset antes de reidratar; `runtimeState` explícito | ✅ (wizard real, dialogs, recovery, exemplo e Recentes; escrita durável e recuperável) | 🔶 (fluxos de lifecycle automatizados com adapters; falta aceite do app empacotado) | **Em fechamento** (P0.2 técnico fechado; aceite em P0.9) |
 | Supervisão de processos | ✅ (máquina de estados testada) | — | — | 🔶 (wire real + chips de estado + restart; falta caminho empacotado) | ❌ | **Em fechamento** (P0.1↔P0.9) |
 | Preview embutido | 🔶 fundação | ❌ | 🔶 fundação | ❌ | ❌ | **Requisito P0.5** |
 | Undo/redo | ✅ IntGrid apenas | ❌ | — | ❌ | ❌ | **Incompleto** (P0.7) |
@@ -87,7 +87,8 @@ graph LR
 | RNF-10 | **Limites explícitos** | capacidades fixas com erro claro (nunca crescimento silencioso) | ✅ | testes de capacidade cheia (skeleton/light/tilemap) |
 | RNF-11 | Latência do plano de controle | decisão baseada em p50/p95/p99 reproduzíveis | ✅ | harness e baseline oficial versionados; critério de default na ADR-019 |
 | RNF-12 | Escala de mapa | > 64k células por streaming/chunks | ⬜ | Fase 5 (shared memory para tiles) |
-| RNF-13 | **Integridade da sessão de projeto** | create/open/close aceitam `expectedProjectSessionId` para compare-and-swap; erro preserva sessão, dirty state, journal e runtime anteriores | ✅ | testes de replay falhando no 5º comando, rollback de runtime, dois clientes e paridade das bordas |
+| RNF-13 | **Integridade da sessão de projeto** | create/open/close aceitam identidade + `expectedCommandSequence` para compare-and-swap; erro preserva sessão, dirty state, journal e runtime anteriores | ✅ | replay falhando no 5º comando, rollback, revisão concorrente em Close/Replace, dois clientes e paridade das bordas |
+| RNF-14 | **Durabilidade do arquivo de projeto** | Save nunca trunca a versão válida; Close depende de Save confirmado; recovery nunca é descartado por falha | ✅ | `ProjectFileService` com adapters de falha + gate `npm run test:project-lifecycle-product` (ADR-021) |
 
 A coluna **Verificação** acima é sustentada por fitness functions — divididas em
 estruturais (grafos de import/reflexão de assembly) e semânticas (Zero-GC,
@@ -131,6 +132,7 @@ mindmap
 | RT-05 | Fronteiras de camada impostas por testes arquiteturais (23 regras, incluindo R13 para sessão única nas bordas) | ✅ |
 | RT-06 | CI: 4 gates (middleware, engine, frontend, e2e) | ✅ |
 | RT-07 | Electron com contextIsolation; binário dispensável no CI (`ELECTRON_SKIP_BINARY_DOWNLOAD`) | ✅ |
+| RT-08 | Persistência desktop por controller testável + filesystem/dialogs injetáveis; publicação por temporário, flush e rename (ADR-021) | ✅ |
 
 ## 4. Riscos técnicos ativos
 

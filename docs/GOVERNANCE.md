@@ -198,7 +198,8 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 | Tipo | Exigências adicionais |
 |---|---|
 | **Método JSON-RPC novo** | Schema em `contracts/schemas/` + handler + teste RPC + linha na tabela do `contracts/README.md` |
-| **Operação de sessão de projeto** | Paridade JSON-RPC/GraphQL/gRPC/MCP; `expectedProjectSessionId` em create/open/close para compare-and-swap; status com `runtimeState: synchronized\|deferred\|failed`; teste de rollback sem evento parcial |
+| **Operação de sessão de projeto** | Paridade JSON-RPC/GraphQL/gRPC/MCP; identidade + `expectedCommandSequence` em create/open/close para compare-and-swap; status com `runtimeState: synchronized\|deferred\|failed`; testes de rollback e revisão concorrente sem evento perdido |
+| **Operação de arquivo de projeto** | Controller único com dialogs/filesystem injetáveis; Save por temporário + flush + rename; cancelamento/falha bloqueiam Close; recovery preservado até Save confirmado; gate `test:project-lifecycle-product` |
 | **Comando canônico novo** | Validação no `BlueprintStore` + `COMMAND_KINDS` + projeção no(s) adapter(s) (ou skip com razão) + reidratação + serialização (`BlueprintSerializer`) + broadcast — R8 pega o esquecimento da borda |
 | **Subsistema de engine novo** | Manifesto (`engine/describe`) com limites reais + editor hints; perfil de runtime atualizado se governa recurso de UI |
 | **Perfil de runtime** | Nova VERSÃO (imutabilidade) + regras com `reason` legível |
@@ -212,7 +213,8 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 | Testes: três suítes (engine/middleware/frontend), contagem calculada e validada pelo CI | ✅ verdes |
 | Testes arquiteturais (23 regras) | ✅ ativos (R10-R13/F5 cobrem os transports e a sessão do app) |
 | E2e fases 1–4 | ✅ verdes |
-| Persistência de projeto (documento v2 com `projectId`; open transacional e replay privado) | ✅ **fechado nesta revisão** (`ProjectSessionManager`, `project/create`, `project/openDocument`, `project/close`, `project/status`) |
+| Persistência de projeto (documento v3 com `projectId`, metadata/unidades; open transacional e replay privado) | ✅ (`ProjectSessionManager`, `project/create`, `project/openDocument`, `project/close`, `project/status`) |
+| Lifecycle de arquivo (New/Open/Save/Save As/Close/Recovery/Recentes) | ✅ controller/adapters testáveis, escrita durável e gate explícito no CI (ADR-021) |
 | Contratos ↔ implementação | ✅ auditados (R8/R9 + tabela contracts) |
 | Lacunas conhecidas e aceitas | registradas em [`OPPORTUNITIES.md`](OPPORTUNITIES.md) com impacto/esforço |
 
@@ -222,7 +224,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 |---|---|---|
 | G1 | `middleware` | build + suíte middleware (inclui R1–R13) |
 | G2 | `engine` | build + suíte engine (inclui E1–E5, Zero-GC) |
-| G3 | `frontend` | build + suíte frontend (inclui F1–F5) |
+| G3 | `frontend` | build + suíte frontend (inclui F1–F5) + gate explícito do lifecycle de projeto |
 | G4 | `e2e` | verify-phase1..4 + verify-transports com processos reais |
 
 Os três gates de camada e o gate e2e devem convergir verdes para liberar a

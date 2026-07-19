@@ -95,10 +95,14 @@ function serializeProjectStatus(status: ProjectStatusLike): Record<string, unkno
 function serializeProjectOperation(result: {
   status: ProjectStatusLike;
   summary?: { applied: number; projected: number; deferred: number; skipped: number };
+  templateId?: string;
+  name?: string;
 }): Record<string, unknown> {
   return {
     status: serializeProjectStatus(result.status),
     ...(result.summary ? { summary: result.summary } : {}),
+    template_id: result.templateId ?? "",
+    name: result.name ?? "",
   };
 }
 
@@ -295,6 +299,7 @@ export class GrpcGateway {
       project_id?: string;
       template_id?: string;
       expected_project_session_id?: string;
+      expected_command_sequence?: string;
     },
     unknown
   > = (call, callback) => {
@@ -305,6 +310,7 @@ export class GrpcGateway {
           call.request.project_id || undefined,
           call.request.template_id || undefined,
           call.request.expected_project_session_id || undefined,
+          call.request.expected_command_sequence || undefined,
         );
         callback(null, serializeProjectOperation(result));
       } catch (err) {
@@ -314,7 +320,11 @@ export class GrpcGateway {
   };
 
   private projectOpenDocument: grpc.handleUnaryCall<
-    { document_json?: string; expected_project_session_id?: string },
+    {
+      document_json?: string;
+      expected_project_session_id?: string;
+      expected_command_sequence?: string;
+    },
     unknown
   > = (call, callback) => {
     if (!this.authenticated(call)) return callback(authenticationError());
@@ -330,6 +340,7 @@ export class GrpcGateway {
     void this.options.surface.projectOpenDocument(
       document,
       call.request.expected_project_session_id || undefined,
+      call.request.expected_command_sequence || undefined,
     ).then(
       (result) => callback(null, serializeProjectOperation(result)),
       (error: unknown) => callback(toGrpcError(error)),
@@ -337,12 +348,13 @@ export class GrpcGateway {
   };
 
   private projectClose: grpc.handleUnaryCall<
-    { expected_project_session_id?: string },
+    { expected_project_session_id?: string; expected_command_sequence?: string },
     unknown
   > = (call, callback) => {
     if (!this.authenticated(call)) return callback(authenticationError());
     void this.options.surface.projectClose(
       call.request.expected_project_session_id || undefined,
+      call.request.expected_command_sequence || undefined,
     ).then(
       (status) => callback(null, serializeProjectStatus(status)),
       (error: unknown) => callback(toGrpcError(error)),

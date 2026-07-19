@@ -58,8 +58,9 @@ stateDiagram-v2
   conflito em vez de aplicar o comando na sessão seguinte.
 - **Operações de sessão:** `ProjectCreate`, `ProjectOpenDocument`,
   `ProjectClose` e `ProjectStatus` mantêm paridade com as demais bordas;
-  create/open validam `expected_project_session_id` no commit, e status
-  explicita runtime `synchronized`, `deferred` ou `failed` (ADR-020).
+  create/open/close validam `expected_project_session_id` e
+  `expected_command_sequence` no commit, e status explicita runtime
+  `synchronized`, `deferred` ou `failed` (ADR-020).
 - **Falha de autenticação não é indisponibilidade:** `UNAUTHENTICATED`/HTTP
   401 interrompe a operação e nunca aciona fallback.
 - **Endpoints:** UDS `unix:<runtime>/<pipe>-grpc.sock` (POSIX); TCP

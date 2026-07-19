@@ -12,8 +12,10 @@ import { EventLog } from "../core/eventLog.js";
 import { WorkbenchModel, type BottomTab } from "../core/workbenchModel.js";
 import { panelLabel, projectStateLabel, serviceStateLabel } from "../core/vocabulary.js";
 import { ExperienceGate, type ResolvedExperienceLike } from "../core/experienceGate.js";
+import type { ProjectActionResult } from "../core/projectApi.js";
 import type { P7mEditorApi, ProjectStatusPayload, ServiceStatusPayload } from "../main/preload.js";
 import { mountLevelEditor } from "./levelEditorView.js";
+import { showNewProjectWizard } from "./newProjectWizard.js";
 
 /** Ações do editor ativo (menu Editar e atalhos globais roteiam para cá). */
 const activeEditor: { undo?: () => void; redo?: () => void } = {};
@@ -33,27 +35,87 @@ const log = new EventLog(500);
 let experienceGate: ExperienceGate | undefined;
 /** Cópia substituível das projeções; resync nunca é tratado como evento incremental. */
 let projectionSnapshot: unknown;
+let currentProjectStatus: ProjectStatusPayload | undefined;
+let preferredLevelId: string | undefined;
+let projectOperationBusy = false;
 
 // ---------------------------------------------------------------- toolbar
 
 function wireProjectToolbar(): void {
-  const run = (command: Parameters<P7mEditorApi["projectCommand"]>[0]) => (): void => {
-    void window.p7m.projectCommand(command).then(applyProjectStatus);
-  };
-  $("btn-new").addEventListener("click", run("new"));
-  $("btn-open").addEventListener("click", run("open"));
-  $("btn-save").addEventListener("click", run("save"));
-  $("btn-close").addEventListener("click", run("close"));
+  $("btn-new").addEventListener("click", () => void startNewProject());
+  $("btn-open").addEventListener("click", () => void runProjectAction(() => window.p7m.openProject()));
+  $("btn-save").addEventListener("click", () => void runProjectAction(() => window.p7m.saveProject()));
+  $("btn-close").addEventListener("click", () => void runProjectAction(() => window.p7m.closeProject()));
 }
 
 function applyProjectStatus(status: ProjectStatusPayload): void {
+  const previousSession = currentProjectStatus?.project?.projectSessionId;
+  currentProjectStatus = status;
+  if (!status.project) preferredLevelId = undefined;
   $("project-title").textContent = status.project
     ? `${status.isDirty ? "● " : ""}${status.project.name}`
     : "Nenhum projeto aberto";
   $("status-project").textContent = projectStateLabel(status.state);
-  const hasProject = status.state !== "no-project";
-  ($("btn-save") as HTMLButtonElement).disabled = !hasProject;
-  ($("btn-close") as HTMLButtonElement).disabled = !hasProject;
+  const stableProject = status.state === "open-clean" || status.state === "open-dirty";
+  ($("btn-save") as HTMLButtonElement).disabled = !stableProject || projectOperationBusy;
+  ($("btn-close") as HTMLButtonElement).disabled = !stableProject || projectOperationBusy;
+  ($("btn-new") as HTMLButtonElement).disabled = projectOperationBusy;
+  ($("btn-open") as HTMLButtonElement).disabled = projectOperationBusy;
+  if (previousSession !== status.project?.projectSessionId || !status.project) renderView();
+}
+
+async function startNewProject(): Promise<void> {
+  if (projectOperationBusy) return;
+  projectOperationBusy = true;
+  if (currentProjectStatus) applyProjectStatus(currentProjectStatus);
+  clearProjectError();
+  try {
+    const templates = await window.p7m.listProjectTemplates();
+    const request = await showNewProjectWizard(templates);
+    if (!request) return;
+    applyProjectActionResult(await window.p7m.createProjectFromTemplate(request));
+  } catch (error) {
+    showProjectError(error);
+  } finally {
+    projectOperationBusy = false;
+    if (currentProjectStatus) applyProjectStatus(currentProjectStatus);
+  }
+}
+
+async function runProjectAction(
+  action: () => Promise<ProjectActionResult>,
+): Promise<void> {
+  if (projectOperationBusy) return;
+  projectOperationBusy = true;
+  if (currentProjectStatus) applyProjectStatus(currentProjectStatus);
+  clearProjectError();
+  try {
+    applyProjectActionResult(await action());
+  } catch (error) {
+    showProjectError(error);
+  } finally {
+    projectOperationBusy = false;
+    if (currentProjectStatus) applyProjectStatus(currentProjectStatus);
+  }
+}
+
+function applyProjectActionResult(result: ProjectActionResult): void {
+  if (result.openedLevelId) preferredLevelId = result.openedLevelId;
+  else if (!result.status.project) preferredLevelId = undefined;
+  applyProjectStatus(result.status);
+  if (result.openedLevelId) model.activatePanel("level-editor");
+}
+
+function showProjectError(error: unknown): void {
+  const feedback = $("project-feedback");
+  feedback.textContent = error instanceof Error ? error.message : String(error);
+  feedback.hidden = false;
+}
+
+function clearProjectError(): void {
+  const feedback = $("project-feedback");
+  feedback.textContent = "";
+  feedback.hidden = true;
 }
 
 // ------------------------------------------------------------------ rail
@@ -83,6 +145,10 @@ function renderView(): void {
   cleanupActiveView?.();
   cleanupActiveView = undefined;
   host.replaceChildren();
+  if (!currentProjectStatus?.project) {
+    host.append(projectStartView());
+    return;
+  }
   const panel = model.currentPanel;
   if (!panel) {
     host.append(placeholder("Bem-vindo ao P7M", "Crie ou abra um projeto para começar."));
@@ -96,6 +162,7 @@ function renderView(): void {
         cleanupActiveView = cleanup;
       },
       gate: experienceGate,
+      ...(preferredLevelId ? { preferredLevelId } : {}),
     });
     return;
   }
@@ -105,6 +172,52 @@ function renderView(): void {
       "Este painel chega nas próximas iterações da milestone Alpha 0.1.",
     ),
   );
+}
+
+function projectStartView(): HTMLElement {
+  const view = document.createElement("div");
+  view.className = "project-start";
+  const title = document.createElement("h1");
+  title.textContent = "Comece por um projeto";
+  const description = document.createElement("p");
+  description.textContent = "Crie um Plataforma 2D, abra um arquivo existente ou explore uma cópia do exemplo.";
+  const actions = document.createElement("div");
+  actions.className = "project-start-actions";
+  actions.append(
+    actionButton("Novo projeto", () => void startNewProject(), true),
+    actionButton("Abrir projeto…", () => void runProjectAction(() => window.p7m.openProject())),
+    actionButton("Abrir exemplo", () => void runProjectAction(() =>
+      window.p7m.openProject({ source: "example" }))),
+  );
+  view.append(title, description, actions);
+
+  const recents = currentProjectStatus?.recents ?? [];
+  if (recents.length > 0) {
+    const heading = document.createElement("h2");
+    heading.textContent = "Recentes";
+    const list = document.createElement("div");
+    list.className = "recent-list";
+    for (const recent of recents) {
+      const button = actionButton(recent.name, () => void runProjectAction(() =>
+        window.p7m.openRecent(recent.filePath)));
+      button.title = recent.filePath;
+      const timestamp = document.createElement("small");
+      timestamp.textContent = new Date(recent.lastOpenedUnixMs).toLocaleString();
+      button.append(timestamp);
+      list.append(button);
+    }
+    view.append(heading, list);
+  }
+  return view;
+}
+
+function actionButton(label: string, onClick: () => void, primary = false): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+  if (primary) button.className = "primary";
+  button.addEventListener("click", onClick);
+  return button;
 }
 
 function placeholder(title: string, message: string): HTMLElement {
@@ -235,6 +348,10 @@ async function boot(): Promise<void> {
   window.p7m.onMenuAction((action) => {
     if (action === "undo") activeEditor.undo?.();
     else if (action === "redo") activeEditor.redo?.();
+    else if (action === "new") void startNewProject();
+    else if (action === "open") void runProjectAction(() => window.p7m.openProject());
+    else if (action === "open-example") void runProjectAction(() =>
+      window.p7m.openProject({ source: "example" }));
   });
   window.p7m.onServiceStatus(renderServices);
   window.p7m.onBlueprintEvent((event) => {

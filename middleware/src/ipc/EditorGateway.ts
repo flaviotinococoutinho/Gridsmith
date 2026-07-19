@@ -170,10 +170,15 @@ export class EditorGateway extends EventEmitter {
 
     peer.registerMethod("blueprint/load", async (params) => {
       this.requireHandshake(session);
-      const p = params as { document?: unknown; expectedProjectSessionId?: unknown };
+      const p = params as {
+        document?: unknown;
+        expectedProjectSessionId?: unknown;
+        expectedCommandSequence?: unknown;
+      };
       return (await this.surface.projectOpenDocument(
         p?.document,
         p?.expectedProjectSessionId,
+        p?.expectedCommandSequence,
       )).summary;
     });
 
@@ -182,17 +187,25 @@ export class EditorGateway extends EventEmitter {
       return { templates: this.surface.listTemplates() };
     });
 
+    peer.registerMethod("project/templateDocument", (params) => {
+      this.requireHandshake(session);
+      const p = (params ?? {}) as { templateId?: unknown; options?: unknown };
+      return this.surface.materializeProjectTemplate(p.templateId, p.options);
+    });
+
     peer.registerMethod("project/new", async (params) => {
       this.requireHandshake(session);
       const p = (params ?? {}) as {
         templateId?: unknown;
         expectedProjectSessionId?: unknown;
+        expectedCommandSequence?: unknown;
       };
       const templateId = p.templateId as string;
       const result = await this.surface.projectCreate(
         undefined,
         templateId,
         p.expectedProjectSessionId,
+        p.expectedCommandSequence,
       );
       const template = this.surface.listTemplates().find((item) => item.id === templateId);
       return {
@@ -208,11 +221,13 @@ export class EditorGateway extends EventEmitter {
         projectId?: unknown;
         templateId?: unknown;
         expectedProjectSessionId?: unknown;
+        expectedCommandSequence?: unknown;
       };
       return this.surface.projectCreate(
         p.projectId as string | undefined,
         p.templateId as string | undefined,
         p.expectedProjectSessionId,
+        p.expectedCommandSequence,
       );
     });
 
@@ -221,14 +236,25 @@ export class EditorGateway extends EventEmitter {
       const p = (params ?? {}) as {
         document?: unknown;
         expectedProjectSessionId?: unknown;
+        expectedCommandSequence?: unknown;
       };
-      return this.surface.projectOpenDocument(p.document, p.expectedProjectSessionId);
+      return this.surface.projectOpenDocument(
+        p.document,
+        p.expectedProjectSessionId,
+        p.expectedCommandSequence,
+      );
     });
 
     peer.registerMethod("project/close", async (params) => {
       this.requireHandshake(session);
-      const p = (params ?? {}) as { expectedProjectSessionId?: unknown };
-      return this.surface.projectClose(p.expectedProjectSessionId as string | undefined);
+      const p = (params ?? {}) as {
+        expectedProjectSessionId?: unknown;
+        expectedCommandSequence?: unknown;
+      };
+      return this.surface.projectClose(
+        p.expectedProjectSessionId as string | undefined,
+        p.expectedCommandSequence,
+      );
     });
 
     peer.registerMethod("project/status", () => {

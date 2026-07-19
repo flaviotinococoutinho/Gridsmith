@@ -72,8 +72,13 @@ da engine, nunca assume suporte. Desenho completo em
 - **Sessão de projeto transacional:** `ProjectSessionManager` prepara parse, migração,
   validação, replay e projeção fora da sessão publicada; só então faz a troca atômica.
   `EditorSurface`, JSON-RPC, GraphQL, gRPC e MCP resolvem a mesma sessão ativa. O
-  documento Blueprint v2 persiste `projectId`, e create/open/close usam
-  `expectedProjectSessionId` como compare-and-swap para rejeitar clientes atrasados.
+  documento Blueprint v3 persiste `projectId`, metadata e unidades espaciais explícitas;
+  create/open/close usam `expectedProjectSessionId` + `expectedCommandSequence`
+  como compare-and-swap para rejeitar sessão ou revisão atrasadas.
+- **Lifecycle de arquivo durável:** New materializa um template real, Save publica por
+  temporário + flush + rename e Close só prossegue depois de Save confirmado. Recovery,
+  exemplo editável e Recentes passam pelo mesmo controller tipado e testável
+  ([ADR-021](docs/adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md)).
 
 ## Rumo atual: Alpha 0.1 — First Playable Workflow
 
@@ -263,7 +268,7 @@ processo, troca de projeto ou gap do journal exige snapshot e ressincronização
 | [`docs/ALPHA-0.1.md`](docs/ALPHA-0.1.md) | Milestone Alpha 0.1, jornada de aceite e backlog P0 (status por evidência) |
 | [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Matriz de versionamento e compatibilidade (protocolo, documentos, artefatos, perfis, shared memory) |
 | [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) | Governança arquitetural (23 regras executáveis), Definition of Done, quality gates e fontes de verdade |
-| [`docs/adr/`](docs/adr/) | Architecture Decision Records (ADR-016..020: transports do app e sessão de projeto transacional) |
+| [`docs/adr/`](docs/adr/) | Architecture Decision Records (ADR-016..021: transports, sessão transacional e lifecycle durável do projeto) |
 | [`docs/ARCHITECTURE-SPEC.md`](docs/ARCHITECTURE-SPEC.md) | **Especificação técnica normativa (constituição de engenharia):** princípios invioláveis, regras de dependência, paradigmas, padrões, contratos, RFCs/ISO, versionamento, erros, testes e plano de evolução — construída a partir do código com evidência classificada |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Camadas, protocolo de framing e ciclo de vida da conexão |
 | [`docs/CANONICAL-MODEL.md`](docs/CANONICAL-MODEL.md) | Modelo canônico (comandos/eventos/hooks/pipelines/artefatos), adapters e perfis de runtime |

@@ -8,7 +8,6 @@ import { test } from "node:test";
 import { IntGridDocument } from "../src/core/intGridDocument.js";
 import {
   applyBrushAt,
-  cellCenter,
   commitDrag,
   dragCells,
   hitMarker,
@@ -52,11 +51,6 @@ test("commitDrag: rect/line viram UMA operação de undo; outras ferramentas sã
   assert.equal(commitDrag(doc, "line", { x: 0, y: 5 }, { x: 5, y: 5 }, 2), true);
   assert.equal(doc.valueAt(5, 5), 2);
   assert.equal(commitDrag(doc, "pencil", { x: 0, y: 0 }, { x: 1, y: 1 }, 9), false);
-});
-
-test("cellCenter ancora no centro da célula em pixels do mundo", () => {
-  assert.deepEqual(cellCenter(0, 0, 16), [8, 8]);
-  assert.deepEqual(cellCenter(3, 2, 16), [56, 40]);
 });
 
 test("hitMarker: projeção injetada, raio respeitado, primeiro acerto vence", () => {

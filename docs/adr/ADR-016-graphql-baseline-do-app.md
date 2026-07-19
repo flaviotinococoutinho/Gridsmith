@@ -32,8 +32,9 @@ baseline sempre disponível e transporte de **fallback** do caminho quente.
   com limites e `resyncRequired`; a query `snapshot` reconstrói todas as
   projeções. Restart, cursor fora da janela ou troca de sessão nunca entregam
   uma cauda parcial. `eventsSince` permanece legado.
-- Create/open aceitam `expectedProjectSessionId`, validado no commit como
-  compare-and-swap. O status explicita runtime `synchronized`, `deferred` ou
+- Create/open/close aceitam `expectedProjectSessionId` +
+  `expectedCommandSequence`, validados no commit como compare-and-swap. O
+  status explicita runtime `synchronized`, `deferred` ou
   `failed`; este último é fail-closed, sem ativar o candidato.
 - Bearer efêmero obrigatório; 401 nunca é interpretado como indisponibilidade.
 - Erros de domínio carregam o código estável JSON-RPC em `extensions.code`.

@@ -367,7 +367,8 @@ graph TD
 - **`ProjectSessionManager`** — porta substituível da sessão publicada; cria store,
   orquestrador e histórico privados, prepara replay sem actions/journal/runtime e troca
   a referência ativa somente após reset + reidratação do candidato. Create/open/close
-  **DEVEM** validar `expectedProjectSessionId` como compare-and-swap quando fornecido.
+  **DEVEM** validar `expectedProjectSessionId` + `expectedCommandSequence` como
+  compare-and-swap quando fornecidos.
 - **`HookBus`** — extensão governada (`HookBus.ts`): **Filters** transformam em cadeia
   e **falham rápido** (um throw aborta a cadeia); **Actions** notificam e são
   **isoladas** (um throw é capturado, coletado em `errors`, não derruba os demais).
@@ -399,11 +400,11 @@ Cada um orquestra o domínio; nenhum o substitui.
 
 | Caso de uso | Entrada | Efeito / Evento | Offline (engine caída) | Sem capacidade | Evidência |
 |---|---|---|---|---|---|
-| **Criar projeto (vazio/template)** | `projectId?`, `templateId?`, `expectedProjectSessionId?` | `ProjectSessionManager` prepara e substitui a sessão por CAS; `project/create` em todas as bordas | sessão ativa com runtime `deferred` | idem | `ProjectSessionManager.ts`; `EditorSurface.ts` |
-| **Abrir projeto** | documento `.p7m.json`, `expectedProjectSessionId?` | parse → migração → validação → sessão temporária → replay → semântica → reset/rehydrate → commit por CAS | commit com runtime `deferred`; reconexão usa apenas a sessão ativa | idem | `project/openDocument`; `ProjectSessionManager.ts`; ADR-020 |
-| **Fechar projeto** | `expectedProjectSessionId?` | reset de runtime e remoção atômica da referência ativa | fecha a sessão; engine nova nasce limpa | N/A | `project/close`; `engine/reset_session` |
+| **Criar projeto (vazio/template)** | `projectId?`, `templateId?`, sessão/revisão esperadas | `ProjectSessionManager` prepara e substitui a sessão por CAS de identidade + `commandSequence`; `project/create` em todas as bordas | sessão ativa com runtime `deferred` | idem | `ProjectSessionManager.ts`; `EditorSurface.ts` |
+| **Abrir projeto** | documento `.p7m.json`, sessão/revisão esperadas | parse → migração → validação → sessão temporária → replay → semântica → reset/rehydrate → commit por CAS | commit com runtime `deferred`; reconexão usa apenas a sessão ativa | idem | `project/openDocument`; `ProjectSessionManager.ts`; ADR-020 |
+| **Fechar projeto** | sessão/revisão esperadas | CAS recusa comando concorrente; depois reset de runtime e remoção atômica da referência ativa | fecha a sessão; engine nova nasce limpa | N/A | `project/close`; `engine/reset_session` |
 | **Consultar projeto** | — | `project/status` retorna ids, sequência e `runtimeState: synchronized\|deferred\|failed` | explicita degradação sem alterar sessão | N/A | `EditorSurface.projectStatus`; quatro bordas |
-| **Salvar projeto** | — | `exportBlueprint` → snapshot declarativo | funciona (verdade é o store) | N/A | `EditorClient.saveDocument` |
+| **Salvar projeto** | sessão ativa | `ProjectController` captura documento + revisão no mesmo snapshot e `ProjectFileService` publica bytes duráveis sem truncar o válido | funciona (verdade é o store) | N/A | `ProjectController.saveProject`; `EditorClient.captureProjectSnapshot`; `ProjectFileService` |
 | **Definir/editar nível** | IntGrid + regras | `levelDefined`/`levelUpdated` → auto-tiling resolvido no adapter → `tilemap/define` | `deferred` | painel `level-editor` gated | `MonoGameAdapter.ts:100-114` |
 | **Posicionar entidade** | entityId, def, posição | `entityPlaced` → `entity/spawn` se houver `archetypeId` | `deferred` | `skipped` com razão | `MonoGameAdapter.ts:127-145` |
 | **Mover entidade (live)** | entityId, posição | `entityMoved` → `entity/move` (upsert se não spawnada) | `deferred` | `skipped` | `:147-170` |
@@ -421,9 +422,10 @@ runtime representa a sessão ativa; `deferred`, que não havia runtime conectado
 reidratação ficou pendente; `failed`, que uma tentativa conectada de reset/reidratação
 falhou. Esse último estado **NÃO** autoriza publicar uma sessão candidata: a sessão
 anterior continua ativa (ou é restaurada) e o erro permanece explícito. O campo
-`expectedProjectSessionId` é opcional no primeiro create, mas, quando enviado em
-create/open/close, **DEVE** coincidir com a sessão ativa ou resultar em
-`ProjectSessionConflict` sem efeitos.
+`expectedProjectSessionId` e `expectedCommandSequence` formam a revisão
+observada. No primeiro create, sequência `0` sem ID expressa “nenhuma sessão”.
+Em create/open/close a dupla **DEVE** coincidir com a sessão ativa ou resultar
+em `ProjectSessionConflict` sem efeitos.
 
 **Regras normativas:** um caso de uso **NÃO DEVE** conter lógica de infraestrutura;
 o frontend **NÃO DEVE** acessar a engine diretamente; ferramentas MCP **NÃO DEVEM**
@@ -648,7 +650,8 @@ sondas Health (`frontend/src/core/transportRouter.ts`). Ambas as bordas delegam
 na mesma `EditorSurface` e sessão ativa (R10–R13/F5). As operações
 `ProjectCreate`, `ProjectOpenDocument`, `ProjectClose` e `ProjectStatus` têm paridade
 com `project/create`, `project/openDocument`, `project/close` e `project/status` das
-demais bordas; create/open/close aceitam `expectedProjectSessionId` para CAS. O default
+demais bordas; create/open/close aceitam `expectedProjectSessionId` +
+`expectedCommandSequence` para CAS. O default
 gRPC está condicionado ao
 critério medido da ADR-019: no baseline oficial, dispatch melhorou o p95 em
 35,2%/39,3% e event-flow em 30,8%/16,5% contra GraphQL nos payloads
@@ -700,7 +703,7 @@ Componentes versionados hoje (CONFIRMADO):
 | Componente | Versão | Regra de compatibilidade | Evidência |
 |---|---|---|---|
 | **Protocolo de controle** | `PROTOCOL_VERSION="1.0"` (string) | **MAJOR deve coincidir** no handshake | `jsonrpc.ts:9`; `EnginePipeServer` |
-| **Documento Blueprint** | `schemaVersion` inteiro (=2) + `projectId` persistente | migração explícita (§20) | `BlueprintSerializer.ts` |
+| **Documento Blueprint** | `schemaVersion` inteiro (=3) + `projectId` e metadata persistentes | migração explícita (§20) | `BlueprintSerializer.ts` |
 | **Artefato** | `schemaVersion` inteiro + `revision` | leitura histórica; dedup por `(hash, schemaVersion)` | `ArtifactStore` |
 | **Perfil de runtime** | `família + versão` | match exato, senão maior `≤` (fallback governado); imutável | `RuntimeProfile.ts:82-103` |
 | **Layout de shared memory** | `layoutVersion` (=1) | compatibilidade **binária estrita** | `shared-memory-layout.md` |
@@ -711,7 +714,7 @@ Componentes versionados hoje (CONFIRMADO):
 | Componente | Chave | Compatibilidade |
 |---|---|---|
 | Protocolo | major.minor | MAJOR idêntico |
-| Blueprint document | schemaVersion + projectId | migração explícita antes do replay; v2 persiste identidade do projeto |
+| Blueprint document | schemaVersion + projectId + metadata | migração explícita antes do replay; v2 persiste identidade e v3 explicita resolução/unidades espaciais |
 | Artifact | schemaVersion + revision | leitura de revisões antigas preservada |
 | Runtime profile | família + versão | exato ou fallback descendente governado |
 | Shared memory | layoutVersion | binária estrita (divergência = `InvalidBinaryLayout`) |
@@ -721,8 +724,10 @@ política de bump de cada eixo (hoje dispersa entre docs).
 
 ## 20. Persistência, replay e migração
 
-**Modelo (CONFIRMADO):** o Blueprint é salvo como documento declarativo v2
-(`schemaVersion`, `projectId` e domínios). O load reproduz comandos em ordem de
+**Modelo (CONFIRMADO):** o Blueprint é salvo como documento declarativo v3
+(`schemaVersion`, `projectId`, `metadata` e domínios). `metadata.spatial` fixa
+posições em `world-pixel`, origem `top-left`, eixo Y `down` e âncora `center`.
+O load reproduz comandos em ordem de
 dependência numa `ProjectSession` temporária. Filters e validações do store são
 preservados; actions, journal e runtime são suprimidos até o commit (ADR-020).
 
@@ -730,20 +735,22 @@ preservados; actions, journal e runtime são suprimidos até o commit (ADR-020).
 `migrateBlueprintDocument(raw)` (`BlueprintSerializer.ts`) detecta a versão (documentos
 sem `schemaVersion` = versão 0), **rejeita** versões acima da suportada com erro claro,
 e **migra encadeado** `v(n)→v(n+1)` por um `MIGRATIONS: Map<number, BlueprintMigration>`
-(hoje: `0→1→2`; v2 introduz `projectId` persistente). `documentToCommands` chama a migração **transparentemente**, de modo
+(hoje: `0→1→2→3`; v2 introduz `projectId` persistente e v3 metadata/unidades
+explícitas; somente o factory v2 conhecido do template tem suas coordenadas de
+célula convertidas deterministicamente). `documentToCommands` chama a migração **transparentemente**, de modo
 que projetos salvos por builds anteriores continuam abrindo (P0.2 "migração de
 schemaVersion"). Testado em `middleware/test/blueprint-migration.test.ts` (upgrade v0/
 legacy, v0 explícito, rejeição de versão futura, rejeição de não-objeto).
 
 ```mermaid
 graph TD
-  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v2<br/>schemaVersion + projectId + dominios")]
+  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v3<br/>schemaVersion + projectId + metadata + dominios")]
   DOC -.-> RAW["raw carregado"]
   subgraph LOAD["LOAD"]
     RAW --> MIG["migrateBlueprintDocument(raw)<br/>(sem schemaVersion = versao 0)"]
     MIG --> V{"versao > suportada?"}
     V -->|"sim"| REJ(["REJEITA (erro claro)"])
-    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2)"]
+    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2->3)"]
     CHAIN --> TMP["sessao temporaria + replay prepare"]
     TMP --> SEM["validacao semantica + projecao preparada"]
     SEM --> COMMIT["reset e rehydrate<br/>commit ou rollback para A"]
@@ -871,7 +878,8 @@ processos locais sem justificar pelo modo de falha real.
   compara, retry se ímpar/divergente). O leitor copia para buffer pré-alocado
   (Zero-GC).
 - **Middleware Node** — event loop single-thread; `ProjectSessionManager` serializa
-  mutações de sessão em fila e aplica compare-and-swap por `expectedProjectSessionId`.
+  mutações de sessão em fila e aplica compare-and-swap por identidade e
+  `expectedCommandSequence`.
   Create/open preparam estado privado; nenhum replay parcial alcança clientes.
 - **Múltiplos clientes do gateway** — o broadcast é multi-cliente e carrega
   `projectSessionId`, `projectId` e `commandSequence`; `EventJournal` mantém partições
@@ -1131,6 +1139,7 @@ Já registrados em [`docs/adr/`](adr/README.md) (status Accepted):
 | [ADR-018](adr/ADR-018-endpoints-e-verbosidade-dos-transports.md) | Endpoints locais dos transports e controle de verbosidade |
 | [ADR-019](adr/ADR-019-freeze-medido-dos-transports.md) | Freeze medido do default e manutenção dos três transports existentes |
 | [ADR-020](adr/ADR-020-sessao-de-projeto-transacional.md) | Sessão de projeto explícita, replay privado e substituição atômica com rollback de runtime |
+| [ADR-021](adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md) | Lifecycle de arquivo durável, recovery explícito, templates e unidades canônicas |
 
 Cada ADR **DEVE** conter contexto, decisão, alternativas, consequências, riscos,
 critério de revisão, status, data e links para código e teste.
@@ -1360,7 +1369,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 2. Caminho de mutação único (P-1) — auditável e extensível por hooks.
 3. Adapter como única tradução (P-3) — troca de runtime sem tocar o núcleo.
 4. Contratos como fonte de verdade + fitness functions (P-4, §33).
-5. Sessão transacional por replay (P-10/ADR-020) — documento v2 é preparado em store
+5. Sessão transacional por replay (P-10/ADR-020) — documento v3 é preparado em store
    privado e publicado por troca atômica, sem exigir Blueprint vazio.
 6. Governança de experiência por perfil+manifesto com fail-safe (§3.6).
 7. Zero-GC verificado por teste (P-5) — alocação nos hot loops não regride

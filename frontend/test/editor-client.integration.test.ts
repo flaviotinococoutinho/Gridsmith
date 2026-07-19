@@ -199,12 +199,38 @@ test("EditorClient v2: template Plataforma 2D pela superfície GraphQL", async (
     const { templates } = await client.listProjectTemplates();
     assert.ok(templates.some((t) => t.id === "platformer-2d"));
 
+    const materialized = await client.materializeProjectTemplate("platformer-2d", {
+      projectId: "editor-client-materialized",
+      name: "Materializado pelo EditorClient",
+      referenceResolution: { width: 1280, height: 720 },
+      tileSize: 16,
+    }) as { projectId: string; metadata: { name: string } };
+    assert.equal(materialized.projectId, "editor-client-materialized");
+    assert.equal(materialized.metadata.name, "Materializado pelo EditorClient");
+
     const summary = await client.newProjectFromTemplate("platformer-2d");
     assert.equal(summary.templateId, "platformer-2d");
+    assert.equal(summary.name, "Plataforma 2D");
     assert.equal(summary.applied, 6);
 
     const levels = await client.query<{ levels: Array<{ levelId: string }> }>("levels");
     assert.equal(levels.levels[0]?.levelId, "level-1");
+
+    // O dispatch confirma a revisão antes de o stream necessariamente
+    // entregá-la. A expectativa CAS default do cliente precisa usar esse
+    // watermark para permitir um Open válido imediatamente em seguida.
+    await client.dispatch("entitydef/define", {
+      entityDefId: "cas-watermark-probe",
+      fields: [],
+    });
+    const replacement = await client.materializeProjectTemplate("platformer-2d", {
+      projectId: "editor-client-after-dispatch",
+      name: "Open depois do dispatch",
+      referenceResolution: { width: 960, height: 540 },
+      tileSize: 16,
+    });
+    const opened = await client.openProjectDocument(replacement);
+    assert.equal(opened.status.projectId, "editor-client-after-dispatch");
   } finally {
     client.close();
     await rig.close();

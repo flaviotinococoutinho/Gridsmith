@@ -116,6 +116,8 @@ export interface LevelSpec {
 
 /** Limite alinhado ao TilemapStore da engine (256×256). */
 export const MAX_LEVEL_CELLS = 256 * 256;
+/** Limite publicado pelo descriptor MonoGame para `level.tileSize`. */
+export const MAX_TILE_SIZE = 256;
 
 export type BlueprintCommand =
   | { readonly kind: "skeleton/define"; readonly skeleton: SkeletonBlueprint }
@@ -487,8 +489,11 @@ function validateLevel(level: LevelSpec): void {
   if (typeof level.levelId !== "string" || level.levelId.length === 0) {
     throw new JsonRpcError(RpcErrorCode.InvalidParams, `"levelId" must be a non-empty string`);
   }
-  if (!Number.isInteger(level.tileSize) || level.tileSize < 1) {
-    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"tileSize" must be a positive integer`);
+  if (!Number.isInteger(level.tileSize) || level.tileSize < 1 || level.tileSize > MAX_TILE_SIZE) {
+    throw new JsonRpcError(
+      RpcErrorCode.InvalidParams,
+      `"tileSize" must be an integer between 1 and ${MAX_TILE_SIZE}`,
+    );
   }
   if (!Number.isInteger(level.seed)) {
     throw new JsonRpcError(RpcErrorCode.InvalidParams, `"seed" must be an integer`);
@@ -551,7 +556,7 @@ function resolveEntityFields(entity: EntityInstance, def: EntityDefinition): Ent
   if (typeof entity.entityId !== "string" || entity.entityId.length === 0) {
     throw new JsonRpcError(RpcErrorCode.InvalidParams, `"entityId" must be a non-empty string`);
   }
-  if (!Array.isArray(entity.position) || entity.position.length !== 2) {
+  if (!isFiniteTuple(entity.position, 2)) {
     throw new JsonRpcError(RpcErrorCode.InvalidParams, `"position" must contain 2 numbers`);
   }
 
@@ -608,7 +613,7 @@ function validateFieldValue(field: EntityFieldDef, value: unknown, context: stri
       }
       break;
     case "point":
-      if (!Array.isArray(value) || value.length !== 2 || value.some((v) => typeof v !== "number")) {
+      if (!isFiniteTuple(value, 2)) {
         fail(`expected [x, y]`);
       }
       break;
@@ -644,8 +649,11 @@ function validateLight(light: LightSpec): void {
   if (!["directional", "point", "spot"].includes(light.type)) {
     throw new JsonRpcError(RpcErrorCode.InvalidParams, `"type" must be "directional", "point" or "spot"`);
   }
-  if (!Array.isArray(light.color) || light.color.length !== 3) {
+  if (!isFiniteTuple(light.color, 3)) {
     throw new JsonRpcError(RpcErrorCode.InvalidParams, `"color" must contain 3 numbers`);
+  }
+  if (light.position !== undefined && !isFiniteTuple(light.position, 2)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"position" must contain 2 finite numbers`);
   }
   if (!(light.intensity > 0)) {
     throw new JsonRpcError(RpcErrorCode.InvalidParams, `"intensity" must be > 0`);
@@ -663,6 +671,11 @@ function validateLight(light: LightSpec): void {
       );
     }
   }
+}
+
+function isFiniteTuple(value: unknown, length: number): value is readonly number[] {
+  return Array.isArray(value) && value.length === length &&
+    value.every((item) => typeof item === "number" && Number.isFinite(item));
 }
 
 function validateSkeleton(s: SkeletonBlueprint): void {

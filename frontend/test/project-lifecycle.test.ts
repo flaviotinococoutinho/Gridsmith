@@ -147,6 +147,22 @@ test("eventos de replay durante opening não sujam o documento", () => {
   assert.equal(lifecycle.currentState, "open-clean");
 });
 
+test("watermark deduplica journal atrasado e mantém dirty para evento posterior ao snapshot", () => {
+  const { lifecycle } = makeLifecycle();
+  lifecycle.beginOpen();
+  lifecycle.opened({ name: "Sequenciado" }, { commandSequence: "5" });
+
+  assert.equal(lifecycle.commandApplied("6"), false);
+  assert.equal(lifecycle.commandApplied("6"), false, "resposta + journal contam uma vez");
+  lifecycle.beginSave();
+  lifecycle.commandApplied("7"); // commit externo depois do snapshot de seq 6
+  lifecycle.saved("/p/seq.p7m.json", "6");
+
+  assert.equal(lifecycle.currentState, "open-dirty");
+  assert.equal(lifecycle.isDirty, true);
+  assert.equal(lifecycle.commandSequence, "7");
+});
+
 test("recentes: mais novo primeiro, sem duplicatas, máximo de 10", () => {
   const { lifecycle, tick } = makeLifecycle(1_000);
   for (let i = 0; i < 12; i++) {

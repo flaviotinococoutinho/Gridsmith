@@ -4,19 +4,18 @@
  */
 
 import { contextBridge, ipcRenderer } from "electron";
+import type {
+  CreateProjectFromTemplateRequest,
+  DiscardAutosaveRequest,
+  OpenProjectRequest,
+  ProjectActionResult,
+  ProjectMenuAction,
+  ProjectStatusPayload,
+  ProjectTemplateDescriptor,
+  RestoreAutosaveRequest,
+} from "../core/projectApi.js";
 
-export interface ProjectStatusPayload {
-  state: string;
-  windowTitle: string;
-  isDirty: boolean;
-  project?: {
-    filePath?: string;
-    name: string;
-    projectSessionId?: string;
-    projectId?: string;
-  };
-  recents: Array<{ filePath: string; name: string; lastOpenedUnixMs: number }>;
-}
+export type { ProjectStatusPayload } from "../core/projectApi.js";
 
 /** Estado de um serviço supervisionado (P0.1) + últimas linhas de log. */
 export interface ServiceStatusPayload {
@@ -46,16 +45,20 @@ export interface P7mEditorApi {
   onProjectionResync(
     listener: (payload: { snapshot: unknown; record: { reason: string } }) => void,
   ): void;
-  // ---- ciclo de vida do projeto (ALPHA-0.1 P0.2) ----
-  /** New/Open/Save/Save As/Close disparados pela UI; diálogos vivem no main. */
-  projectCommand(
-    command: "new" | "open" | "openPath" | "save" | "saveAs" | "close",
-    payload?: { filePath?: string },
-  ): Promise<ProjectStatusPayload>;
+  // ---- ciclo de vida do projeto: somente operações nomeadas e tipadas ----
+  listProjectTemplates(): Promise<ProjectTemplateDescriptor[]>;
+  createProjectFromTemplate(request: CreateProjectFromTemplateRequest): Promise<ProjectActionResult>;
+  openProject(request?: OpenProjectRequest): Promise<ProjectActionResult>;
+  saveProject(): Promise<ProjectActionResult>;
+  saveProjectAs(): Promise<ProjectActionResult>;
+  closeProject(): Promise<ProjectActionResult>;
+  restoreAutosave(request: RestoreAutosaveRequest): Promise<ProjectActionResult>;
+  discardAutosave(request: DiscardAutosaveRequest): Promise<ProjectActionResult>;
+  openRecent(filePath: string): Promise<ProjectActionResult>;
   projectStatus(): Promise<ProjectStatusPayload>;
   onProjectStatus(listener: (status: ProjectStatusPayload) => void): void;
   /** Ações do menu nativo roteadas ao renderer (undo/redo do editor ativo). */
-  onMenuAction(listener: (action: "undo" | "redo") => void): void;
+  onMenuAction(listener: (action: ProjectMenuAction) => void): void;
   // ---- supervisão de processos (ALPHA-0.1 P0.1) ----
   serviceStatus(): Promise<ServiceStatusPayload[]>;
   /** Reinicia um serviço isolado (engine caída → projeto preservado). */
@@ -76,7 +79,16 @@ const api: P7mEditorApi = {
   onProjectionResync: (listener) => {
     ipcRenderer.on("p7m:projection-resync", (_event, payload) => listener(payload));
   },
-  projectCommand: (command, payload) => ipcRenderer.invoke("p7m:project-command", command, payload),
+  listProjectTemplates: () => ipcRenderer.invoke("p7m:list-project-templates"),
+  createProjectFromTemplate: (request) =>
+    ipcRenderer.invoke("p7m:create-project-from-template", request),
+  openProject: (request) => ipcRenderer.invoke("p7m:open-project", request),
+  saveProject: () => ipcRenderer.invoke("p7m:save-project"),
+  saveProjectAs: () => ipcRenderer.invoke("p7m:save-project-as"),
+  closeProject: () => ipcRenderer.invoke("p7m:close-project"),
+  restoreAutosave: (request) => ipcRenderer.invoke("p7m:restore-autosave", request),
+  discardAutosave: (request) => ipcRenderer.invoke("p7m:discard-autosave", request),
+  openRecent: (filePath) => ipcRenderer.invoke("p7m:open-recent", filePath),
   projectStatus: () => ipcRenderer.invoke("p7m:project-status"),
   onProjectStatus: (listener) => {
     ipcRenderer.on("p7m:project-status", (_event, status) => listener(status));

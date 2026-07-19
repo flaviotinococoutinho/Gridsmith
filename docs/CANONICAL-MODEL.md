@@ -266,7 +266,8 @@ matriz via MCP (`runtime_experience`).
 
 O Blueprint é salvável como **documento declarativo versionado**
 (`BlueprintSerializer`): `exportBlueprint` produz um snapshot completo
-(`schemaVersion`, `projectId` + todos os domínios). O `ProjectSessionManager`
+(`schemaVersion`, `projectId`, `metadata` + todos os domínios). Na versão 3,
+`metadata` torna resolução e unidade espacial explícitas. O `ProjectSessionManager`
 faz parse, migração, validação e replay em store temporário, sem publicar
 actions/eventos nem tocar o runtime. Só depois das validações semânticas ele
 reseta/reidrata o runtime e troca a referência ativa. O roundtrip é sem perdas;
@@ -282,6 +283,7 @@ interface ProjectSession {
   readonly orchestrator: CanonicalOrchestrator;
   readonly history: CommandHistory;
   readonly createdAt: number;
+  readonly metadata: ProjectMetadata;
 }
 ```
 
@@ -289,19 +291,20 @@ interface ProjectSession {
 store/orquestrador próprios. JSON-RPC, GraphQL, gRPC e MCP chamam a mesma
 superfície. As operações `project/create`, `project/openDocument`,
 `project/close` e `project/status` expõem o ciclo de vida; create/open/close
-aceitam `expectedProjectSessionId` para compare-and-swap. O identificador é
-verificado no commit, não apenas no início da preparação, evitando que um
-candidato atrasado substitua uma sessão mais nova.
+aceitam `expectedProjectSessionId` + `expectedCommandSequence` para
+compare-and-swap. Identidade e revisão são verificadas no commit, não apenas no
+início da preparação, evitando que candidato ou Close atrasado descarte sessão
+ou comando mais novo.
 
 ```mermaid
 graph TD
-  EXP["exportBlueprint"] --> DOC[("BlueprintDocument<br/>schemaVersion + dominios")]
+  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v3<br/>schemaVersion + projectId + metadata + dominios")]
   DOC -.-> RAW["raw carregado"]
   subgraph LOAD["LOAD"]
     RAW --> MIG["migrateBlueprintDocument(raw)<br/>(sem schemaVersion = 0)"]
     MIG --> V{"versao > suportada?"}
     V -->|"sim"| REJ(["REJEITA"])
-    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2)"]
+    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2->3)"]
     CHAIN --> TMP["cria ProjectSession temporaria"]
     TMP --> REP["replay prepare: filters + store + history<br/>sem actions, journal ou runtime"]
     REP --> SEM["validacoes semanticas + preparar projecao"]

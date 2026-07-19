@@ -87,13 +87,23 @@ graph TD
 | Campo | Conteúdo |
 |---|---|
 | Componente | Documento declarativo do projeto (`exportBlueprint` / load por replay) |
-| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 2`; documento sem `schemaVersion` é tratado como versão `0` |
+| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 3`; documento sem `schemaVersion` é tratado como versão `0` |
 | Fonte de verdade | `middleware/src/canonical/BlueprintSerializer.ts` |
 | Regra de compatibilidade | Versão exata é carregada direto; versões anteriores são **migradas em cadeia** `v(n) → v(n+1)` antes do replay |
 | Breaking change | Qualquer mudança estrutural do documento exige nova versão **+** entrada correspondente no registro `MIGRATIONS` |
-| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2`); v2 introduz `projectId`, derivado deterministicamente para v1; `project/openDocument` prepara e valida antes da troca; `expectedProjectSessionId` protege o commit contra candidato obsoleto |
+| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3`); v2 introduz `projectId`, derivado deterministicamente para v1; v3 introduz `metadata` com nome, resolução de referência e semântica espacial explícita. A migração `2 → 3` preserva valores genéricos já interpretados como mundo e converte somente a forma completa do factory v2 conhecido (IDs, grid, câmera, regras e coordenadas exatos), ignorando o `projectId` que o fluxo histórico substituía por UUID, por `cellToWorldCenter`. `project/openDocument` prepara e valida antes da troca; identidade + `expectedCommandSequence` protegem o commit contra candidato/revisão obsoletos |
 | Fallback | Versão acima da suportada é **rejeitada** com `BlueprintDocumentError` (mensagem clara); versão sem migrador registrado é rejeitada |
-| Teste | `middleware/test/blueprint-migration.test.ts` + `project-session-manager.test.ts` (projectId v1 determinístico, replay isolado, rollback, CAS e troca A→B) |
+| Teste | `middleware/test/blueprint-migration.test.ts` + `project-session-manager.test.ts` + `project-templates.test.ts` (projectId v1 determinístico, semântica v2 preservada em v3, replay isolado, rollback, CAS e conversão canônica célula→mundo) |
+
+`metadata.spatial` da versão 3 fixa a unidade de posição em `world-pixel`, a
+origem da célula em `top-left`, o eixo Y em `down` e a âncora de entidades em
+`center`. Coordenadas de template são convertidas por
+`middleware/src/leveldesign/GridCoordinates.ts`; consumidores não podem
+reinterpretar ou recriar posições e IDs no renderer. Arquivos `.autosave` e
+`.bak` contêm o mesmo Blueprint versionado — não formam formatos paralelos.
+O fingerprint v2 é deliberadamente estrito: derivados do template com mudanças
+não espaciais não são reinterpretados automaticamente, evitando falso positivo;
+coordenadas históricas remanescentes nesse caso exigem revisão assistida.
 
 ### Artefato versionável
 
@@ -171,7 +181,7 @@ graph TD
 | Breaking change | Remover/renomear campo, tipo ou valor de enum — app e middleware são processos locais da mesma instalação e atualizam juntos |
 | Migração | n/a (distribuição conjunta) |
 | Continuidade | Cursor novo é `(middlewareInstanceId, projectSessionId, seq decimal uint64)`; `firstAvailableSeq`/`lastEventSeq` delimitam a partição ativa; restart, gap ou troca de projeto exigem reconstrução por `snapshot`. APIs sem identidade de sessão falham explicitamente. |
-| Concorrência | `projectCreate` e `projectOpenDocument` validam `expectedProjectSessionId` no commit; `projectClose` aplica a mesma proteção. Divergência retorna `PROJECT_SESSION_CONFLICT`. |
+| Concorrência | `projectCreate`, `projectOpenDocument` e `projectClose` validam `expectedProjectSessionId` + `expectedCommandSequence` no commit. Divergência de sessão ou revisão retorna `PROJECT_SESSION_CONFLICT`, sem perder comando concorrente. |
 | Autenticação | Bearer efêmero obrigatório. HTTP 401 é erro terminal e não aciona outro transport. |
 | Fallback | — (o GraphQL **é** o baseline completo e o fallback do caminho quente) |
 | Teste | Paridade `dist` ⇄ fonte + enum ⇄ `COMMAND_KINDS` em `middleware/test/transport-gateways.test.ts`; e2e `scripts/verify-transports.sh` |
@@ -187,7 +197,7 @@ graph TD
 | Breaking change | Mudança incompatível de mensagem/RPC = novo package (`p7m.editor.v2`) |
 | Migração | n/a (distribuição conjunta) |
 | Continuidade | `Health`/`Snapshot` expõem identidade e limites; `StreamEventsV2` envia um frame de status antes dos eventos. Restart/gap/cursor futuro/troca de sessão resultam em `resync_required` sem cauda parcial. `request_id` torna retry cross-transport idempotente. |
-| Concorrência | Requests de create/open/close carregam `expected_project_session_id`; o servidor valida a identidade no commit atômico. |
+| Concorrência | Requests de create/open/close carregam `expected_project_session_id` + `expected_command_sequence`; o servidor valida identidade e revisão no commit atômico. |
 | Autenticação | Metadata `authorization` com Bearer efêmero obrigatória. `UNAUTHENTICATED` nunca aciona fallback. |
 | Fallback | **Somente indisponibilidade** do canal → GraphQL; autenticação, domínio e incompatibilidade de contrato não são cobertos por fallback. Default/freeze segue ADR-019. |
 | Teste | Paridade `dist` ⇄ fonte em `middleware/test/transport-gateways.test.ts`; fallback ao vivo em `frontend/test/editor-client.integration.test.ts`; e2e `scripts/verify-transports.sh` |

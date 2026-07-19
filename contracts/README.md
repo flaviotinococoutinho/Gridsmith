@@ -120,11 +120,12 @@ graph LR
 A borda app ↔ middleware **não** usa o plano JSON-RPC acima: usa GraphQL
 (superfície baseline completa + destino do fallback) e gRPC (caminho quente
 prioritário) — decisões em [`../docs/adr/`](../docs/adr/README.md)
-(ADR-016/017/018/019/020).
+(ADR-016/017/018/019/020). O lifecycle de arquivo do Electron é tratado
+separadamente pela ADR-021.
 
 | Contrato | Arquivo | Papel | Operações |
 |---|---|---|---|
-| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | queries de projeto/projeção/snapshot/eventos · mutations `projectCreate`, `projectOpenDocument`, `projectClose`, `dispatch` + aliases legados |
+| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | queries de projeto/templates/materialização/projeção/snapshot/eventos · mutations `projectCreate`, `projectOpenDocument`, `projectClose`, `dispatch` + aliases legados |
 | gRPC proto | [`grpc/p7m_editor.proto`](grpc/p7m_editor.proto) — `p7m.editor.v1.EditorHotPath` | caminho quente condicionado pela ADR-019 | `ProjectCreate`, `ProjectOpenDocument`, `ProjectClose`, `ProjectStatus`, dispatch/query/snapshot + `StreamEventsV2` |
 
 Regras de evolução:
@@ -141,8 +142,9 @@ Regras de evolução:
 - Clientes novos usam cursor composto `(middlewareInstanceId, projectSessionId, seq)` e strings
   decimais para `uint64`. `resyncRequired` obriga snapshot completo; APIs
   legadas sem identidade de sessão falham explicitamente em vez de misturar projetos.
-- Create/open/close aceitam `expectedProjectSessionId` para compare-and-swap;
-  candidato preparado sobre uma sessão antiga falha com
+- Create/open/close aceitam `expectedProjectSessionId` e
+  `expectedCommandSequence` para compare-and-swap; candidato preparado sobre
+  uma sessão ou revisão antiga falha com
   `PROJECT_SESSION_CONFLICT` em vez de sobrescrever o projeto mais novo.
 - `ProjectStatus.runtimeState` é `synchronized`, `deferred` ou `failed`.
   `failed` bloqueia mutações até uma reidratação integral restaurar o runtime.

@@ -99,7 +99,7 @@ que habilita a vertical slice, e o empacotamento fecha por ultimo.
 ```mermaid
 graph TD
   P01["P0.1 Supervisor de processos 🔶"]
-  P02["P0.2 Ciclo de vida do projeto 🔶"]
+  P02["P0.2 Ciclo de vida do projeto ✅"]
   P03["P0.3 Workbench do editor 🔶"]
   P04["P0.4 Vertical slice de niveis 🔶"]
   P05["P0.5 Preview embutido ⬜"]
@@ -157,18 +157,25 @@ stateDiagram-v2
 
 *Mostra a maquina de estados de supervisao (ServiceState) do ProcessSupervisor: o laco de retry com backoff e o ramo failed ao esgotar as tentativas.*
 
-### P0.2 — Ciclo de vida do projeto 🔶
+### P0.2 — Ciclo de vida do projeto ✅
 O editor começa pelo projeto, não pela conexão a um pipe.
 - [x] Máquina de estados do documento (sem projeto → aberto → modificado → salvando → fechado), dirty tracking por eventos, política de autosave, lista de recentes — `frontend/src/core/projectLifecycle.ts`, testada
-- [x] `EditorClient.saveDocument()/loadDocument()` expostos (gap apontado no diagnóstico) + preload com `saveProject/openProject`
-- [x] Diálogos nativos e escrita em disco no `main`: Abrir/Salvar/Salvar como via
-  `dialog.showOpenDialog/showSaveDialog/showMessageBox`, leitura/escrita `.p7m.json`
-  (`fs`) e autosave `.autosave` — `frontend/src/main/main.ts`. **Caveat:** `main.ts`
-  é cola Electron **sem cobertura de teste automatizado nem e2e** (issue #2 marca este
-  critério; a prova de produto virá com o e2e da jornada — P0.9)
+- [x] Dirty usa watermark `commandSequence`: resposta de dispatch e journal são
+  deduplicados, comando posterior ao snapshot mantém Save dirty, e restart do
+  middleware reidrata apenas a projeção integral do projeto ativo sem Close implícito
+- [x] `ProjectController` serializa New/Open/Save/Save As/Close/Recovery/Recentes
+  sobre portas injetáveis de dialogs, filesystem, sessão e lease; a cola Electron
+  não contém a política de fechamento ou persistência
+- [x] Preload expõe somente operações de lifecycle tipadas:
+  `listProjectTemplates`, `createProjectFromTemplate`, `openProject`,
+  `saveProject`, `saveProjectAs`, `closeProject`, `restoreAutosave`,
+  `discardAutosave` e `openRecent`
+- [x] Escrita segura no mesmo diretório: temporário exclusivo → write → flush →
+  close → backup `.bak` → rename → flush do diretório. Cancelamento de Save As
+  ou falha de escrita cancela Close e preserva sessão/dirty state
 - [x] Migração de `schemaVersion`: `migrateBlueprintDocument` + registro `MIGRATIONS`
-  encadeado (0→1→2) com rejeição de versão futura; v2 torna `projectId`
-  obrigatório e documentos v1 recebem identidade legada determinística —
+  encadeado (0→1→2→3) com rejeição de versão futura; v2 torna `projectId`
+  obrigatório e v3 adiciona metadata, resolução e unidade espacial explícita —
   `middleware/src/canonical/BlueprintSerializer.ts`, testada em
   `middleware/test/blueprint-migration.test.ts`
 - [x] Sessão explícita e substituição transacional: `ProjectSessionManager`
@@ -176,20 +183,23 @@ O editor começa pelo projeto, não pela conexão a um pipe.
   reidrata o runtime e só então publica o commit. Falha preserva sessão, dirty
   state e journal; `project/create`, `project/openDocument`, `project/close` e
   `project/status` têm paridade JSON-RPC/GraphQL/gRPC/MCP e CAS por
-  `expectedProjectSessionId` — ADR-020 e testes de sessão/transports
-- [x] Template canônico "Plataforma 2D" (`platformer-2d`) no middleware/gateway/cliente:
-  `ProjectTemplates.ts`, gateway `project/new` / `project/templates`,
-  `EditorClient.newProjectFromTemplate` / `listProjectTemplates` — testado
-  (`middleware/test/project-templates.test.ts`, `editor-gateway.test.ts`,
-  `frontend/test/editor-client.integration.test.ts`)
-- [ ] **Template ainda não conectado ao botão "Novo projeto" da UI**:
-  `projectCommand("new")` (`main.ts`) cria um projeto em branco; `newProjectFromTemplate`
-  só é chamado pelo teste de integração — o passo 2 da jornada ("Novo projeto de
-  plataforma 2D") ainda não usa o template
-- [ ] Recovery pós-crash: o autosave grava `.autosave`, mas a restauração na
-  inicialização (detectar `.autosave` mais novo que o save e oferecer restaurar) não existe
-- [ ] Menu "Recentes" nativo (recentes são rastreados e enviados ao renderer, mas não há
-  submenu nativo) e bloqueio contra duas instâncias no mesmo arquivo
+  `expectedProjectSessionId` + `expectedCommandSequence` — ADR-020/021 e testes
+  de sessão/transports
+- [x] Wizard “Novo projeto” consulta templates reais, mostra preview e materializa
+  “Plataforma 2D” com nome, diretório, resolução de referência e tile size. O
+  arquivo é criado antes da sessão transacional, e a UI abre `level-1` e preserva
+  os IDs de Player e luz, além da câmera, vindos do documento
+- [x] Recovery detecta `.autosave` posterior ao save, mostra timestamp e oferece
+  Restaurar, Abrir cópia, Ignorar ou Cancelar; autosave só é removido depois de
+  Save confirmado ou descarte explícito
+- [x] Submenu nativo de Recentes poda caminhos inexistentes; segunda instância
+  encaminha o arquivo e foca a janela ativa; canonicalização + lease impedem a
+  abertura concorrente do mesmo caminho
+- [x] Projeto de exemplo versionado abre sempre como cópia editável sem `filePath`
+  e nunca grava no arquivo distribuído
+- [x] Gate dedicado `npm run test:project-lifecycle-product` cobre controller,
+  escrita durável, wizard e máquina de lifecycle com adapters injetáveis. O e2e
+  do aplicativo empacotado continua pertencendo a P0.9
 
 ```mermaid
 stateDiagram-v2
