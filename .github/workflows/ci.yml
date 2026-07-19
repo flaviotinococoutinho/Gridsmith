@@ -21,7 +21,9 @@ jobs:
           cache-dependency-path: middleware/package-lock.json
       - run: npm ci
       - run: npm run build
-      - run: npm test
+      # A suíte de sockets deve terminar em segundos; o limite impede que um
+      # handle/promessa vazado consuma o runner sem produzir diagnóstico.
+      - run: timeout --signal=TERM 90s npm test
       - name: Teste explícito — sessão transacional e journal particionado
         run: npm run test:project-session
       - name: Teste explícito — paridade de sessão nas três bordas
