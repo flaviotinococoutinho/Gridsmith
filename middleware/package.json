@@ -11,7 +11,7 @@
     "p7m-middleware": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-contracts.mjs",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json && node scripts/copy-contracts.mjs",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "node --import tsx --test test/*.test.ts",
@@ -19,6 +19,8 @@
     "test:project-session-transports": "node --import tsx --test --test-name-pattern=\"^sessão de projeto:\" test/editor-gateway.test.ts test/transport-gateways.test.ts",
     "test:command-history": "node --import tsx --test test/command-history.test.ts",
     "test:history-transports": "node --import tsx --test --test-name-pattern=\"^histórico global:\" test/editor-gateway.test.ts test/transport-gateways.test.ts",
+    "test:assets-graphql": "node --import tsx --test test/graphql-assets-contract.test.ts",
+    "test:asset-application": "node --import tsx --test test/asset-pipeline.test.ts test/asset-application.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

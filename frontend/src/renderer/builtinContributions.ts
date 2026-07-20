@@ -19,12 +19,14 @@ import { mountProjectExplorer } from "./projectExplorerPanel.js";
 import { mountProjectStart } from "./projectStartPanel.js";
 import { mountSchemaInspector } from "./schemaInspectorView.js";
 import type { EditorWorkbenchApplication } from "./workbenchApplication.js";
+import { registerAssetContributions } from "./assetContributions.js";
 
 export function registerBuiltinContributions(application: EditorWorkbenchApplication): void {
   registerCommands(application);
   registerTools(application);
   registerBuiltinInspectors(application);
   registerPanels(application);
+  registerAssetContributions(application);
 }
 
 function registerCommands(application: EditorWorkbenchApplication): void {

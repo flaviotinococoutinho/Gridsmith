@@ -17,11 +17,12 @@ graph TD
     IPC["ipc / EditorGateway"]
     GQL["graphql (GraphQlGateway)"]
     GRPC["grpc (GrpcGateway)"]
-    ASSETS["assets (AssetPipelineService)"]
+    ASSETS["assets (importers + AssetPipelineService)"]
     SHM["sharedmem (MeshSharedMemoryWriter)"]
   end
   PROTO["protocol (framing uint32 LE + JSON-RPC 2.0)"]
   TRANS["transport (EventJournal, endpoints)"]
+  APP["application (AssetApplicationService)"]
   subgraph CORE["Nucleo (canonical + domain)"]
     DOM["domain (BlueprintStore, EngineBridge, CapabilityRegistry)"]
     CANON["canonical (ProjectSessionManager, EditorSurface, Orchestrator, HookBus)"]
@@ -36,7 +37,10 @@ graph TD
   GQL --> TRANS
   GRPC --> CANON
   GRPC --> TRANS
-  ASSETS --> CANON
+  GQL --> APP
+  MCP --> APP
+  APP --> ASSETS
+  APP --> CANON
   SHM --> PROTO
   DOM --> CANON
   RT --> CANON
@@ -171,11 +175,17 @@ graph TD
 - **Level design** (`src/leveldesign/AutoTiler.ts`): auto-tiling determinístico por
   regras de padrão (LDtk/Tiled) — função pura `(IntGrid, regras, seed) → tiles`,
   consumida pela engine via `tilemap/define`.
-- **Assets** (`src/assets/`): `AsepriteImporter` normaliza o export CLI (frameTags →
-  clipes, slices → pivô/9-slice); `AssetPipelineService` orquestra o catálogo
-  taxonômico — watcher recursivo, export via CLI Aseprite, artefato canônico com tags
-  por diretório e compile MGCB para `.xnb` (`ToolRunner` injetável; erros tipados;
-  ativado com `--assets <dir>`).
+- **Aplicação de assets** (`src/application/AssetApplicationService.ts`): fachada
+  única de produto para catálogo, detalhes, import/reimport/remove, fila cancelável,
+  configuração/teste de Aseprite e MGCB, watcher, reveal e eventos operacionais
+  particionados pela sessão. GraphQL e `EditorSurface` delegam a ela; MCP mantém
+  somente a consulta de catálogo e não recebe permissão implícita para executar
+  binários. Progresso não vira `BlueprintEvent`, dirty state ou histórico.
+- **Pipeline de assets** (`src/assets/`): `AsepriteImporter` normaliza o export CLI
+  (frameTags → clipes, slices → pivô/9-slice); `AssetPipelineService` produz o
+  artefato canônico, spritesheet e `.xnb` por `ToolRunner` injetável. Fontes externas
+  são copiadas para staging validado antes do pipeline; o renderer nunca executa
+  ferramenta nem informa paths arbitrários ao shell.
 - **Fachada MCP** (`src/mcp/McpFacade.ts`): expõe a agentes de IA, via stdio,
   o comando genérico `blueprint_command` (TODOS os kinds canônicos de
   `COMMAND_KINDS` — inclusive `level/patch` e `entity/move`) + ferramentas
@@ -206,7 +216,8 @@ graph TD
   SESS --> ORCH["CanonicalOrchestrator por sessao"]
   IDX --> IPC["IpcServer + EditorGateway"]
   IDX --> MCP["McpFacade (stdio)"]
-  IDX --> ASSETS["AssetPipelineService"]
+  IDX --> ASSETAPP["AssetApplicationService"]
+  ASSETAPP --> ASSETS["AssetPipelineService"]
 
   ORCH --> STORE
   ORCH --> HOOKS
@@ -214,6 +225,7 @@ graph TD
   IPC --> SESS
   MCP --> SESS
   ASSETS --> ARTS
+  ASSETAPP --> SESS
 ```
 
 *Mostra a raiz de composição `index.ts` montando um único manager; cada sessão
@@ -226,6 +238,7 @@ consultam a mesma referência ativa.*
 npm install
 npm run build     # tsc → dist/
 npm test          # node:test — framing, peer, integração via socket real
+npm run test:asset-application  # fachada/pipeline de assets, rollback e segurança
 npm start         # pipe server + MCP em stdio
 npm run dev -- --pipe p7m-engine --no-mcp   # apenas o plano de controle
 npm run dev -- --pipe p7m-engine --no-grpc  # desliga o gateway gRPC (fica só GraphQL)

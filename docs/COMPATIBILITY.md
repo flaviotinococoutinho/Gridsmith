@@ -87,11 +87,11 @@ graph TD
 | Campo | Conteúdo |
 |---|---|
 | Componente | Documento declarativo do projeto (`exportBlueprint` / load por replay) |
-| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 4`; documento sem `schemaVersion` é tratado como versão `0` |
+| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 5`; documento sem `schemaVersion` é tratado como versão `0` |
 | Fonte de verdade | `middleware/src/canonical/BlueprintSerializer.ts` |
 | Regra de compatibilidade | Versão exata é carregada direto; versões anteriores são **migradas em cadeia** `v(n) → v(n+1)` antes do replay |
 | Breaking change | Qualquer mudança estrutural do documento exige nova versão **+** entrada correspondente no registro `MIGRATIONS` |
-| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3 → 4`); v2 introduz `projectId`; v3 introduz metadata e semântica espacial explícita; v4 persiste a paleta semântica de cada nível, preservando os significados 1–3 disponíveis no editor v3 e criando defaults determinísticos para outros valores já usados. A migração `2 → 3` preserva valores genéricos já interpretados como mundo e converte somente a forma completa do factory v2 conhecido por `cellToWorldCenter`. `project/openDocument` prepara e valida antes da troca; identidade + `expectedCommandSequence` protegem o commit contra candidato/revisão obsoletos. Histórico/patches não são persistidos no documento. |
+| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3 → 4 → 5`); v2 introduz `projectId`; v3 introduz metadata e semântica espacial explícita; v4 persiste a paleta semântica de cada nível; v5 admite `spriteRenderer` opcional no archetype sem inventar referências para projetos antigos. A migração `2 → 3` preserva valores genéricos já interpretados como mundo e converte somente a forma completa do factory v2 conhecido por `cellToWorldCenter`. `project/openDocument` prepara e valida antes da troca; identidade + `expectedCommandSequence` protegem o commit contra candidato/revisão obsoletos. Histórico/patches não são persistidos no documento. |
 | Fallback | Versão acima da suportada é **rejeitada** com `BlueprintDocumentError` (mensagem clara); versão sem migrador registrado é rejeitada |
 | Teste | `middleware/test/blueprint-migration.test.ts` + `project-session-manager.test.ts` + `project-templates.test.ts` (projectId v1 determinístico, semântica v2 preservada em v3, replay isolado, rollback, CAS e conversão canônica célula→mundo) |
 

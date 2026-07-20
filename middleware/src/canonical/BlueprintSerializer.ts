@@ -32,7 +32,7 @@ import {
   cellToWorldCenter,
 } from "../leveldesign/GridCoordinates.js";
 
-export const BLUEPRINT_DOCUMENT_VERSION = 4;
+export const BLUEPRINT_DOCUMENT_VERSION = 5;
 
 export interface ProjectMetadata {
   readonly name: string;
@@ -170,6 +170,16 @@ const MIGRATIONS = new Map<number, BlueprintMigration>([
         ? document["levels"].map((level) => migrateLevelPalette(level))
         : document["levels"],
       schemaVersion: 4,
+    }),
+  ],
+  // 4 → 5: reserva no archetype a associação tipada ao SpriteRenderer.
+  // O campo é opcional, portanto documentos existentes não precisam inventar
+  // referências; a migração apenas carimba que o leitor conhece o novo shape.
+  [
+    4,
+    (document) => ({
+      ...document,
+      schemaVersion: 5,
     }),
   ],
 ]);

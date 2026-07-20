@@ -29,6 +29,20 @@ import {
 import type { ResolvedExperienceLike } from "../core/experienceGate.js";
 import type { ProjectTemplateDescriptor } from "../core/projectApi.js";
 import type {
+  AssetCancelResult,
+  AssetCatalogFilter,
+  AssetCatalogResult,
+  AssetDetails,
+  AssetImportInput,
+  AssetOperationResult,
+  AssetRemoveResult,
+  AssetRevealResult,
+  AssetSourceReference,
+  AssetToolConfiguration,
+  AssetToolConfigurationInput,
+  EditorApplicationEvent,
+} from "../core/assetApi.js";
+import type {
   BlueprintEventPayload,
   DispatchOutcome,
   HistoryEntryPayload,
@@ -43,6 +57,21 @@ export type {
   HistoryOperationResult,
   HistoryStatusPayload,
 } from "../core/editorCommands.js";
+export type {
+  AssetCancelResult,
+  AssetCatalogFilter,
+  AssetCatalogResult,
+  AssetDetails,
+  AssetImportInput,
+  AssetOperationResult,
+  AssetRemoveResult,
+  AssetRevealResult,
+  AssetSourceReference,
+  AssetSummary,
+  AssetToolConfiguration,
+  AssetToolConfigurationInput,
+  EditorApplicationEvent,
+} from "../core/assetApi.js";
 
 export interface ProjectionSnapshot extends HotCursor {
   readonly firstAvailableSeq: string;
@@ -183,6 +212,23 @@ const HISTORY_STATUS_FIELDS = `
   entries { ${HISTORY_ENTRY_FIELDS} }
 `;
 
+const ASSET_SUMMARY_FIELDS = `
+  assetId kind name revision sourcePath directory tags thumbnailPath thumbnailDataUrl
+  spritesheetPng compiledXnb clipCount updatedAt
+`;
+
+const ASSET_OPERATION_FIELDS = `
+  operationId operation status projectSessionId projectId assetId message
+`;
+
+export interface GraphQlExecutor {
+  execute<T>(
+    query: string,
+    variables?: Record<string, unknown>,
+    operationName?: string,
+  ): Promise<T>;
+}
+
 export interface EditorClientOptions {
   readonly requestTimeoutMs?: number;
   readonly eventPollMs?: number;
@@ -192,6 +238,8 @@ export interface EditorClientOptions {
   readonly grpcEnabled?: boolean;
   readonly router?: TransportRouterOptions;
   readonly log?: Logger;
+  /** Porta injetável para testes headless das operações frias. */
+  readonly graphqlTransport?: GraphQlExecutor;
 }
 
 interface EventBatchWire {
@@ -217,8 +265,9 @@ export class EditorClient {
   private readonly router: TransportRouter;
   private readonly log: Logger;
   private readonly grpc: GrpcTransport;
-  private readonly graphql: GraphQlTransport;
+  private readonly graphql: GraphQlExecutor;
   private readonly eventListeners = new Set<(event: BlueprintEventPayload) => void>();
+  private readonly applicationEventListeners = new Set<(event: EditorApplicationEvent) => void>();
   private readonly resyncListeners = new Set<(snapshot: ProjectionSnapshot, record: ResynchronizationRecord) => void>();
   private readonly eventPollMs: number;
   private readonly probeTickMs: number;
@@ -247,7 +296,8 @@ export class EditorClient {
     this.log = options.log ?? createLogger("editor-client");
     const timeout = options.requestTimeoutMs ?? 10_000;
     this.grpc = new GrpcTransport(pipeName, this.log.child("grpc"), timeout, options.authToken);
-    this.graphql = new GraphQlTransport(pipeName, this.log.child("graphql"), timeout, options.authToken);
+    this.graphql = options.graphqlTransport ??
+      new GraphQlTransport(pipeName, this.log.child("graphql"), timeout, options.authToken);
     this.router = new TransportRouter(options.router);
     this.eventPollMs = options.eventPollMs ?? 500;
     this.probeTickMs = options.probeTickMs ?? 1_000;
@@ -352,6 +402,12 @@ export class EditorClient {
     return () => this.eventListeners.delete(listener);
   }
 
+  /** Eventos operacionais nunca entram no Blueprint, histórico ou dirty state. */
+  onApplicationEvent(listener: (event: EditorApplicationEvent) => void): () => void {
+    this.applicationEventListeners.add(listener);
+    return () => this.applicationEventListeners.delete(listener);
+  }
+
   onResynchronized(
     listener: (snapshot: ProjectionSnapshot, record: ResynchronizationRecord) => void,
   ): () => void {
@@ -439,6 +495,145 @@ export class EditorClient {
         { family: family ?? null, version: version ?? null },
       );
       return data.experience;
+    });
+  }
+
+  assetCatalog(filter?: AssetCatalogFilter): Promise<AssetCatalogResult> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ assetCatalog: unknown }>(
+        `query AssetCatalog($filter: AssetCatalogFilterInput) {
+          assetCatalog(filter: $filter) {
+            projectSessionId projectId tags directories
+            assets { ${ASSET_SUMMARY_FIELDS} }
+          }
+        }`,
+        { filter: filter ?? null },
+      );
+      return validateAssetCatalog(data.assetCatalog);
+    });
+  }
+
+  assetDetails(assetId: string): Promise<AssetDetails> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ assetDetails: unknown }>(
+        `query AssetDetails($assetId: String!) {
+          assetDetails(assetId: $assetId) {
+            asset { ${ASSET_SUMMARY_FIELDS} }
+            payload
+            frames { index x y w h durationMs }
+            clips { name from to direction playback durationMs }
+            frameTags { name from to direction playback durationMs }
+            slices { name bounds { x y w h } center { x y w h } pivot { x y } }
+          }
+        }`,
+        { assetId },
+      );
+      return validateAssetDetails(data.assetDetails);
+    });
+  }
+
+  importAsset(input: AssetImportInput): Promise<AssetOperationResult> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ assetImport: unknown }>(
+        `mutation AssetImport($input: AssetImportInput!) {
+          assetImport(input: $input) { ${ASSET_OPERATION_FIELDS} }
+        }`,
+        { input },
+      );
+      return validateAssetOperation(data.assetImport);
+    });
+  }
+
+  reimportAsset(assetId: string, operationId?: string): Promise<AssetOperationResult> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ assetReimport: unknown }>(
+        `mutation AssetReimport($assetId: String!, $operationId: String) {
+          assetReimport(assetId: $assetId, operationId: $operationId) {
+            ${ASSET_OPERATION_FIELDS}
+          }
+        }`,
+        { assetId, operationId: operationId ?? null },
+      );
+      return validateAssetOperation(data.assetReimport);
+    });
+  }
+
+  removeAsset(assetId: string): Promise<AssetRemoveResult> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ assetRemove: unknown }>(
+        `mutation AssetRemove($assetId: String!) {
+          assetRemove(assetId: $assetId) {
+            operationId assetId removed filesPreserved asset { ${ASSET_SUMMARY_FIELDS} }
+          }
+        }`,
+        { assetId },
+      );
+      return validateAssetRemove(data.assetRemove);
+    });
+  }
+
+  configureAssetTools(input: AssetToolConfigurationInput): Promise<AssetToolConfiguration> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ assetConfigureTools: unknown }>(
+        `mutation AssetConfigureTools($input: AssetToolConfigurationInput!) {
+          assetConfigureTools(input: $input) {
+            scope projectId asepritePath mgcbPath persisted
+            aseprite { path available version message source testedAt }
+            mgcb { path available version message source testedAt }
+          }
+        }`,
+        { input },
+      );
+      return validateAssetToolConfiguration(data.assetConfigureTools);
+    });
+  }
+
+  revealAssetSource(assetId: string): Promise<AssetRevealResult> {
+    return this.revealSource({ assetId });
+  }
+
+  revealSource(reference: AssetSourceReference | string): Promise<AssetRevealResult> {
+    const normalized = typeof reference === "string" ? { assetId: reference } : reference;
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ assetRevealSource: unknown }>(
+        `mutation AssetRevealSource($reference: AssetSourceReferenceInput!) {
+          assetRevealSource(reference: $reference) {
+            operationId assetId sourceOperationId target path revealed
+          }
+        }`,
+        { reference: normalized },
+      );
+      return validateAssetReveal(data.assetRevealSource);
+    });
+  }
+
+  revealAssetOutput(assetId: string): Promise<AssetRevealResult> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ assetRevealOutput: unknown }>(
+        `mutation AssetRevealOutput($assetId: String!) {
+          assetRevealOutput(assetId: $assetId) {
+            operationId assetId sourceOperationId target path revealed
+          }
+        }`,
+        { assetId },
+      );
+      return validateAssetReveal(data.assetRevealOutput);
+    });
+  }
+
+  revealOutput(assetId: string): Promise<AssetRevealResult> {
+    return this.revealAssetOutput(assetId);
+  }
+
+  cancelAssetOperation(operationId: string): Promise<AssetCancelResult> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ assetCancel: unknown }>(
+        `mutation AssetCancel($operationId: String!) {
+          assetCancel(operationId: $operationId) { operationId status cancelled }
+        }`,
+        { operationId },
+      );
+      return validateAssetCancellation(data.assetCancel);
     });
   }
 
@@ -982,6 +1177,17 @@ export class EditorClient {
       ...cursor,
       lastEventSeq: event.seq,
     };
+    const applicationEvent = toEditorApplicationEvent(event);
+    if (applicationEvent) {
+      for (const listener of this.applicationEventListeners) {
+        try {
+          listener(applicationEvent);
+        } catch (error) {
+          this.log.warn("application event listener failed", { message: String(error) });
+        }
+      }
+      return true;
+    }
     this.advanceObservedRevision(event.projectSessionId, event.commandSequence);
     // Trocas/fechamentos de sessão são eventos de controle, não mutações do
     // Blueprint. Eles invalidam a projeção inteira e nunca devem sujar o
@@ -1179,6 +1385,348 @@ export class EditorClient {
       reason: classified.reason,
     });
   }
+}
+
+function toEditorApplicationEvent(event: HotEvent): EditorApplicationEvent | undefined {
+  if (event.payload === null || typeof event.payload !== "object") return undefined;
+  const raw = event.payload as Record<string, unknown>;
+  if (raw["domain"] !== "asset") return undefined;
+  const progressRaw = raw["progress"];
+  const progress = progressRaw !== null && typeof progressRaw === "object"
+    ? progressRaw as Record<string, unknown>
+    : undefined;
+  const severity = raw["severity"] === "warning" || raw["severity"] === "error"
+    ? raw["severity"]
+    : "info";
+  return Object.freeze({
+    seq: event.seq,
+    projectSessionId: event.projectSessionId,
+    projectId: event.projectId,
+    commandSequence: event.commandSequence,
+    domain: "asset",
+    kind: typeof raw["kind"] === "string" ? raw["kind"] : event.kind,
+    ...(typeof raw["operationId"] === "string"
+      ? { operationId: raw["operationId"] }
+      : {}),
+    ...(progress &&
+      typeof progress["phase"] === "string" &&
+      Number.isSafeInteger(progress["current"]) &&
+      Number.isSafeInteger(progress["total"]) &&
+      Number.isFinite(progress["percent"])
+      ? {
+          progress: Object.freeze({
+            phase: progress["phase"],
+            current: progress["current"] as number,
+            total: progress["total"] as number,
+            percent: progress["percent"] as number,
+            message: typeof progress["message"] === "string" ? progress["message"] : "",
+          }),
+        }
+      : {}),
+    severity,
+    payload: raw["payload"] ?? {},
+    timestamp: String(raw["timestamp"] ?? "0"),
+  });
+}
+
+function validateAssetCatalog(value: unknown): AssetCatalogResult {
+  const raw = requireRecord(value, "asset catalog");
+  if (!Array.isArray(raw["assets"])) throw new Error("invalid asset catalog assets");
+  return Object.freeze({
+    projectSessionId: requireNonEmptyString(raw["projectSessionId"], "projectSessionId"),
+    projectId: requireNonEmptyString(raw["projectId"], "projectId"),
+    assets: Object.freeze(raw["assets"].map(validateAssetSummary)),
+    tags: Object.freeze(requireStringArray(raw["tags"], "asset catalog tags")),
+    directories: Object.freeze(
+      requireStringArray(raw["directories"], "asset catalog directories"),
+    ),
+  });
+}
+
+function validateAssetSummary(value: unknown): import("../core/assetApi.js").AssetSummary {
+  const raw = requireRecord(value, "asset summary");
+  const revision = requireNonNegativeInteger(raw["revision"], "asset revision");
+  const clipCount = requireNonNegativeInteger(raw["clipCount"], "asset clipCount");
+  const thumbnailDataUrl = optionalString(raw["thumbnailDataUrl"]);
+  if (
+    thumbnailDataUrl !== undefined &&
+    !/^data:image\/(?:png|jpeg|webp);base64,/iu.test(thumbnailDataUrl)
+  ) {
+    throw new Error("invalid asset thumbnail data URL");
+  }
+  return Object.freeze({
+    assetId: requireNonEmptyString(raw["assetId"], "assetId"),
+    kind: requireNonEmptyString(raw["kind"], "asset kind"),
+    name: requireNonEmptyString(raw["name"], "asset name"),
+    revision,
+    sourcePath: requireNonEmptyString(raw["sourcePath"], "asset sourcePath"),
+    directory: requireString(raw["directory"], "asset directory"),
+    tags: Object.freeze(requireStringArray(raw["tags"], "asset tags")),
+    ...(optionalString(raw["thumbnailPath"]) !== undefined
+      ? { thumbnailPath: optionalString(raw["thumbnailPath"])! }
+      : {}),
+    ...(thumbnailDataUrl !== undefined ? { thumbnailDataUrl } : {}),
+    ...(optionalString(raw["spritesheetPng"]) !== undefined
+      ? { spritesheetPng: optionalString(raw["spritesheetPng"])! }
+      : {}),
+    ...(optionalString(raw["compiledXnb"]) !== undefined
+      ? { compiledXnb: optionalString(raw["compiledXnb"])! }
+      : {}),
+    clipCount,
+    updatedAt: requireDecimalString(raw["updatedAt"], "asset updatedAt"),
+  });
+}
+
+function validateAssetDetails(value: unknown): AssetDetails {
+  const raw = requireRecord(value, "asset details");
+  return Object.freeze({
+    asset: validateAssetSummary(raw["asset"]),
+    payload: raw["payload"],
+    frames: Object.freeze(requireArray(raw["frames"], "asset frames").map((value) => {
+      const frame = requireRecord(value, "asset frame");
+      return Object.freeze({
+        index: requireNonNegativeInteger(frame["index"], "frame index"),
+        x: requireInteger(frame["x"], "frame x"),
+        y: requireInteger(frame["y"], "frame y"),
+        w: requireNonNegativeInteger(frame["w"], "frame width"),
+        h: requireNonNegativeInteger(frame["h"], "frame height"),
+        durationMs: requireNonNegativeInteger(frame["durationMs"], "frame duration"),
+      });
+    })),
+    clips: Object.freeze(requireArray(raw["clips"], "asset clips").map(validateAssetClip)),
+    frameTags: Object.freeze(
+      requireArray(raw["frameTags"], "asset frameTags").map(validateAssetClip),
+    ),
+    slices: Object.freeze(requireArray(raw["slices"], "asset slices").map((value) => {
+      const slice = requireRecord(value, "asset slice");
+      const center = optionalRecord(slice["center"]);
+      const pivot = optionalRecord(slice["pivot"]);
+      return Object.freeze({
+        name: requireNonEmptyString(slice["name"], "slice name"),
+        bounds: validateAssetRect(slice["bounds"]),
+        ...(center ? { center: validateAssetRect(center) } : {}),
+        ...(pivot
+          ? {
+              pivot: Object.freeze({
+                x: requireInteger(pivot["x"], "pivot x"),
+                y: requireInteger(pivot["y"], "pivot y"),
+              }),
+            }
+          : {}),
+      });
+    })),
+  });
+}
+
+function validateAssetClip(value: unknown): import("../core/assetApi.js").AssetAnimationClip {
+  const raw = requireRecord(value, "asset clip");
+  const direction = raw["direction"];
+  if (direction !== "forward" && direction !== "reverse" && direction !== "pingpong") {
+    throw new Error("invalid asset clip direction");
+  }
+  const playback = requireArray(raw["playback"], "clip playback").map((frame) =>
+    requireNonNegativeInteger(frame, "clip playback frame"));
+  return Object.freeze({
+    name: requireNonEmptyString(raw["name"], "clip name"),
+    from: requireNonNegativeInteger(raw["from"], "clip from"),
+    to: requireNonNegativeInteger(raw["to"], "clip to"),
+    direction,
+    playback: Object.freeze(playback),
+    durationMs: requireNonNegativeInteger(raw["durationMs"], "clip duration"),
+  });
+}
+
+function validateAssetRect(value: unknown): import("../core/assetApi.js").AssetRect {
+  const raw = requireRecord(value, "asset rect");
+  return Object.freeze({
+    x: requireInteger(raw["x"], "rect x"),
+    y: requireInteger(raw["y"], "rect y"),
+    w: requireNonNegativeInteger(raw["w"], "rect width"),
+    h: requireNonNegativeInteger(raw["h"], "rect height"),
+  });
+}
+
+function validateAssetOperation(value: unknown): AssetOperationResult {
+  const raw = requireRecord(value, "asset operation");
+  const operation = raw["operation"];
+  const status = raw["status"];
+  if (operation !== "import" && operation !== "reimport") {
+    throw new Error("invalid asset operation kind");
+  }
+  const validStatuses = new Set([
+    "accepted", "queued", "running", "completed", "cancelled", "failed", "ignored",
+  ]);
+  if (typeof status !== "string" || !validStatuses.has(status)) {
+    throw new Error("invalid asset operation status");
+  }
+  return Object.freeze({
+    operationId: requireNonEmptyString(raw["operationId"], "operationId"),
+    operation,
+    projectSessionId: requireNonEmptyString(raw["projectSessionId"], "projectSessionId"),
+    projectId: requireNonEmptyString(raw["projectId"], "projectId"),
+    ...(optionalString(raw["assetId"]) !== undefined
+      ? { assetId: optionalString(raw["assetId"])! }
+      : {}),
+    status: status as AssetOperationResult["status"],
+    ...(optionalString(raw["message"]) !== undefined
+      ? { message: optionalString(raw["message"])! }
+      : {}),
+  });
+}
+
+function validateAssetCancellation(value: unknown): AssetCancelResult {
+  const raw = requireRecord(value, "asset cancellation");
+  const status = raw["status"];
+  const normalized = status === "cancellation_requested"
+    ? "cancellation-requested"
+    : status === "already_finished"
+      ? "already-finished"
+      : status === "not_found"
+        ? "not-found"
+        : undefined;
+  if (normalized === undefined || typeof raw["cancelled"] !== "boolean") {
+    throw new Error("invalid asset cancellation result");
+  }
+  return Object.freeze({
+    operationId: requireNonEmptyString(raw["operationId"], "operationId"),
+    status: normalized,
+    cancelled: raw["cancelled"],
+  });
+}
+
+function validateAssetRemove(value: unknown): AssetRemoveResult {
+  const raw = requireRecord(value, "asset remove result");
+  if (typeof raw["removed"] !== "boolean" || typeof raw["filesPreserved"] !== "boolean") {
+    throw new Error("invalid asset remove result");
+  }
+  return Object.freeze({
+    operationId: requireNonEmptyString(raw["operationId"], "operationId"),
+    assetId: requireNonEmptyString(raw["assetId"], "assetId"),
+    removed: raw["removed"],
+    filesPreserved: raw["filesPreserved"],
+    ...(raw["asset"] === null || raw["asset"] === undefined
+      ? {}
+      : { asset: validateAssetSummary(raw["asset"]) }),
+  });
+}
+
+function validateAssetToolConfiguration(value: unknown): AssetToolConfiguration {
+  const raw = requireRecord(value, "asset tool configuration");
+  const scope = raw["scope"];
+  if (scope !== "project" && scope !== "user") {
+    throw new Error("invalid asset tool configuration scope");
+  }
+  if (typeof raw["persisted"] !== "boolean") {
+    throw new Error("invalid asset tool configuration persistence");
+  }
+  return Object.freeze({
+    scope,
+    projectId: requireNonEmptyString(raw["projectId"], "projectId"),
+    asepritePath: requireNonEmptyString(raw["asepritePath"], "asepritePath"),
+    mgcbPath: requireNonEmptyString(raw["mgcbPath"], "mgcbPath"),
+    aseprite: validateAssetToolDetection(raw["aseprite"]),
+    mgcb: validateAssetToolDetection(raw["mgcb"]),
+    persisted: raw["persisted"],
+  });
+}
+
+function validateAssetToolDetection(
+  value: unknown,
+): AssetToolConfiguration["aseprite"] {
+  const raw = requireRecord(value, "asset tool detection");
+  const source = raw["source"];
+  if (source !== "project" && source !== "user" && source !== "default") {
+    throw new Error("invalid asset tool detection source");
+  }
+  if (typeof raw["available"] !== "boolean") {
+    throw new Error("invalid asset tool availability");
+  }
+  return Object.freeze({
+    path: requireNonEmptyString(raw["path"], "asset tool path"),
+    available: raw["available"],
+    ...(optionalString(raw["version"]) !== undefined
+      ? { version: optionalString(raw["version"])! }
+      : {}),
+    message: requireString(raw["message"], "asset tool message"),
+    source,
+    testedAt: requireDecimalString(raw["testedAt"], "asset tool testedAt"),
+  });
+}
+
+function validateAssetReveal(value: unknown): AssetRevealResult {
+  const raw = requireRecord(value, "asset reveal result");
+  const target = raw["target"];
+  if (target !== "source" && target !== "output") {
+    throw new Error("invalid asset reveal target");
+  }
+  if (typeof raw["revealed"] !== "boolean") {
+    throw new Error("invalid asset reveal result");
+  }
+  const assetId = optionalString(raw["assetId"]);
+  const sourceOperationId = optionalString(raw["sourceOperationId"]);
+  if (assetId === undefined && sourceOperationId === undefined) {
+    throw new Error("asset reveal result is missing its source reference");
+  }
+  return Object.freeze({
+    operationId: requireNonEmptyString(raw["operationId"], "operationId"),
+    ...(assetId !== undefined ? { assetId } : {}),
+    ...(sourceOperationId !== undefined ? { sourceOperationId } : {}),
+    target,
+    path: requireNonEmptyString(raw["path"], "asset reveal path"),
+    revealed: raw["revealed"],
+  });
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`invalid ${label}`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function optionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return value === null || value === undefined ? undefined : requireRecord(value, "object");
+}
+
+function requireArray(value: unknown, label: string): unknown[] {
+  if (!Array.isArray(value)) throw new Error(`invalid ${label}`);
+  return value;
+}
+
+function requireString(value: unknown, label: string): string {
+  if (typeof value !== "string") throw new Error(`invalid ${label}`);
+  return value;
+}
+
+function requireNonEmptyString(value: unknown, label: string): string {
+  const result = requireString(value, label);
+  if (result.length === 0) throw new Error(`invalid ${label}`);
+  return result;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return value === null || value === undefined ? undefined : requireString(value, "optional string");
+}
+
+function requireStringArray(value: unknown, label: string): string[] {
+  return requireArray(value, label).map((item) => requireString(item, label));
+}
+
+function requireInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value)) throw new Error(`invalid ${label}`);
+  return value as number;
+}
+
+function requireNonNegativeInteger(value: unknown, label: string): number {
+  const result = requireInteger(value, label);
+  if (result < 0) throw new Error(`invalid ${label}`);
+  return result;
+}
+
+function requireDecimalString(value: unknown, label: string): string {
+  const normalized = typeof value === "number" ? String(value) : requireString(value, label);
+  if (!/^(0|[1-9][0-9]*)$/u.test(normalized)) throw new Error(`invalid ${label}`);
+  return normalized;
 }
 
 function availability(reason: string): ClassifiedError {

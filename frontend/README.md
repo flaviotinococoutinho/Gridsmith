@@ -20,11 +20,12 @@ governança de runtime.
 | `src/core/{panelRegistry,commandRegistry,toolRegistry,inspectorRegistry}.ts` | Registries internos tipados; resolvem seleção, modo e capabilities sem transformar a shell em API pública de plugins |
 | `src/core/selectionService.ts` | Seleção discriminada e session-aware compartilhada por canvas, árvore, Inspector e ações corretivas |
 | `src/core/workbenchLayout.ts` | Estado puro do layout adaptativo: tamanhos limitados, visibilidade, breakpoint estreito, drawers efêmeros e porta de persistência injetável |
+| `src/core/{assetApi,assetBrowserModel}.ts` | Contrato transport-neutral, catálogo/filtros, fila, progresso, cache de detalhes e payload seguro de DnD |
 | `src/core/levelEditorTools.ts` | Ferramentas puras do editor de níveis (brush/rect/line/picker, drag de células, hit-test de marcadores) |
 | `src/core/intGridDocument.ts` | Projeção otimista do IntGrid: agrega um patch por gesto, confirma ack/evento e recompõe/reverte rejeições sem histórico paralelo |
 | `src/core/logging.ts` | Logger puro com escopo hierárquico e sink injetável (`P7M_VERBOSITY`) |
 | `src/main/transport/` | Clientes dos transports (`GrpcTransport`, `GraphQlTransport`) — os **únicos** módulos com SDKs de transporte (regra F5) |
-| `src/main/EditorClient.ts` | Cliente do middleware: gRPC quente/fallback GraphQL, cursor `(middlewareInstanceId, projectSessionId, seq)`, snapshot integral em resync e operações transacionais de projeto |
+| `src/main/EditorClient.ts` | Cliente do middleware: gRPC quente/fallback GraphQL, cursor `(middlewareInstanceId, projectSessionId, seq)`, snapshot integral em resync, lifecycle e operações frias de assets somente via GraphQL |
 | `src/main/appConfig.ts` | Configuração refinada do Electron: instância única, estado de janela persistido, `sandbox` + navegação/popups bloqueados |
 | `src/main/project/` | `ProjectController` e adapters injetáveis de dialogs/filesystem: escrita durável (rename POSIX; swap recuperável no Windows), backup, recovery, lease e composição segura com a sessão transacional |
 | `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation; mutações de lifecycle permanecem APIs nomeadas e o menu nativo encaminha uma `ProjectCommandInvocation` tipada ao registry do renderer |
@@ -179,6 +180,25 @@ descarta o painel para não reutilizar seleção/estado do projeto anterior.
 Os modos `playing` e `paused` governam somente contribuições de UI. Nesta fase
 eles não iniciam PreviewHost, engine ou gameplay. Decisão:
 [ADR-023](../docs/adr/ADR-023-workbench-adaptativo-por-contribuicoes.md).
+
+## Assets sem terminal
+
+O Asset Browser é uma contribuição interna: árvore, busca, tags, thumbnails,
+DnD, fila, progresso, cancelamento, reimport, remoção e reveal não vivem na
+casca. O Inspector Aseprite mostra frames, clips/tags, duração, direção, pivôs,
+slices e 9-slice. Configuração de Aseprite/MGCB usa seletores nativos tipados e
+exibe o resultado detectado/testado; nunca solicita edição manual de JSON.
+
+O renderer não executa ferramentas nem importa arquivos. `EditorClient` usa o
+baseline GraphQL para as operações frias e encaminha
+`EditorApplicationEvent` antes dos listeners de Blueprint, preservando dirty
+state, histórico e autosave. DnD obtém o caminho exclusivamente pela porta do
+preload baseada em `webUtils.getPathForFile`; thumbnails locais não viram
+`file://`. A associação com Player/archetypes despacha `entitydef/update` com
+`spriteRenderer { assetId, defaultClip? }`.
+
+Decisão e gate: [ADR-024](../docs/adr/ADR-024-pipeline-visual-de-assets.md) e
+`npm run test:assets-workbench`.
 
 ## Regras da casa
 

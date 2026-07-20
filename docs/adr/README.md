@@ -17,3 +17,4 @@ functions) estão registradas retroativamente em
 | [ADR-021](ADR-021-ciclo-de-vida-duravel-do-projeto.md) | Lifecycle de arquivo durável, recovery explícito, templates e unidades canônicas | Accepted |
 | [ADR-022](ADR-022-historico-global-transacional.md) | Histórico global transacional, patches incrementais e projeção otimista | Accepted |
 | [ADR-023](ADR-023-workbench-adaptativo-por-contribuicoes.md) | Workbench adaptativo composto por registries e seleção transversal | Accepted |
+| [ADR-024](ADR-024-pipeline-visual-de-assets.md) | Pipeline visual de assets centralizado na camada de aplicação | Accepted |

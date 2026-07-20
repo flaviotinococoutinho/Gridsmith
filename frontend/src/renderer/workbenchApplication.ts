@@ -16,6 +16,7 @@ import type {
   HistoryStatusPayload,
 } from "../core/editorCommands.js";
 import { EventLog } from "../core/eventLog.js";
+import type { EditorApplicationEvent } from "../core/assetApi.js";
 import { ExternalOpenIntentQueue } from "../core/externalOpenIntentQueue.js";
 import { ExperienceGate, type ResolvedExperienceLike } from "../core/experienceGate.js";
 import { InspectorRegistry } from "../core/inspectorRegistry.js";
@@ -221,6 +222,43 @@ export class EditorWorkbenchApplication {
       outcome.event as BlueprintEventPayload & { kind: string } & Record<string, unknown>,
       projection,
     );
+    this.renderProblemBadge();
+    this.regions?.bottom.activateCurrent();
+  }
+
+  /** Registra falhas operacionais acionáveis sem misturá-las ao EventJournal. */
+  recordDiagnosticProblem(
+    event: { kind: string } & Record<string, unknown>,
+    reason: string,
+  ): void {
+    this.eventLog.record(event, { status: "skipped", reason });
+    this.renderProblemBadge();
+    this.regions?.bottom.activateCurrent();
+  }
+
+  recordApplicationEvent(event: EditorApplicationEvent): void {
+    this.eventLog.recordApplication({
+      seq: event.seq,
+      domain: event.domain,
+      kind: event.kind,
+      severity: event.severity,
+      projectSessionId: event.projectSessionId,
+      projectId: event.projectId,
+      ...(event.operationId ? { operationId: event.operationId } : {}),
+      payload: event.payload,
+      ...(event.progress?.message ? { detail: event.progress.message } : {}),
+    });
+    this.renderProblemBadge();
+    this.regions?.bottom.activateCurrent();
+  }
+
+  resolveApplicationProblem(options: {
+    readonly kind: string;
+    readonly projectSessionId?: string;
+    readonly subject?: string;
+    readonly operationId?: string;
+  }): void {
+    if (this.eventLog.resolveApplication(options) === 0) return;
     this.renderProblemBadge();
     this.regions?.bottom.activateCurrent();
   }
@@ -455,6 +493,13 @@ export class EditorWorkbenchApplication {
 
   refreshPanels(): void {
     this.refreshAllRegions();
+  }
+
+  /** Ativa uma contribuição pelo registro, sem acoplar módulos aos hosts privados. */
+  activatePanel(panelId: string, focus = true): boolean {
+    const panel = this.panels.get(panelId);
+    if (!panel || !this.regions) return false;
+    return this.regions[panel.defaultRegion].activate(panelId, focus);
   }
 
   private setProjectOperationBusy(busy: boolean): void {

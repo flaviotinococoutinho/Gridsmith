@@ -416,6 +416,75 @@ button:disabled { color: var(--muted); cursor: not-allowed; }
 .performance-grid dd { margin: 0; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); }
 .performance-grid dd { text-align: right; font-variant-numeric: tabular-nums; }
 
+/* ---- catálogo e inspector de assets ---- */
+.asset-browser { display: flex; flex-direction: column; min-height: 100%; }
+.asset-browser-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.asset-browser-toolbar input,
+.aseprite-inspector select {
+  min-width: 0;
+  padding: 0.35rem 0.45rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.asset-tool-configuration { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); }
+.asset-tool-configuration summary { cursor: pointer; font-weight: 600; }
+.asset-tool-configuration .asset-card-actions { margin-top: 0.4rem; }
+.asset-tool-status { display: block; min-height: 1.2rem; margin-top: 0.35rem; overflow-wrap: anywhere; }
+.asset-browser-body { display: grid; grid-template-columns: minmax(7rem, 0.42fr) minmax(0, 1fr); min-height: 0; }
+.asset-browser-navigation { padding: 0.5rem; border-right: 1px solid var(--border); overflow: auto; }
+.asset-directory-tree,
+.asset-tag-list { display: grid; gap: 0.2rem; margin-bottom: 0.7rem; }
+.asset-directory-tree ul { list-style: none; margin: 0; padding-left: 0.55rem; }
+.asset-tree-button { width: 100%; padding: 0.2rem 0.3rem; text-align: left; border-color: transparent; background: transparent; }
+.asset-tree-button.active,
+.asset-tag.active { border-color: var(--accent); background: var(--panel-2); }
+.asset-tag { padding: 0.15rem 0.35rem; text-align: left; }
+.asset-catalog { min-height: 10rem; padding: 0.5rem; overflow: auto; }
+.asset-catalog.drop-target { outline: 2px dashed var(--accent); outline-offset: -4px; }
+.asset-catalog-summary { margin-bottom: 0.45rem; }
+.asset-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: 0.45rem; }
+.asset-card {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel-2);
+}
+.asset-card:focus-visible { outline: 2px solid var(--accent); }
+.asset-card > strong,
+.asset-card > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asset-thumbnail { width: 100%; aspect-ratio: 1; object-fit: contain; image-rendering: pixelated; background: var(--bg); border-radius: 3px; }
+.asset-thumbnail-fallback { display: grid; place-items: center; color: var(--muted); font-size: 1.4rem; font-weight: 700; }
+.asset-card-actions,
+.asset-inspector-actions,
+.problem-actions { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.asset-card-actions button { padding: 0.15rem 0.3rem; font-size: 0.78rem; }
+.asset-operation-queue { display: grid; gap: 0.35rem; padding: 0.5rem; border-top: 1px solid var(--border); }
+.asset-operation { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(5rem, 1fr) minmax(5rem, 1fr) auto; align-items: center; gap: 0.35rem; }
+.asset-operation progress { width: 100%; }
+.asset-operation-failed { color: var(--danger); }
+.aseprite-inspector { display: grid; gap: 0.75rem; min-width: 0; }
+.aseprite-inspector h2,
+.aseprite-inspector h3 { margin: 0; }
+.asset-source-path { overflow-wrap: anywhere; margin: 0; }
+.aseprite-preview { max-width: 100%; max-height: 14rem; object-fit: contain; image-rendering: pixelated; background: var(--bg); }
+.asset-facts { display: grid; grid-template-columns: minmax(5rem, auto) minmax(0, 1fr); gap: 0.25rem 0.5rem; }
+.asset-facts dt,
+.asset-facts dd { margin: 0 !important; overflow-wrap: anywhere; }
+.asset-inspector-list { display: grid; gap: 0.35rem; margin-top: 0.35rem; }
+.asset-metadata-card { display: grid; gap: 0.2rem; padding: 0.4rem; border: 1px solid var(--border); border-radius: 4px; }
+.asset-metadata-card code { white-space: normal; overflow-wrap: anywhere; }
+
 /* ---- inspector ---- */
 #inspector {
   grid-column: 5;

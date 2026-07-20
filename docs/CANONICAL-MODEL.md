@@ -101,6 +101,10 @@ nunca erros silenciosos.
   como artefato com `createdBy` e as actions `pipeline:completed` notificam o
   ecossistema. Ex.: `aseprite-import` (parse → normalize → publish
   `sprite-document`).
+- **Operações de aplicação** não são fatos do Blueprint. Importação, progresso,
+  cancelamento e falha usam `EditorApplicationEvent`; compartilham o
+  `EventJournal` e seu cursor para entrega ordenada, mas não entram no
+  `BlueprintStore`, `CommandHistory`, dirty state ou autosave.
 
 ```mermaid
 graph TD
@@ -266,9 +270,10 @@ matriz via MCP (`runtime_experience`).
 
 O Blueprint é salvável como **documento declarativo versionado**
 (`BlueprintSerializer`): `exportBlueprint` produz um snapshot completo
-(`schemaVersion`, `projectId`, `metadata` + todos os domínios). Na versão 4,
-`metadata` mantém resolução/unidade espacial explícitas e cada nível persiste
-sua paleta semântica. O `ProjectSessionManager`
+(`schemaVersion`, `projectId`, `metadata` + todos os domínios). Na versão 5,
+`metadata` mantém resolução/unidade espacial explícitas, cada nível persiste
+sua paleta semântica e uma definição de entidade pode referenciar
+`spriteRenderer { assetId, defaultClip? }`. O `ProjectSessionManager`
 faz parse, migração, validação e replay em store temporário, sem publicar
 actions/eventos nem tocar o runtime. Só depois das validações semânticas ele
 reseta/reidrata o runtime e troca a referência ativa. O roundtrip é sem perdas;
@@ -299,13 +304,13 @@ ou comando mais novo.
 
 ```mermaid
 graph TD
-  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v4<br/>schemaVersion + projectId + metadata + paleta + dominios")]
+  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v5<br/>schemaVersion + projectId + metadata + paleta + spriteRenderer + dominios")]
   DOC -.-> RAW["raw carregado"]
   subgraph LOAD["LOAD"]
     RAW --> MIG["migrateBlueprintDocument(raw)<br/>(sem schemaVersion = 0)"]
     MIG --> V{"versao > suportada?"}
     V -->|"sim"| REJ(["REJEITA"])
-    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2->3->4)"]
+    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2->3->4->5)"]
     CHAIN --> TMP["cria ProjectSession temporaria"]
     TMP --> REP["replay prepare: filters + store + history<br/>sem actions, journal ou runtime"]
     REP --> SEM["validacoes semanticas + preparar projecao"]

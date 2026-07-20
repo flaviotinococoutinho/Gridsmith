@@ -27,6 +27,12 @@ import {
 } from "@p7m/middleware/dist/transport/auth.js";
 import { ProjectLifecycle, type RecentProject } from "../core/projectLifecycle.js";
 import type {
+  AssetCatalogFilter,
+  AssetImportInput,
+  AssetSourceReference,
+  AssetToolConfigurationInput,
+} from "../core/assetApi.js";
+import type {
   CreateProjectFromTemplateRequest,
   DiscardAutosaveRequest,
   NativeMenuCommandDescriptor,
@@ -183,6 +189,7 @@ function buildSupervisor(
   pipeName: string,
   client: EditorClient,
   authToken: string,
+  assetCatalogRoot: string,
 ): ProcessSupervisor {
   const repoRoot = path.join(dirname, "../../..");
   const middlewareEntry = path.join(dirname, "../../node_modules/@p7m/middleware/dist/index.js");
@@ -201,7 +208,14 @@ function buildSupervisor(
         launchService(
           "middleware",
           process.execPath,
-          [middlewareEntry, "--pipe", pipeName, "--no-mcp"],
+          [
+            middlewareEntry,
+            "--pipe",
+            pipeName,
+            "--assets",
+            assetCatalogRoot,
+            "--no-mcp",
+          ],
           {
             ELECTRON_RUN_AS_NODE: "1",
             [EDITOR_AUTH_TOKEN_ENV]: authToken,
@@ -294,7 +308,13 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
 
   // P0.1: por padrão o Electron é o supervisor do ecossistema (executável
   // único); --external-services preserva o modo dev com serviços próprios
-  const supervisor = externalServices ? undefined : buildSupervisor(pipeName, client, authToken);
+  // Catálogo gerenciado pelo produto: o renderer nunca executa CLI nem escolhe
+  // arquivos de configuração. As referências persistidas no Blueprint usam
+  // assetId e continuam reparáveis mesmo se este diretório for movido/limpo.
+  const assetCatalogRoot = path.join(app.getPath("userData"), "asset-catalog");
+  const supervisor = externalServices
+    ? undefined
+    : buildSupervisor(pipeName, client, authToken, assetCatalogRoot);
   const supervisionStarted = supervisor?.startAll();
 
   const serviceStatusPayload = (): Array<ServiceStatus & { recentLog: readonly string[] }> =>
@@ -405,6 +425,56 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
   ipcMain.handle("p7m:experience", (_event, family?: string, version?: string) =>
     client.resolveExperience(family, version),
   );
+  // Assets são operações frias: o main apenas oferece IPC tipado e seletores
+  // nativos. Importação, validação e execução Aseprite/MGCB permanecem no
+  // AssetApplicationService através do baseline GraphQL do EditorClient.
+  ipcMain.handle("p7m:asset-catalog", (_event, filter?: AssetCatalogFilter) =>
+    client.assetCatalog(filter));
+  ipcMain.handle("p7m:asset-details", (_event, assetId: string) =>
+    client.assetDetails(assetId));
+  ipcMain.handle("p7m:asset-import", (_event, input: AssetImportInput) =>
+    client.importAsset(input));
+  ipcMain.handle("p7m:asset-reimport", (_event, assetId: string, operationId?: string) =>
+    client.reimportAsset(assetId, operationId));
+  ipcMain.handle("p7m:asset-remove", (_event, assetId: string) =>
+    client.removeAsset(assetId));
+  ipcMain.handle("p7m:asset-configure-tools", (_event, input: AssetToolConfigurationInput) =>
+    client.configureAssetTools(input));
+  ipcMain.handle("p7m:asset-reveal-source", (_event, reference: AssetSourceReference) =>
+    client.revealSource(reference));
+  ipcMain.handle("p7m:asset-reveal-output", (_event, assetId: string) =>
+    client.revealOutput(assetId));
+  ipcMain.handle("p7m:asset-cancel", (_event, operationId: string) =>
+    client.cancelAssetOperation(operationId));
+  ipcMain.handle("p7m:select-asset-sources", async (event) => {
+    if (event.sender.id !== window.webContents.id) {
+      throw new Error("Asset selection rejected for an unknown renderer");
+    }
+    const selected = await dialog.showOpenDialog(window, {
+      title: "Importar assets",
+      buttonLabel: "Importar",
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Aseprite", extensions: ["aseprite", "ase"] },
+        { name: "Todos os arquivos", extensions: ["*"] },
+      ],
+    });
+    return selected.canceled ? [] : selected.filePaths;
+  });
+  ipcMain.handle("p7m:select-asset-tool-executable", async (event, tool: unknown) => {
+    if (event.sender.id !== window.webContents.id) {
+      throw new Error("Asset tool selection rejected for an unknown renderer");
+    }
+    if (tool !== "aseprite" && tool !== "mgcb") {
+      throw new TypeError("tool must be aseprite or mgcb");
+    }
+    const selected = await dialog.showOpenDialog(window, {
+      title: `Selecionar executável ${tool === "aseprite" ? "Aseprite" : "MGCB"}`,
+      buttonLabel: "Testar executável",
+      properties: ["openFile"],
+    });
+    return selected.canceled ? undefined : selected.filePaths[0];
+  });
   ipcMain.handle("p7m:list-project-templates", () => controller.listProjectTemplates());
   ipcMain.handle(
     "p7m:create-project-from-template",
@@ -551,6 +621,12 @@ if (isPrimaryInstance) void app.whenReady().then(async () => {
     if (!window.isDestroyed()) {
       window.webContents.send("p7m:blueprint-event", event);
     }
+  });
+  client.onApplicationEvent((event) => {
+    // Progresso do pipeline nunca participa de dirty state, autosave ou
+    // histórico. A sessão já foi validada no EditorClient antes deste fan-out.
+    if (event.projectSessionId !== lifecycle.project?.projectSessionId) return;
+    if (!window.isDestroyed()) window.webContents.send("p7m:application-event", event);
   });
   client.onResynchronized((snapshot, record) => {
     // O snapshot completo decide qualquer comando de entrega incerta. A

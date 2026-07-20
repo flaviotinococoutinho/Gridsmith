@@ -28,6 +28,11 @@ export interface LogEntry {
   readonly projectSessionId?: string;
   readonly projectId?: string;
   readonly commandSequence?: string;
+  readonly domain?: "blueprint" | "application";
+  readonly severity?: "info" | "warning" | "error";
+  readonly detail?: string;
+  readonly applicationPayload?: Readonly<Record<string, unknown>>;
+  readonly operationId?: string;
 }
 
 export interface LogFilter {
@@ -47,6 +52,7 @@ export function subjectOf(event: Record<string, unknown>): string | undefined {
     event["entityId"],
     (event["level"] as { levelId?: string } | undefined)?.levelId,
     event["levelId"],
+    event["assetId"],
     (event["placement"] as { levelId?: string } | undefined)?.levelId,
   ];
   const found = candidates.find((c) => typeof c === "string" && c.length > 0);
@@ -111,6 +117,7 @@ export class EventLog {
       ...(typeof projectSessionId === "string" ? { projectSessionId } : {}),
       ...(typeof projectId === "string" ? { projectId } : {}),
       ...(typeof commandSequence === "string" ? { commandSequence } : {}),
+      domain: "blueprint",
       ...(projection !== undefined
         ? {
             projectionStatus: projection.status,
@@ -118,6 +125,53 @@ export class EventLog {
             ...(projection.reason !== undefined ? { projectionReason: projection.reason } : {}),
           }
         : {}),
+    };
+    this.entries.push(entry);
+    if (this.entries.length > this.capacity) {
+      this.entries.splice(0, this.entries.length - this.capacity);
+    }
+    return entry;
+  }
+
+  /** Eventos operacionais têm severidade própria e não fingem projeção Blueprint. */
+  recordApplication(event: {
+    readonly seq: string;
+    readonly domain: string;
+    readonly kind: string;
+    readonly severity: "info" | "warning" | "error";
+    readonly projectSessionId?: string;
+    readonly projectId?: string;
+    readonly operationId?: string;
+    readonly payload?: unknown;
+    readonly detail?: string;
+  }): LogEntry {
+    const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+      ? event.payload as Record<string, unknown>
+      : undefined;
+    const subject = firstString(payload?.["assetId"], payload?.["sourcePath"], event.operationId);
+    const commandSequence = `application:${event.domain}:${event.seq}`;
+    const duplicateIndex = event.projectSessionId
+      ? this.entries.findIndex((candidate) => candidate.commandSequence === commandSequence &&
+        candidate.projectSessionId === event.projectSessionId)
+      : -1;
+    if (duplicateIndex >= 0) return this.entries[duplicateIndex]!;
+    const detail = event.detail ?? firstString(payload?.["message"], payload?.["stderr"]);
+    const label = eventLabel(event.kind);
+    const entry: LogEntry = {
+      sequence: ++this.sequence,
+      timestampMs: this.now(),
+      kind: event.kind,
+      label,
+      summary: subject ? `${label}: ${subject}` : label,
+      domain: "application",
+      severity: event.severity,
+      commandSequence,
+      ...(subject ? { subject } : {}),
+      ...(event.operationId ? { operationId: event.operationId } : {}),
+      ...(detail ? { detail } : {}),
+      ...(payload ? { applicationPayload: { ...payload } } : {}),
+      ...(event.projectSessionId ? { projectSessionId: event.projectSessionId } : {}),
+      ...(event.projectId ? { projectId: event.projectId } : {}),
     };
     this.entries.push(entry);
     if (this.entries.length > this.capacity) {
@@ -134,7 +188,7 @@ export class EventLog {
       .filter((entry) => {
         if (filter.status && entry.projectionStatus !== filter.status) return false;
         if (text) {
-          const haystack = `${entry.label} ${entry.subject ?? ""} ${entry.projectionReason ?? ""}`.toLowerCase();
+          const haystack = `${entry.label} ${entry.subject ?? ""} ${entry.projectionReason ?? ""} ${entry.detail ?? ""}`.toLowerCase();
           if (!haystack.includes(text)) return false;
         }
         return true;
@@ -145,6 +199,25 @@ export class EventLog {
     return this.entries.length;
   }
 
+  resolveApplication(options: {
+    readonly kind: string;
+    readonly projectSessionId?: string;
+    readonly subject?: string;
+    readonly operationId?: string;
+  }): number {
+    let removed = 0;
+    for (let index = this.entries.length - 1; index >= 0; index--) {
+      const entry = this.entries[index]!;
+      if (entry.domain !== "application" || entry.kind !== options.kind) continue;
+      if (options.projectSessionId && entry.projectSessionId !== options.projectSessionId) continue;
+      if (options.subject && entry.subject !== options.subject) continue;
+      if (options.operationId && entry.operationId !== options.operationId) continue;
+      this.entries.splice(index, 1);
+      removed++;
+    }
+    return removed;
+  }
+
   /** Troca de ProjectSession cria uma nova partição de diagnóstico. */
   clear(): void {
     this.entries.splice(0);
@@ -153,7 +226,12 @@ export class EventLog {
   /** Problemas: entradas skipped/deferred (alimenta o contador da status bar). */
   get problemCount(): number {
     return this.entries.filter(
-      (e) => e.projectionStatus === "skipped" || e.projectionStatus === "deferred",
+      (e) => e.projectionStatus === "skipped" || e.projectionStatus === "deferred" ||
+        e.severity === "warning" || e.severity === "error",
     ).length;
   }
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim();
 }

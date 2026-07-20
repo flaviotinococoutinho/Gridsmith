@@ -111,6 +111,14 @@ test("versão futura é recusada com erro claro contendo a versão", () => {
   );
 });
 
+test("documento v4 migra sem inventar referência de asset", () => {
+  const legacyV4 = { ...createPlatformer2DDocument(), schemaVersion: 4 };
+  const migrated = migrateBlueprintDocument(legacyV4);
+
+  assert.equal(migrated.schemaVersion, BLUEPRINT_DOCUMENT_VERSION);
+  assert.equal(migrated.entityDefs[0]?.spriteRenderer, undefined);
+});
+
 test("entrada que não é objeto é recusada", () => {
   assert.throws(() => migrateBlueprintDocument(null), BlueprintDocumentError);
   assert.throws(() => migrateBlueprintDocument(42), BlueprintDocumentError);

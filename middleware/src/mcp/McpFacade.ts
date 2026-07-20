@@ -9,7 +9,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import type { AssetPipelineService } from "../assets/AssetPipelineService.js";
 import type { ArtifactStore } from "../canonical/ArtifactStore.js";
 import type { EditorSurface } from "../canonical/EditorSurface.js";
 import type { HookBus } from "../canonical/HookBus.js";
@@ -30,8 +29,6 @@ export interface CanonicalServices {
   profiles: RuntimeProfileRegistry;
   governor: ExperienceGovernor;
   adapter: RuntimeAdapter;
-  /** Presente quando o middleware roda com --assets <dir>. */
-  assets?: AssetPipelineService;
 }
 
 /** Remove chaves undefined (zod .optional() ⇄ exactOptionalPropertyTypes). */
@@ -574,21 +571,10 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
     { levelId: z.string().min(1) },
   );
 
-  if (canonical.assets) {
-    const assets = canonical.assets;
-    server.registerTool(
-      "asset_ingest",
-      {
-        description:
-          "Processa um arquivo .aseprite do catálogo: exporta via CLI (spritesheet + frameTags/slices), normaliza no pipeline canônico (artefato sprite-document versionável com tags derivadas dos diretórios) e compila o spritesheet para .xnb via MGCB.",
-        inputSchema: { path: z.string().min(1) },
-      },
-      async ({ path: filePath }) => {
-        const result = await assets.ingest(filePath);
-        return { content: [{ type: "text", text: JSON.stringify(result) }] };
-      },
-    );
-
+  if (canonical.surface.isAssetPipelineConfigured) {
+    // Operações que executam Aseprite/MGCB exigem uma ação confirmada na UI e
+    // entram pelo baseline GraphQL. O boundary de agente permanece somente de
+    // leitura para assets; não há permissão MCP implícita para iniciar binários.
     server.registerTool(
       "asset_catalog",
       {
@@ -597,14 +583,10 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
         inputSchema: { tag: z.string().min(1).optional() },
       },
       async ({ tag }) => {
-        const entries = assets.catalog(canonical.artifacts.list("sprite-document"), tag).map((e) => ({
-          artifactId: e.artifactId,
-          revision: e.revision,
-          contentHash: e.contentHash,
-          tags: e.metadata.tags ?? [],
-          source: e.metadata.source,
-        }));
-        return { content: [{ type: "text", text: JSON.stringify(entries, null, 2) }] };
+        const catalog = canonical.surface.assetCatalog(
+          tag === undefined ? undefined : { tag },
+        );
+        return { content: [{ type: "text", text: JSON.stringify(catalog, null, 2) }] };
       },
     );
   }

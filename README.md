@@ -5,7 +5,7 @@ composto por três macrocamadas independentes e altamente desacopladas:
 
 | Camada | Diretório | Stack | Papel |
 |---|---|---|---|
-| **Frontend** | [`frontend/`](frontend/) | Electron + TypeScript | Ambiente visual WYSIWYG: blueprints, grafos de estado, rigs/bones, pipelines de iluminação e gestão taxonômica de assets |
+| **Frontend** | [`frontend/`](frontend/) | Electron + TypeScript | Workbench visual por contribuições: projeto, nível, histórico, Asset Browser, Inspector Aseprite e diagnóstico |
 | **Middleware** | [`middleware/`](middleware/) | Node.js + TypeScript (MCP Server) | Orquestração do estado declarativo (AST), interface com IA generativa, ganchos via MCP e JSON-RPC 2.0 |
 | **Backend** | [`engine/`](engine/) | C# / .NET 8 + MonoGame | Motor determinístico de baixo nível, Data-Oriented Design, alocação Zero-GC, consumo via IPC e Shared Memory |
 | **Contratos** | [`contracts/`](contracts/) | JSON Schema + GraphQL SDL + Protobuf | Fonte única de verdade dos contratos JSON-RPC, GraphQL e gRPC trafegados entre as camadas |
@@ -72,8 +72,9 @@ da engine, nunca assume suporte. Desenho completo em
 - **Sessão de projeto transacional:** `ProjectSessionManager` prepara parse, migração,
   validação, replay e projeção fora da sessão publicada; só então faz a troca atômica.
   `EditorSurface`, JSON-RPC, GraphQL, gRPC e MCP resolvem a mesma sessão ativa. O
-  documento Blueprint v4 persiste `projectId`, metadata, unidades espaciais e a
-  paleta semântica dos níveis;
+  documento Blueprint v5 persiste `projectId`, metadata, unidades espaciais,
+  paleta semântica dos níveis e a referência opcional
+  `EntityDefinition.spriteRenderer { assetId, defaultClip? }`;
   create/open/close usam `expectedProjectSessionId` + `expectedCommandSequence`
   como compare-and-swap para rejeitar sessão ou revisão atrasadas.
 - **Lifecycle de arquivo durável:** New materializa um template real, Save publica por
@@ -169,10 +170,16 @@ graph LR
   projeção e a engine ganha `tilemap/remove`) e **IntGridDocument** no editor
   como projeção otimista (um `level/patch` por gesto, ack/rejeição e undo/redo
   global; sem snapshot completo como operação normal). Parte 3:
-  **pipeline de assets** (`AssetPipelineService`: watcher do catálogo taxonômico →
-  export CLI Aseprite → artefato canônico com tags por diretório → compile MGCB para
-  `.xnb`, com `ToolRunner` injetável e erros tipados; flag `--assets <dir>` no
-  middleware e ferramentas MCP `asset_ingest`/`asset_catalog`), **world map canônico**
+  **pipeline visual de assets** centralizado no `AssetApplicationService`: watcher e
+  GraphQL delegam ao mesmo `AssetPipelineService` (export CLI Aseprite →
+  artefato canônico com tags por diretório → compile MGCB para `.xnb`). O workbench
+  oferece Asset Browser, busca/tags/miniaturas, fila cancelável, DnD, reimport,
+  configuração testada de ferramentas, Inspector Aseprite e Problems; somente a
+  associação `spriteRenderer` altera o Blueprint v5, pelo comando canônico
+  `entitydef/update`. Eventos operacionais não entram em dirty state, histórico ou
+  autosave; MCP consulta o catálogo, mas não inicia binários sem confirmação visual
+  ([ADR-024](docs/adr/ADR-024-pipeline-visual-de-assets.md)). Isso não
+  introduz PreviewHost nem funcionalidades de gameplay. Parte 4: **world map canônico**
   (`world/place`/`world/unplace` com rejeição de sobreposição e vizinhança por borda,
   consultável via `blueprint/query world`) e **TimelineCurve** no editor (keyframes com
   easing Bézier por segmento, busca binária, sample para canvas). Restam: editores de
@@ -189,6 +196,7 @@ cd middleware
 npm install
 npm run build
 npm test          # unitários + integração loopback
+npm run test:asset-application  # fachada, pipeline, segurança e sessão de assets
 npm start         # inicia o pipe server + servidor MCP (stdio)
 ```
 
@@ -212,6 +220,7 @@ cd frontend
 npm install        # instala deps (Electron; no CI use ELECTRON_SKIP_BINARY_DOWNLOAD=1)
 npm run build      # tsc + copy-static (index.html, css, AutoTiler vendorizado)
 npm test           # núcleos puros + integração do EditorClient (node:test via tsx)
+npm run test:assets-workbench  # catálogo, DnD, contribuições e baseline GraphQL
 npm run typecheck  # tsc --noEmit
 ```
 
@@ -275,7 +284,7 @@ processo, troca de projeto ou gap do journal exige snapshot e ressincronização
 | [`docs/ALPHA-0.1.md`](docs/ALPHA-0.1.md) | Milestone Alpha 0.1, jornada de aceite e backlog P0 (status por evidência) |
 | [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Matriz de versionamento e compatibilidade (protocolo, documentos, artefatos, perfis, shared memory) |
 | [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) | Governança arquitetural (23 regras executáveis), Definition of Done, quality gates e fontes de verdade |
-| [`docs/adr/`](docs/adr/) | Architecture Decision Records (ADR-016..021: transports, sessão transacional e lifecycle durável do projeto) |
+| [`docs/adr/`](docs/adr/) | Architecture Decision Records, incluindo transports, sessão/lifecycle, histórico, workbench e pipeline visual de assets (ADR-024) |
 | [`docs/ARCHITECTURE-SPEC.md`](docs/ARCHITECTURE-SPEC.md) | **Especificação técnica normativa (constituição de engenharia):** princípios invioláveis, regras de dependência, paradigmas, padrões, contratos, RFCs/ISO, versionamento, erros, testes e plano de evolução — construída a partir do código com evidência classificada |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Camadas, protocolo de framing e ciclo de vida da conexão |
 | [`docs/CANONICAL-MODEL.md`](docs/CANONICAL-MODEL.md) | Modelo canônico (comandos/eventos/hooks/pipelines/artefatos), adapters e perfis de runtime |

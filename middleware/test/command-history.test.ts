@@ -358,7 +358,7 @@ test("histórico global: migration v3 adiciona paleta determinística e produz s
     levels: [{ ...LEVEL, palette: undefined, intGrid: [0, 1, 2] }],
     placements: [],
   });
-  assert.equal(migrated.schemaVersion, 4);
+  assert.equal(migrated.schemaVersion, 5);
   assert.deepEqual(migrated.levels[0]?.palette, [
     { value: 1, name: "Chão", color: "#7a5230" },
     { value: 2, name: "Parede", color: "#5a6a7a" },

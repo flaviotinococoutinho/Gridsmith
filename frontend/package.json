@@ -15,6 +15,8 @@
     "test:project-session": "node --import tsx --test --test-name-pattern=\"^sessão de projeto:\" test/editor-client.integration.test.ts",
     "test:canonical-editing": "node --import tsx --test --test-name-pattern=\"^edição canônica:\" test/canonical-command-feedback.test.ts test/intgrid-document.test.ts test/level-editor-tools.test.ts test/level-editor-store.test.ts test/project-lifecycle.test.ts test/project-controller.test.ts test/editor-client.integration.test.ts",
     "test:adaptive-workbench": "node --import tsx --test test/contribution-registries.test.ts test/workbench-layout.test.ts test/adaptive-workbench.test.ts test/native-command-bridge.test.ts test/native-menu-projection.test.ts test/project-close-preflight.test.ts test/schema-inspector-view.test.ts test/pending-edit-coordinator.test.ts test/workbench-core.test.ts test/experience-gate.test.ts",
+    "test:assets-client": "node --import tsx --test test/editor-client-assets.test.ts",
+    "test:assets-workbench": "node --import tsx --test test/asset-browser-model.test.ts test/asset-file-drop-adapter.test.ts test/asset-contributions.test.ts test/editor-client-assets.test.ts",
     "test:transport-fallback": "node --import tsx --test --test-name-pattern=\"^resiliência: fallback gRPC → GraphQL mantém chamadas e eventos$\" test/editor-client.integration.test.ts",
     "test:transport-repromotion": "node --import tsx --test --test-name-pattern=\"^resiliência: repromoção GraphQL → gRPC exige sondas saudáveis consecutivas$\" test/editor-client.integration.test.ts",
     "test:transport-auth": "node --import tsx --test --test-name-pattern=\"^resiliência: autenticação gRPC inválida não faz fallback para GraphQL$\" test/editor-client.integration.test.ts",

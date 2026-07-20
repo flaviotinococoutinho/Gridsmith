@@ -11,7 +11,7 @@
  *  - NÃO há referências transitórias a branches/sessões de geração;
  *  - todo comando `npm run <x>` documentado existe em algum package.json;
  *  - o workflow de CI executa os gates de transports e de documentação;
- *  - o gate do workbench cobre registries, layout, command bridge e governança;
+ *  - os gates do workbench cobrem registries/layout e o fluxo visual de assets;
  *  - schemas JSON têm sintaxe/refs locais coerentes e `required` declarado;
  *  - `COMMAND_KINDS`, enum GraphQL e schema de comandos têm cobertura idêntica;
  *  - o proto mantém o dispatch genérico e as RPCs explícitas de histórico;
@@ -54,6 +54,7 @@ const REQUIRED = [
   "docs/adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md",
   "docs/adr/ADR-022-historico-global-transacional.md",
   "docs/adr/ADR-023-workbench-adaptativo-por-contribuicoes.md",
+  "docs/adr/ADR-024-pipeline-visual-de-assets.md",
   "contracts/README.md",
   "contracts/shared-memory-layout.md",
   "contracts/schemas/error-codes.md",
@@ -73,6 +74,11 @@ const REQUIRED = [
   "benchmarks/README.md",
   "benchmarks/transport-benchmark.schema.json",
   "benchmarks/results/2026-07-19-github-ubuntu.json",
+  "middleware/test/asset-application.test.ts",
+  "frontend/test/asset-browser-model.test.ts",
+  "frontend/test/asset-file-drop-adapter.test.ts",
+  "frontend/test/asset-contributions.test.ts",
+  "frontend/test/editor-client-assets.test.ts",
 ];
 
 function packageScripts() {
@@ -222,6 +228,12 @@ const explicitTestCases = [
   ["frontend/test/contribution-registries.test.ts", "registries puros: command palette encontra e executa"],
   ["frontend/test/workbench-layout.test.ts", "layout do workbench: modo estreito e drawer são derivados"],
   ["frontend/test/native-command-bridge.test.ts", "menus de projeto, histórico e recentes só encaminham ao CommandRegistry"],
+  ["middleware/test/asset-application.test.ts", "asset application: import publica catalogo/detalhes e quatro clips sem sujar Blueprint"],
+  ["middleware/test/asset-application.test.ts", "asset application: falha de primeira importacao preserva referencia validada para reveal"],
+  ["frontend/test/asset-browser-model.test.ts", "asset browser: player.aseprite mantém clips, associação e atualização visual após reimport"],
+  ["frontend/test/asset-file-drop-adapter.test.ts", "asset drop adapter: resolve caminhos somente pela porta injetada"],
+  ["frontend/test/asset-contributions.test.ts", "asset contributions: falha oferece retry, configurar e abrir fonte por registries"],
+  ["frontend/test/editor-client-assets.test.ts", "EditorClient: evento domain=asset avança cursor sem alcançar Blueprint/dirty"],
 ];
 for (const [rel, marker] of explicitTestCases) {
   const file = path.join(root, rel);
@@ -251,8 +263,34 @@ if (fs.existsSync(frontendPackagePath)) {
         errors.push(`frontend/package.json: test:adaptive-workbench não inclui ${testFile}`);
       }
     }
+    const assetsGate = frontendPackage.scripts?.["test:assets-workbench"];
+    for (const testFile of [
+      "test/asset-browser-model.test.ts",
+      "test/asset-file-drop-adapter.test.ts",
+      "test/asset-contributions.test.ts",
+      "test/editor-client-assets.test.ts",
+    ]) {
+      if (typeof assetsGate !== "string" || !assetsGate.includes(testFile)) {
+        errors.push(`frontend/package.json: test:assets-workbench não inclui ${testFile}`);
+      }
+    }
   } catch (error) {
     errors.push(`frontend/package.json: JSON inválido -> ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+const middlewarePackagePath = path.join(root, "middleware", "package.json");
+if (fs.existsSync(middlewarePackagePath)) {
+  try {
+    const middlewarePackage = JSON.parse(fs.readFileSync(middlewarePackagePath, "utf8"));
+    const assetsGate = middlewarePackage.scripts?.["test:asset-application"];
+    for (const testFile of ["test/asset-pipeline.test.ts", "test/asset-application.test.ts"]) {
+      if (typeof assetsGate !== "string" || !assetsGate.includes(testFile)) {
+        errors.push(`middleware/package.json: test:asset-application não inclui ${testFile}`);
+      }
+    }
+  } catch (error) {
+    errors.push(`middleware/package.json: JSON inválido -> ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -300,6 +338,10 @@ if (fs.existsSync(ciPath)) {
       pattern: /^\s*run:\s+cd frontend && npm run test:adaptive-workbench\s*$/m,
     },
     {
+      label: "frontend npm run test:assets-workbench",
+      pattern: /^\s*run:\s+cd frontend && npm run test:assets-workbench\s*$/m,
+    },
+    {
       label: "middleware npm run test:project-session",
       pattern: /^\s*run:\s+npm run test:project-session\s*$/m,
     },
@@ -314,6 +356,10 @@ if (fs.existsSync(ciPath)) {
     {
       label: "middleware npm run test:history-transports",
       pattern: /^\s*run:\s+npm run test:history-transports\s*$/m,
+    },
+    {
+      label: "middleware npm run test:asset-application",
+      pattern: /^\s*run:\s+npm run test:asset-application\s*$/m,
     },
     {
       label: "frontend npm run test:project-lifecycle-product",

@@ -25,7 +25,8 @@ export function mountProblemsPanel(options: EventBottomPanelOptions): PanelInsta
     const filter = options.filter.value;
     const problems = options.log
       .list({ ...(filter ? { text: filter } : {}) })
-      .filter((entry) => entry.projectionStatus === "skipped" || entry.projectionStatus === "deferred");
+      .filter((entry) => entry.projectionStatus === "skipped" || entry.projectionStatus === "deferred" ||
+        entry.severity === "warning" || entry.severity === "error");
     if (problems.length === 0) return [emptyState("Nenhum problema", "Não há projeções ignoradas ou pendentes.")];
     return problems.map((entry) => problemCard(entry, options));
   });
@@ -155,7 +156,9 @@ function problemCard(entry: LogEntry, options: EventBottomPanelOptions): HTMLEle
   title.textContent = `⚠ ${entry.summary}`;
   const reason = document.createElement("div");
   reason.className = "reason";
-  reason.textContent = `${entry.projectionLabel}${entry.projectionReason ? ` — ${entry.projectionReason}` : ""}`;
+  reason.textContent = entry.domain === "application"
+    ? `${entry.severity === "error" ? "Erro" : "Aviso"}${entry.detail ? ` — ${entry.detail}` : ""}`
+    : `${entry.projectionLabel ?? "Problema"}${entry.projectionReason ? ` — ${entry.projectionReason}` : ""}`;
   card.append(title, reason);
 
   if (entry.projectSessionId && entry.projectId) {
@@ -165,7 +168,8 @@ function problemCard(entry: LogEntry, options: EventBottomPanelOptions): HTMLEle
         projectSessionId: entry.projectSessionId!,
         projectId: entry.projectId!,
         problemId: `${entry.timestampMs}:${entry.kind}:${entry.subject ?? "project"}`,
-        severity: entry.projectionStatus === "skipped" ? "warning" : "info",
+        severity: entry.severity ?? (entry.projectionStatus === "skipped" ? "warning" : "info"),
+        ...(entry.domain === "application" && entry.subject ? { subjectKind: "asset" as const } : {}),
         ...(entry.subject ? { subjectId: entry.subject } : {}),
       }, "problems-panel");
     };

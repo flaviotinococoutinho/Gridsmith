@@ -30,6 +30,8 @@ const EXPORT_FIXTURE = {
 class FakeRunner implements ToolRunner {
   readonly calls: Array<{ command: string; args: string[] }> = [];
   failWith: { tool: string; code: number; stderr: string } | undefined;
+  omitPng = false;
+  omitXnb = false;
 
   async run(command: string, args: readonly string[]): Promise<ToolResult> {
     this.calls.push({ command, args: [...args] });
@@ -40,7 +42,17 @@ class FakeRunner implements ToolRunner {
       const dataPath = args[args.indexOf("--data") + 1]!;
       const sheetPath = args[args.indexOf("--sheet") + 1]!;
       fs.writeFileSync(dataPath, JSON.stringify(EXPORT_FIXTURE));
-      fs.writeFileSync(sheetPath, "png-bytes");
+      if (!this.omitPng) {
+        fs.writeFileSync(sheetPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]));
+      }
+    }
+    if (command === "mgcb") {
+      const outputDir = args.find((arg) => arg.startsWith("/outputDir:"))!.slice("/outputDir:".length);
+      const source = args.find((arg) => arg.startsWith("/build:"))!.slice("/build:".length);
+      fs.mkdirSync(outputDir, { recursive: true });
+      if (!this.omitXnb) {
+        fs.writeFileSync(path.join(outputDir, `${path.basename(source, ".png")}.xnb`), "XNBfixture");
+      }
     }
     return { code: 0, stdout: "", stderr: "" };
   }
@@ -192,5 +204,65 @@ test("catalog filtra as últimas revisões por tag", async () => {
     assert.equal(characters[0]?.artifactId, "assets/characters/hero");
   } finally {
     h.cleanup();
+  }
+});
+
+test("code 0 sem PNG/XNB valido falha antes de publicar ArtifactStore", async () => {
+  const missingPng = makeHarness();
+  try {
+    missingPng.runner.omitPng = true;
+    const file = touchAsset(missingPng, "missing-png.aseprite");
+    await assert.rejects(missingPng.service.ingest(file), (error: unknown) =>
+      error instanceof AssetToolError && error.stage === "exporting" && error.filePath === file,
+    );
+    assert.equal(missingPng.artifacts.list().length, 0);
+  } finally {
+    missingPng.cleanup();
+  }
+
+  const missingXnb = makeHarness();
+  try {
+    missingXnb.runner.omitXnb = true;
+    const file = touchAsset(missingXnb, "missing-xnb.aseprite");
+    await assert.rejects(missingXnb.service.ingest(file), (error: unknown) =>
+      error instanceof AssetToolError && error.stage === "compiling" && error.filePath === file,
+    );
+    assert.equal(missingXnb.artifacts.list().length, 0);
+  } finally {
+    missingXnb.cleanup();
+  }
+});
+
+test("output root symlink e rejeitado no construtor antes de escrever no destino", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink assertion requires Windows developer mode");
+    return;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "p7m-assets-root-symlink-"));
+  try {
+    const assetsRoot = path.join(root, "assets");
+    const external = path.join(root, "external-output");
+    fs.mkdirSync(assetsRoot);
+    fs.mkdirSync(external, { mode: 0o755 });
+    fs.writeFileSync(path.join(external, "sentinel"), "unchanged");
+    const modeBefore = fs.statSync(external).mode & 0o777;
+    fs.symlinkSync(external, path.join(assetsRoot, ".p7m-build"), "dir");
+
+    const hooks = new HookBus();
+    const artifacts = new ArtifactStore(() => 0);
+    const pipelines = new PipelineRunner(hooks, artifacts);
+    pipelines.register(ASEPRITE_PIPELINE);
+    assert.throws(() => new AssetPipelineService({
+      assetsRoot,
+      outputRoot: path.join(assetsRoot, ".p7m-build"),
+      runner: new FakeRunner(),
+      pipelines,
+      hooks,
+    }), /symlink/iu);
+    assert.deepEqual(fs.readdirSync(external), ["sentinel"]);
+    assert.equal(fs.readFileSync(path.join(external, "sentinel"), "utf8"), "unchanged");
+    assert.equal(fs.statSync(external).mode & 0o777, modeBefore);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

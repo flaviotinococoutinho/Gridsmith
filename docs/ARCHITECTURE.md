@@ -341,6 +341,31 @@ PreviewHost e gameplay permanecem fora desta entrega. Decisão e gate:
 [ADR-023](adr/ADR-023-workbench-adaptativo-por-contribuicoes.md) e
 `cd frontend && npm run test:adaptive-workbench`.
 
+## Pipeline visual de assets
+
+`AssetApplicationService` é a fachada de aplicação sobre
+`AssetPipelineService`, `PipelineRunner` e `ArtifactStore`. GraphQL expõe as
+operações frias de catálogo, detalhes, import/reimport, remoção, configuração e
+reveal; o proto gRPC não ganhou RPC de asset. MCP também delega à mesma
+`EditorSurface`, sem caminho paralelo de ingestão.
+
+Cada importação recebe `operationId` e publica `EditorApplicationEvent` no
+`EventJournal` existente. O envelope compartilha ordem/cursor com os clientes,
+mas é roteado antes de `BlueprintEvent`: não altera histórico, dirty state ou
+autosave. Catálogo, fontes gerenciadas e outputs são particionados por
+`projectId`; revisões usam paths imutáveis por operação, de modo que falha de
+reimport não substitui a última revisão válida. Manifestos e configuração de
+ferramentas são gravados de forma atômica e privada.
+
+O workbench contribui Asset Browser, fila e Inspector Aseprite sem adicionar
+switch à shell. Thumbnails atravessam a fronteira apenas como data URL limitada;
+DnD resolve paths por `webUtils` no preload. A associação
+`EntityDefinition.spriteRenderer` usa `entitydef/update`, portanto persiste e
+participa do histórico canônico. Decisão e gates:
+[ADR-024](adr/ADR-024-pipeline-visual-de-assets.md),
+`cd middleware && npm run test:asset-application` e
+`cd frontend && npm run test:assets-workbench`.
+
 **Verbosidade:** `P7M_VERBOSITY=silent|error|warn|info|debug|trace` controla os
 loggers estruturados dos dois lados (stdout do middleware pertence ao MCP; logs
 vão para stderr). E2E das duas fases (gRPC quente + fallback GraphQL):

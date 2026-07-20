@@ -31,11 +31,11 @@ Legenda: ✅ completo · 🔶 parcial · ❌ ausente · — não se aplica.
 | Máquina de estados | ✅ | — | ❌ | ❌ | ❌ | **Não entregue** |
 | Níveis IntGrid + auto-tiling | ✅ (`level/patch` incremental) | ✅ | ✅ | ✅ (projeção otimista; salvar/reabrir sem publicação) | 🔶 | **Fluxo canônico entregue** (P0.4) |
 | World map | ✅ | ✅ query | ❌ streaming | ❌ | ❌ | **Parcial** |
-| Entidades tipadas | ✅ | ✅ | ✅ spawn table (archetypeId → ator vivo; move ao vivo) | 🔶 placement/drag/remoção + Inspector schema-driven; faltam sprite/colisão | ❌ | **Em fechamento** (P0.6) |
-| Pipeline Aseprite/MGCB | ✅ | ✅ MCP | ✅ compilação | ❌ | ❌ | **Parcial** |
+| Entidades tipadas | ✅ + referência `spriteRenderer` persistente | ✅ | ✅ spawn table (archetypeId → ator vivo; move ao vivo) | 🔶 placement/drag/remoção + associação visual de sprite; falta colisão/PreviewHost | ❌ | **Em fechamento** (P0.6) |
+| Pipeline Aseprite/MGCB | ✅ fachada de aplicação, catálogo durável e reimport | ✅ GraphQL frio + MCP; sem RPC gRPC | ✅ compilação MGCB | ✅ browser, metadados, fila, ferramentas e Problems | 🔶 sem aceite Electron empacotado/binários reais | **Fluxo visual técnico entregue** (ADR-024) |
 | Câmera cinemática | ✅ | ✅ | ✅ | 🔶 seleção na árvore + Inspector canônico; sem gizmo | ❌ | **Fluxo visual parcial** |
 | Iluminação deferred | ✅ | ✅ | ✅ | 🔶 seleção na árvore + Inspector canônico; sem handles | ❌ | **Fluxo visual parcial** |
-| Save/load + criação de projeto | ✅ (Blueprint v4 com `projectId`, metadata/unidades/paleta; sessão temporária, replay e troca atômica) | ✅ (sessão nas quatro bordas + API tipada de lifecycle no preload) | ✅ reset antes de reidratar; `runtimeState` explícito | ✅ (wizard, recovery, exemplo, Recentes e save do estado visível) | 🔶 (falta aceite do app empacotado) | **Em fechamento** (P0.2 técnico fechado; aceite em P0.9) |
+| Save/load + criação de projeto | ✅ (Blueprint v5 com `projectId`, metadata/unidades/paleta/spriteRenderer; sessão temporária, replay e troca atômica) | ✅ (sessão nas quatro bordas + API tipada de lifecycle no preload) | ✅ reset antes de reidratar; `runtimeState` explícito | ✅ (wizard, recovery, exemplo, Recentes e save do estado visível) | 🔶 (falta aceite do app empacotado) | **Em fechamento** (P0.2 técnico fechado; aceite em P0.9) |
 | Supervisão de processos | ✅ (máquina de estados testada) | — | — | 🔶 (wire real + chips de estado + restart; falta caminho empacotado) | ❌ | **Em fechamento** (P0.1↔P0.9) |
 | Preview embutido | 🔶 fundação | ❌ | 🔶 fundação | ❌ | ❌ | **Requisito P0.5** |
 | Undo/redo | ✅ global, incremental e session-aware | ✅ quatro bordas | ✅ reprojeção/rehydrate | ✅ atalhos globais e histórico legível | 🔶 aceite empacotado | **Entregue tecnicamente** (P0.7) |

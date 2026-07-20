@@ -370,10 +370,6 @@ export function reconcileSelectionsWithLevelProjection(
   const entities = new Set(snapshot.entities.map(({ entityId }) => entityId));
   const definitions = new Set(snapshot.entityDefinitions.map(({ entityDefId }) => entityDefId));
   const lights = new Set(snapshot.lights.map(({ lightId }) => lightId));
-  const assets = new Set([
-    ...snapshot.skeletons.map(({ skeletonId }) => skeletonId),
-    ...snapshot.meshes.map(({ meshId }) => meshId),
-  ]);
   const reconciled: Selection[] = [];
   for (const selection of selections) {
     if (selection.projectId !== snapshot.projectId) continue;
@@ -422,7 +418,10 @@ export function reconcileSelectionsWithLevelProjection(
         if (entities.has(selection.entityId)) reconciled.push(selection);
         break;
       case "asset":
-        if (assets.has(selection.assetId)) reconciled.push(selection);
+        // O catálogo de importação é uma projeção separada do documento de
+        // nível. O escopo da SelectionService já impede seleção cross-session;
+        // a remoção é reconciliada pelo Asset Browser, não como skeleton/mesh.
+        reconciled.push(selection);
         break;
       case "light":
         if (lights.has(selection.lightId)) reconciled.push(selection);
@@ -477,6 +476,9 @@ function cloneEntityDefinition(definition: ProjectedEntityDefinition): Projected
         })) }
       : {}),
     ...(definition.editor ? { editor: { ...definition.editor } } : {}),
+    ...(definition.spriteRenderer
+      ? { spriteRenderer: { ...definition.spriteRenderer } }
+      : {}),
   };
 }
 

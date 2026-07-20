@@ -27,9 +27,16 @@ graph LR
 ## Necessidades de usuário sem representação anterior (agora em ALPHA-0.1)
 
 Gerenciador de projetos · save/save as/autosave/crash recovery · inspector +
-modelo de seleção transversal · asset browser · supervisor de processos ·
-command palette · empacotamento/instalador · onboarding/tutorial · painel de
-problemas · acessibilidade · testes de usabilidade.
+modelo de seleção transversal · supervisor de processos · command palette ·
+empacotamento/instalador · onboarding/tutorial · painel de problemas ·
+acessibilidade · testes de usabilidade.
+
+O **Asset Browser deixou de ser uma oportunidade**: a
+[ADR-024](adr/ADR-024-pipeline-visual-de-assets.md) entrega catálogo visual,
+busca/tags/miniaturas, DnD, fila cancelável, reimport, configuração de ferramentas,
+Inspector Aseprite e ações em Problems. O fluxo usa `AssetApplicationService` pelo
+baseline GraphQL e persiste somente a associação opcional `spriteRenderer` no
+Blueprint v5. Essa entrega não inclui PreviewHost nem comportamento de gameplay.
 
 ---
 
@@ -113,14 +120,14 @@ graph TD
 | OPP-08 | **Harness de performance/física (Fase 5)**: physics slices, budget de frame, asserções de regressão | Alto | M | `camera/simulate`, `lighting/evaluate`, `mesh/inspect`, checksums — o vocabulário de asserção já existe |
 | OPP-09 | **Compilação de shaders no CI** (mgcb + Wine em job dedicado) | Médio | B/M | `Content.mgcb` pronto; fecha o risco RT-03 |
 | OPP-10 | **Tiles via shared memory** (mapas > 64k células, chunks/infinito estilo Tiled) | Médio | M/A | plano de dados com seqlock provado para malhas; contrato prevê a extensão |
-| OPP-11 | ✅ **ENTREGUE como P0.6** — spawn tables no runtime (entidades canônicas → atores vivos) | Alto | M | `archetypeId` na definição projeta `entity/spawn`/`move`/`despawn`; `ActorStore` Zero-GC; resta enriquecer o archetype (sprite/colisão) |
+| OPP-11 | ✅ **ENTREGUE como P0.6** — spawn tables no runtime (entidades canônicas → atores vivos) | Alto | M | `archetypeId` projeta spawn/move/despawn; o Blueprint v5 já associa `spriteRenderer.assetId/defaultClip` pela UI canônica, sem antecipar preview; colisão continua fora desta entrega |
 | OPP-12 | **Binding nativo de mmap no Electron** (coerência Windows do plano de dados) | Médio | M | risco documentado no contrato; interface do escritor já isolada |
 
 ## Automação / IA
 
 | ID | Oportunidade | Impacto | Esforço | Alicerce existente |
 |---|---|---|---|---|
-| OPP-13 | **Geração assistida ponta-a-ponta**: prompt → sprite sheet (API externa) → ingestão automática | Alto | M | `AssetPipelineService` com `ToolRunner` injetável é o encaixe do gerador; proveniência `agent:*` já auditável |
+| OPP-13 | **Geração assistida ponta-a-ponta**: prompt → sprite sheet (API externa) → ingestão automática | Alto | M | `AssetApplicationService` já centraliza ingestão, catálogo, eventos e segurança para GraphQL/MCP/UI; falta o gerador externo, sem duplicar `AssetPipelineService` |
 | OPP-14 | **Agente revisor de blueprint** (lint de domínio: luz sem alcance, nível órfão, pesos não normalizados) | Médio | B/M | filters no `HookBus` são o ponto de injeção natural; `blueprint/query document` dá a visão total |
 | OPP-15 | **Wang/terrain rules** (transições por borda, estilo Tiled) no AutoTiler | Médio | M | `AutoTileRule` extensível; teste de determinismo já cobre o regime |
 | OPP-16 | **Fixtures de replay como testes de regressão de conteúdo** (documento + checksums esperados) | Médio | B | `BlueprintSerializer` + FNV-1a: um teste dirige um projeto inteiro pela engine |

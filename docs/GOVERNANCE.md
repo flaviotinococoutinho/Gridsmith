@@ -213,10 +213,11 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 | Testes: três suítes (engine/middleware/frontend), contagem calculada e validada pelo CI | ✅ verdes |
 | Testes arquiteturais (23 regras) | ✅ ativos (R10-R13/F5 cobrem os transports e a sessão do app) |
 | E2e fases 1–4 | ✅ verdes |
-| Persistência de projeto (documento v4 com `projectId`, metadata/unidades/paleta; open transacional e replay privado) | ✅ (`ProjectSessionManager`, `project/create`, `project/openDocument`, `project/close`, `project/status`) |
+| Persistência de projeto (documento v5 com `projectId`, metadata/unidades/paleta e referência SpriteRenderer; open transacional e replay privado) | ✅ (`ProjectSessionManager`, `project/create`, `project/openDocument`, `project/close`, `project/status`) |
 | Histórico global incremental (inversos, proveniência, barreiras, savepoint lógico e paridade cross-transport) | ✅ (`CommandHistory`, `level/patch`, `undo`, `redo`, ADR-022) |
 | Lifecycle de arquivo (New/Open/Save/Save As/Close/Recovery/Recentes) | ✅ controller/adapters testáveis, escrita durável e gate explícito no CI (ADR-021) |
 | Workbench adaptativo | ✅ registries internos, seleção transversal, Inspector schema-driven, layout persistido/adaptativo e command bridge com gate explícito (ADR-023) |
+| Pipeline visual de assets | ✅ `AssetApplicationService`, operações frias GraphQL, eventos operacionais, catálogo/reimport e UI modular; gRPC inalterado (ADR-024) |
 | Contratos ↔ implementação | ✅ auditados (R8/R9 + tabela contracts) |
 | Lacunas conhecidas e aceitas | registradas em [`OPPORTUNITIES.md`](OPPORTUNITIES.md) com impacto/esforço |
 

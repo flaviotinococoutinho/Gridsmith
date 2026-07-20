@@ -44,6 +44,8 @@ export const EVENT_LABELS: Readonly<Record<string, string>> = {
   levelRemoved: "Nível removido",
   worldLevelPlaced: "Nível posicionado no mapa-múndi",
   worldLevelUnplaced: "Nível removido do mapa-múndi",
+  "asset-reference-missing": "Referência de asset ausente",
+  "asset-pipeline-failed": "Importação de asset falhou",
 };
 
 export const HISTORY_ACTOR_LABELS = {

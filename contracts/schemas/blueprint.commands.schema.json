@@ -145,6 +145,15 @@
         "entityDefId": { "type": "string", "minLength": 1 },
         "fields": { "type": "array", "items": { "$ref": "#/$defs/entityField" } },
         "archetypeId": { "type": "string", "minLength": 1 },
+        "spriteRenderer": {
+          "type": "object",
+          "properties": {
+            "assetId": { "type": "string", "minLength": 1 },
+            "defaultClip": { "type": "string", "minLength": 1 }
+          },
+          "required": ["assetId"],
+          "additionalProperties": false
+        },
         "tags": { "type": "array", "items": { "type": "string" } },
         "editor": {
           "type": "object",

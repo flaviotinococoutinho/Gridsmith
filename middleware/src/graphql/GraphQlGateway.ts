@@ -181,6 +181,21 @@ function metadataOf(payload: unknown): Record<string, unknown> {
 
 function serializeEvent(event: EventEnvelope): Record<string, unknown> {
   const metadata = metadataOf(event.payload);
+  const application = metadata["domain"] === "asset"
+    ? {
+        seq: event.seq.toString(),
+        projectSessionId: event.projectSessionId,
+        projectId: event.projectId,
+        commandSequence: event.commandSequence.toString(),
+        domain: "asset",
+        kind: metadata["kind"] ?? event.kind,
+        operationId: metadata["operationId"] ?? null,
+        progress: metadata["progress"] ?? null,
+        severity: metadata["severity"] ?? "info",
+        payload: metadata["payload"] ?? {},
+        timestamp: String(metadata["timestamp"] ?? "0"),
+      }
+    : null;
   return {
     seq: event.seq.toString(),
     projectSessionId: event.projectSessionId,
@@ -194,6 +209,7 @@ function serializeEvent(event: EventEnvelope): Record<string, unknown> {
     historyAction: metadata["historyAction"] ?? null,
     kind: event.kind,
     payload: event.payload,
+    application,
   };
 }
 
@@ -294,7 +310,9 @@ export class GraphQlGateway {
       operationName: typeof parsed.operationName === "string" ? parsed.operationName : undefined,
     });
 
-    // JsonRpcError vira extensão {code} — código estável cruza o transporte
+    // JsonRpcError preserva código e diagnóstico estruturado. Isto é
+    // especialmente importante para falhas de ferramentas (etapa, arquivo,
+    // stderr e ações corretivas) consumidas pelo painel Problems.
     const payload = {
       ...result,
       errors: result.errors?.map((e) => ({
@@ -302,7 +320,7 @@ export class GraphQlGateway {
         path: e.path,
         extensions:
           e.originalError instanceof JsonRpcError
-            ? { code: e.originalError.code }
+            ? graphQlErrorExtensions(e.originalError)
             : e.extensions,
       })),
     };
@@ -378,6 +396,15 @@ export class GraphQlGateway {
         const status = serializeHistoryStatus(surface.historyStatus(args.limit ?? 100));
         return { status, entries: status["entries"] };
       },
+      assetCatalog: (args: {
+        filter?: {
+          search?: string | null;
+          tags?: readonly string[] | null;
+          directory?: string | null;
+        } | null;
+      }) => serializeAssetCatalog(surface.assetCatalog(assetCatalogFilter(args.filter))),
+      assetDetails: (args: { assetId: string }) =>
+        serializeAssetDetails(surface.assetDetails(args.assetId)),
       eventBatch: (args: {
         middlewareInstanceId: string;
         projectSessionId?: string;
@@ -491,8 +518,192 @@ export class GraphQlGateway {
           ...result.summary,
         };
       },
+      assetImport: (args: {
+        input: {
+          sourcePath: string;
+          targetDirectory?: string | null;
+          tags?: readonly string[] | null;
+          operationId?: string | null;
+        };
+      }) => surface.importAsset(assetImportInput(args.input)),
+      assetReimport: (args: { assetId: string; operationId?: string | null }) =>
+        surface.reimportAsset(args.assetId, args.operationId ?? undefined),
+      assetRemove: async (args: { assetId: string }) =>
+        serializeAssetRemove(await surface.removeAsset(args.assetId)),
+      assetConfigureTools: (args: {
+        input: {
+          scope: "project" | "user";
+          asepritePath?: string | null;
+          mgcbPath?: string | null;
+        };
+      }) => surface.configureAssetTools({
+        scope: args.input.scope,
+        ...(args.input.asepritePath != null ? { asepritePath: args.input.asepritePath } : {}),
+        ...(args.input.mgcbPath != null ? { mgcbPath: args.input.mgcbPath } : {}),
+      }),
+      assetRevealSource: (args: {
+        reference: { assetId?: string | null; operationId?: string | null };
+      }) => surface.revealSource({
+        ...(args.reference.assetId != null ? { assetId: args.reference.assetId } : {}),
+        ...(args.reference.operationId != null
+          ? { operationId: args.reference.operationId }
+          : {}),
+      }),
+      assetRevealOutput: (args: { assetId: string }) => surface.revealOutput(args.assetId),
+      assetCancel: (args: { operationId: string }) =>
+        serializeAssetCancellation(surface.cancelAssetOperation(args.operationId)),
     };
   }
+}
+
+export function graphQlErrorExtensions(error: JsonRpcError): Record<string, unknown> {
+  const details = error.data;
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    return { ...(details as Record<string, unknown>), code: error.code };
+  }
+  return {
+    code: error.code,
+    ...(details === undefined ? {} : { data: details }),
+  };
+}
+
+function assetCatalogFilter(filter: {
+  search?: string | null;
+  tags?: readonly string[] | null;
+  directory?: string | null;
+} | null | undefined): {
+  search?: string;
+  tags?: readonly string[];
+  directory?: string;
+} | undefined {
+  if (!filter) return undefined;
+  return {
+    ...(filter.search != null ? { search: filter.search } : {}),
+    ...(filter.tags != null ? { tags: filter.tags } : {}),
+    ...(filter.directory != null ? { directory: filter.directory } : {}),
+  };
+}
+
+function assetImportInput(input: {
+  sourcePath: string;
+  targetDirectory?: string | null;
+  tags?: readonly string[] | null;
+  operationId?: string | null;
+}): {
+  sourcePath: string;
+  targetDirectory?: string;
+  tags?: readonly string[];
+  operationId?: string;
+} {
+  return {
+    sourcePath: input.sourcePath,
+    ...(input.targetDirectory != null ? { targetDirectory: input.targetDirectory } : {}),
+    ...(input.tags != null ? { tags: input.tags } : {}),
+    ...(input.operationId != null ? { operationId: input.operationId } : {}),
+  };
+}
+
+interface AssetSummaryLike {
+  readonly assetId: string;
+  readonly kind: string;
+  readonly name: string;
+  readonly directory: string;
+  readonly revision: number;
+  readonly tags: readonly string[];
+  readonly clipCount: number;
+  readonly paths: {
+    readonly source: string;
+    readonly spritesheet: string;
+    readonly metadata: string;
+    readonly compiled: string;
+    readonly outputDirectory: string;
+  };
+  readonly importedAt: number | string;
+  readonly updatedAt: number | string;
+  readonly sourcePath: string;
+  readonly thumbnailPath: string;
+  readonly spritesheetPng: string;
+  readonly compiledXnb: string;
+  readonly thumbnailDataUrl?: string;
+}
+
+interface AssetDetailsLike extends AssetSummaryLike {
+  readonly frames: readonly unknown[];
+  readonly clips: readonly unknown[];
+  readonly slices: readonly unknown[];
+  readonly payload: unknown;
+}
+
+function serializeAssetSummary(asset: AssetSummaryLike): Record<string, unknown> {
+  return {
+    assetId: asset.assetId,
+    kind: asset.kind,
+    name: asset.name,
+    revision: asset.revision,
+    sourcePath: asset.sourcePath,
+    directory: asset.directory,
+    tags: asset.tags,
+    thumbnailPath: asset.thumbnailPath,
+    thumbnailDataUrl: asset.thumbnailDataUrl ?? null,
+    spritesheetPng: asset.spritesheetPng,
+    compiledXnb: asset.compiledXnb,
+    clipCount: asset.clipCount,
+    updatedAt: asset.updatedAt.toString(),
+  };
+}
+
+function serializeAssetCatalog(catalog: {
+  readonly projectSessionId: string;
+  readonly projectId: string;
+  readonly assets: readonly AssetSummaryLike[];
+  readonly tags: readonly string[];
+  readonly directories: readonly string[];
+}): Record<string, unknown> {
+  return {
+    projectSessionId: catalog.projectSessionId,
+    projectId: catalog.projectId,
+    assets: catalog.assets.map(serializeAssetSummary),
+    tags: catalog.tags,
+    directories: catalog.directories,
+  };
+}
+
+function serializeAssetDetails(details: AssetDetailsLike): Record<string, unknown> {
+  return {
+    asset: serializeAssetSummary(details),
+    payload: details.payload,
+    frames: details.frames,
+    clips: details.clips,
+    // O alias de borda preserva playback/duration, nao apenas o range cru.
+    frameTags: details.clips,
+    slices: details.slices,
+  };
+}
+
+function serializeAssetRemove(result: {
+  readonly operationId: string;
+  readonly removed: boolean;
+  readonly asset: AssetSummaryLike;
+  readonly filesPreserved: boolean;
+}): Record<string, unknown> {
+  return {
+    operationId: result.operationId,
+    assetId: result.asset.assetId,
+    removed: result.removed,
+    filesPreserved: result.filesPreserved,
+    asset: serializeAssetSummary(result.asset),
+  };
+}
+
+function serializeAssetCancellation(result: {
+  readonly operationId: string;
+  readonly status: "cancellation-requested" | "already-finished" | "not-found";
+}): Record<string, unknown> {
+  return {
+    operationId: result.operationId,
+    status: result.status.replaceAll("-", "_"),
+    cancelled: result.status === "cancellation-requested",
+  };
 }
 
 function readBody(req: http.IncomingMessage, maxBytes: number): Promise<Buffer> {

@@ -167,6 +167,8 @@ type CursorEventEnvelope {
   historyAction: HistoryAction
   kind: String!
   payload: JSON!
+  "Presente somente para eventos operacionais domain=asset; payload permanece por compatibilidade."
+  application: EditorApplicationEvent
 }
 
 "Janela incremental do EventJournal; events é vazio quando resyncRequired."
@@ -295,6 +297,235 @@ type Health {
   lastEventSeq: String!
 }
 
+"Filtro do catalogo de assets. Todos os campos sao combinados por AND."
+input AssetCatalogFilterInput {
+  search: String
+  tags: [String!]
+  directory: String
+}
+
+"Asset importavel mais recente; caminhos sao locais e nunca aceitos como HTML."
+type AssetSummary {
+  assetId: String!
+  kind: String!
+  name: String!
+  revision: Int!
+  sourcePath: String!
+  directory: String!
+  tags: [String!]!
+  thumbnailPath: String
+  "Preview seguro para renderer (data:image/...); nunca file://."
+  thumbnailDataUrl: String
+  spritesheetPng: String
+  compiledXnb: String
+  clipCount: Int!
+  "Decimal unix-ms para evitar o limite de 32 bits do GraphQL Int."
+  updatedAt: String!
+}
+
+type AssetCatalogResult {
+  projectSessionId: String!
+  projectId: String!
+  assets: [AssetSummary!]!
+  tags: [String!]!
+  directories: [String!]!
+}
+
+type AssetSpriteFrame {
+  index: Int!
+  x: Int!
+  y: Int!
+  w: Int!
+  h: Int!
+  durationMs: Int!
+}
+
+enum AssetClipDirection {
+  forward
+  reverse
+  pingpong
+}
+
+type AssetAnimationClip {
+  name: String!
+  from: Int!
+  to: Int!
+  direction: AssetClipDirection!
+  playback: [Int!]!
+  durationMs: Int!
+}
+
+type AssetRect {
+  x: Int!
+  y: Int!
+  w: Int!
+  h: Int!
+}
+
+type AssetPoint {
+  x: Int!
+  y: Int!
+}
+
+type AssetSpriteSlice {
+  name: String!
+  bounds: AssetRect!
+  center: AssetRect
+  pivot: AssetPoint
+}
+
+"Detalhes normalizados; frameTags e alias estavel de clips para clientes do Aseprite."
+type AssetDetails {
+  asset: AssetSummary!
+  payload: JSON!
+  frames: [AssetSpriteFrame!]!
+  clips: [AssetAnimationClip!]!
+  frameTags: [AssetAnimationClip!]!
+  slices: [AssetSpriteSlice!]!
+}
+
+input AssetImportInput {
+  sourcePath: String!
+  targetDirectory: String
+  tags: [String!]
+  "Identificador opcional de correlacao e cancelamento fornecido pelo cliente; nao e chave de idempotencia duravel."
+  operationId: String
+}
+
+enum AssetOperationStatus {
+  accepted
+  queued
+  running
+  completed
+  cancelled
+  failed
+  ignored
+}
+
+enum AssetOperationKind {
+  import
+  reimport
+}
+
+"ACK tipado da operacao; detalhes especificos do importador permanecem em result."
+type AssetOperationResult {
+  operationId: String!
+  operation: AssetOperationKind!
+  projectSessionId: String!
+  projectId: String!
+  assetId: String
+  status: AssetOperationStatus!
+  message: String
+}
+
+type AssetRemoveResult {
+  operationId: String!
+  assetId: String!
+  removed: Boolean!
+  filesPreserved: Boolean!
+  asset: AssetSummary!
+}
+
+enum AssetToolScope {
+  project
+  user
+}
+
+input AssetToolConfigurationInput {
+  scope: AssetToolScope!
+  asepritePath: String
+  mgcbPath: String
+}
+
+enum AssetToolConfigurationSource {
+  project
+  user
+  default
+}
+
+type AssetToolDetection {
+  path: String!
+  available: Boolean!
+  version: String
+  message: String!
+  source: AssetToolConfigurationSource!
+  "Decimal unix-ms."
+  testedAt: String!
+}
+
+type AssetToolConfiguration {
+  scope: AssetToolScope!
+  projectId: String!
+  asepritePath: String!
+  mgcbPath: String!
+  aseprite: AssetToolDetection!
+  mgcb: AssetToolDetection!
+  persisted: Boolean!
+}
+
+enum AssetRevealTarget {
+  source
+  output
+}
+
+"Referencia discriminada: exatamente um dos campos deve ser informado."
+input AssetSourceReferenceInput {
+  assetId: String
+  operationId: String
+}
+
+type AssetRevealResult {
+  operationId: String!
+  assetId: String
+  "Operacao de import que originou um diagnostico ainda sem assetId."
+  sourceOperationId: String
+  target: AssetRevealTarget!
+  path: String!
+  revealed: Boolean!
+}
+
+enum AssetCancellationStatus {
+  cancellation_requested
+  already_finished
+  not_found
+}
+
+type AssetCancelResult {
+  operationId: String!
+  status: AssetCancellationStatus!
+  cancelled: Boolean!
+}
+
+enum EditorApplicationEventSeverity {
+  info
+  warning
+  error
+}
+
+"Evento operacional separado de BlueprintEvent/CommandHistory; compartilha EventJournal e cursor."
+type EditorApplicationProgress {
+  phase: String!
+  current: Int!
+  total: Int!
+  percent: Int!
+  message: String!
+}
+
+type EditorApplicationEvent {
+  seq: String!
+  projectSessionId: String!
+  projectId: String!
+  commandSequence: String!
+  domain: String!
+  kind: String!
+  operationId: String
+  progress: EditorApplicationProgress
+  severity: EditorApplicationEventSeverity!
+  payload: JSON!
+  "Decimal unix-ms."
+  timestamp: String!
+}
+
 type Query {
   health: Health!
   "Projeções de leitura do Blueprint: skeletons|meshes|lights|entityDefs|entities|camera|levels|world|document."
@@ -312,6 +543,9 @@ type Query {
   historyStatus(limit: Int = 0): HistoryStatus!
   "Histórico legível da sessão ativa, mais recente primeiro."
   history(limit: Int = 100): HistoryList!
+  "Catalogo completo/filtrado; baseline GraphQL para todos os transports do app."
+  assetCatalog(filter: AssetCatalogFilterInput): AssetCatalogResult!
+  assetDetails(assetId: String!): AssetDetails!
   "Janela segura; projectSessionId opcional só para compatibilidade, omiti-lo exige resync."
   eventBatch(middlewareInstanceId: String!, projectSessionId: String, afterSeq: String!): EventBatch!
   "Compatibilidade nominal; falha explicitamente porque não identifica processo nem sessão."
@@ -336,4 +570,11 @@ type Mutation {
   loadDocument(document: JSON!, expectedProjectSessionId: String, expectedCommandSequence: String): ReplaySummary!
   "Alias legado transacional de projectCreate(templateId: ...)."
   newProjectFromTemplate(templateId: String!, expectedProjectSessionId: String, expectedCommandSequence: String): NewProjectResult!
+  assetImport(input: AssetImportInput!): AssetOperationResult!
+  assetReimport(assetId: String!, operationId: String): AssetOperationResult!
+  assetRemove(assetId: String!): AssetRemoveResult!
+  assetConfigureTools(input: AssetToolConfigurationInput!): AssetToolConfiguration!
+  assetRevealSource(reference: AssetSourceReferenceInput!): AssetRevealResult!
+  assetRevealOutput(assetId: String!): AssetRevealResult!
+  assetCancel(operationId: String!): AssetCancelResult!
 }

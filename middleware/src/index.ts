@@ -14,6 +14,11 @@
 
 import path from "node:path";
 import { AssetPipelineService, ExecToolRunner } from "./assets/AssetPipelineService.js";
+import {
+  AssetApplicationService,
+  FileAssetToolSettingsAdapter,
+} from "./application/AssetApplicationService.js";
+import type { EditorApplicationEvent } from "./canonical/EditorApplicationEvent.js";
 import { EditorSurface } from "./canonical/EditorSurface.js";
 import { GraphQlGateway } from "./graphql/GraphQlGateway.js";
 import { GrpcGateway } from "./grpc/GrpcGateway.js";
@@ -97,8 +102,34 @@ async function main(): Promise<void> {
   const sessions = new ProjectSessionManager({ hooks, adapter });
   const bridge = new EngineBridge(pipeServer, sessions);
 
+  let assetPipeline: AssetPipelineService | undefined;
+  let assetApplication: AssetApplicationService | undefined;
+  if (assetsRoot) {
+    const outputRoot = path.join(assetsRoot, ".p7m-build");
+    const settingsRoot = path.join(outputRoot, ".p7m-state", "settings");
+    // AssetPipelineService valida roots/symlinks antes de qualquer escrita em output/state.
+    assetPipeline = new AssetPipelineService({
+      assetsRoot,
+      outputRoot,
+      runner: new ExecToolRunner(),
+      pipelines,
+      hooks,
+    });
+    assetApplication = new AssetApplicationService({
+      pipeline: assetPipeline,
+      artifacts,
+      sessions,
+      settings: new FileAssetToolSettingsAdapter(settingsRoot),
+    });
+  }
+
   // Uma única porta de aplicação para JSON-RPC, GraphQL, gRPC e MCP.
-  const surface = new EditorSurface({ sessions, governor, adapter });
+  const surface = new EditorSurface({
+    sessions,
+    governor,
+    adapter,
+    ...(assetApplication !== undefined ? { assets: assetApplication } : {}),
+  });
   const journal = new EventJournal();
   sessions.on("event", (event: SessionBlueprintEvent) => {
     journal.appendForSession(
@@ -137,18 +168,19 @@ async function main(): Promise<void> {
     );
     journal.deactivateSession();
   });
+  assetApplication?.on("event", (event: EditorApplicationEvent) => {
+    journal.appendForSession(
+      event.projectSessionId,
+      event.projectId,
+      event.commandSequence,
+      event.kind,
+      event,
+    );
+  });
 
-  // Pipeline de assets (watcher + Aseprite CLI + MGCB) quando --assets <dir>
-  let assetService: AssetPipelineService | undefined;
-  if (assetsRoot) {
-    assetService = new AssetPipelineService({
-      assetsRoot,
-      outputRoot: path.join(assetsRoot, ".p7m-build"),
-      runner: new ExecToolRunner(),
-      pipelines,
-      hooks,
-    });
-    assetService.watch((err) => console.error(`[p7m] asset ingest failed: ${err.message}`));
+  // Watcher tambem entra pela aplicacao; nao existe ingest paralelo ao catalogo.
+  if (assetApplication) {
+    assetApplication.watch((err) => console.error(`[p7m] asset ingest failed: ${err.message}`));
     hooks.addAction("asset:ingested", (payload) => {
       const r = payload as { artifactId: string; revision: number };
       console.error(`[p7m] asset ingested: ${r.artifactId} (rev ${r.revision})`);
@@ -259,7 +291,6 @@ async function main(): Promise<void> {
       profiles,
       governor,
       adapter,
-      ...(assetService !== undefined ? { assets: assetService } : {}),
     });
     console.error("[p7m] MCP server ready on stdio (canonical model + runtime governance)");
   }
@@ -267,7 +298,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     console.error("[p7m] shutting down");
     unbindEngineProjectSessionLifecycle();
-    assetService?.close();
+    assetApplication?.close();
     await grpcGateway?.close();
     await graphqlGateway?.close();
     await editorGateway.close();

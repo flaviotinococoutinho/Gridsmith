@@ -3,7 +3,21 @@
  * O renderer nunca vê Node/rede — só esta superfície tipada.
  */
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type {
+  AssetCancelResult,
+  AssetCatalogFilter,
+  AssetCatalogResult,
+  AssetDetails,
+  AssetImportInput,
+  AssetOperationResult,
+  AssetRemoveResult,
+  AssetRevealResult,
+  AssetSourceReference,
+  AssetToolConfiguration,
+  AssetToolConfigurationInput,
+  EditorApplicationEvent,
+} from "../core/assetApi.js";
 import { PROJECT_CLOSE_PREFLIGHT_CHANNELS } from "../core/projectApi.js";
 import type {
   CreateProjectFromTemplateRequest,
@@ -55,6 +69,21 @@ export interface P7mEditorApi {
   onProjectionResync(
     listener: (payload: { snapshot: unknown; record: { reason: string } }) => void,
   ): void;
+  // ---- catálogo de assets: operações frias sempre atravessam GraphQL ----
+  assetCatalog(filter?: AssetCatalogFilter): Promise<AssetCatalogResult>;
+  assetDetails(assetId: string): Promise<AssetDetails>;
+  importAsset(input: AssetImportInput): Promise<AssetOperationResult>;
+  reimportAsset(assetId: string, operationId?: string): Promise<AssetOperationResult>;
+  removeAsset(assetId: string): Promise<AssetRemoveResult>;
+  configureAssetTools(input: AssetToolConfigurationInput): Promise<AssetToolConfiguration>;
+  revealSource(reference: AssetSourceReference): Promise<AssetRevealResult>;
+  revealOutput(assetId: string): Promise<AssetRevealResult>;
+  cancelAssetOperation(operationId: string): Promise<AssetCancelResult>;
+  onApplicationEvent(listener: (event: EditorApplicationEvent) => void): void;
+  /** Seletores nativos específicos; nenhum acesso genérico a dialog/fs é exposto. */
+  selectAssetSources(): Promise<readonly string[]>;
+  selectAssetToolExecutable(tool: "aseprite" | "mgcb"): Promise<string | undefined>;
+  pathForDroppedAsset(file: File): string;
   // ---- ciclo de vida do projeto: somente operações nomeadas e tipadas ----
   listProjectTemplates(): Promise<ProjectTemplateDescriptor[]>;
   createProjectFromTemplate(request: CreateProjectFromTemplateRequest): Promise<ProjectActionResult>;
@@ -107,6 +136,23 @@ const api: P7mEditorApi = {
   onProjectionResync: (listener) => {
     ipcRenderer.on("p7m:projection-resync", (_event, payload) => listener(payload));
   },
+  assetCatalog: (filter) => ipcRenderer.invoke("p7m:asset-catalog", filter),
+  assetDetails: (assetId) => ipcRenderer.invoke("p7m:asset-details", assetId),
+  importAsset: (input) => ipcRenderer.invoke("p7m:asset-import", input),
+  reimportAsset: (assetId, operationId) =>
+    ipcRenderer.invoke("p7m:asset-reimport", assetId, operationId),
+  removeAsset: (assetId) => ipcRenderer.invoke("p7m:asset-remove", assetId),
+  configureAssetTools: (input) => ipcRenderer.invoke("p7m:asset-configure-tools", input),
+  revealSource: (reference) => ipcRenderer.invoke("p7m:asset-reveal-source", reference),
+  revealOutput: (assetId) => ipcRenderer.invoke("p7m:asset-reveal-output", assetId),
+  cancelAssetOperation: (operationId) => ipcRenderer.invoke("p7m:asset-cancel", operationId),
+  onApplicationEvent: (listener) => {
+    ipcRenderer.on("p7m:application-event", (_event, payload) => listener(payload));
+  },
+  selectAssetSources: () => ipcRenderer.invoke("p7m:select-asset-sources"),
+  selectAssetToolExecutable: (tool) =>
+    ipcRenderer.invoke("p7m:select-asset-tool-executable", tool),
+  pathForDroppedAsset: (file) => webUtils.getPathForFile(file),
   listProjectTemplates: () => ipcRenderer.invoke("p7m:list-project-templates"),
   createProjectFromTemplate: (request) =>
     ipcRenderer.invoke("p7m:create-project-from-template", request),

@@ -381,7 +381,9 @@ graph TD
   monotônico a partir de 1; **proveniência `metadata.createdBy` obrigatória** (`:142`).
 - **`PipelineRunner`** — estágios como cadeias de filters
   (`pipeline:<id>:<stage>`); `run()` retorna o `ArtifactEnvelope` publicado
-  (`Pipeline.ts:59-92`). **Sem cancelamento/retry/timeout** hoje (ver RISCO §11, §22).
+  (`Pipeline.ts`). Aceita `AbortSignal`; o fluxo visual propaga cancelamento até
+  Aseprite/MGCB. Retry continua uma decisão da camada de aplicação/UI e timeout
+  permanece fora do contrato.
 - **Adapters** — projetam eventos; ver §12.
 - **Reidratação** — `RuntimeAdapter.resetSession/rehydrateFrom`, implementados pelo
   `MonoGameAdapter`, na
@@ -411,7 +413,7 @@ Cada um orquestra o domínio; nenhum o substitui.
 | **Mover entidade (live)** | entityId, posição | `entityMoved` → `entity/move` (upsert se não spawnada) | `deferred` | `skipped` | `:147-170` |
 | **Configurar câmera** | settings | `cameraConfigured` → `camera/configure` | `deferred` | — | `:72-75` |
 | **Adicionar luz** | LightSpec | `lightAdded` → `lighting/add` (remapeia id) | `deferred` | — | `:77-84` |
-| **Importar asset** | caminho `.aseprite` | pipeline `parse→enrich` → artefato `sprite-document` + `.xnb` | independe da engine | `AssetToolError` tipado | `AssetPipelineService.ingest:119-185` |
+| **Importar/reimportar asset** | `.ase/.aseprite`, diretório/tags, `operationId` | `AssetApplicationService` copia para revisão isolada → Aseprite → normalização → MGCB → manifesto; publica `EditorApplicationEvent` | independe da engine; não altera dirty/history | `AssetToolError` com etapa/arquivo/stderr/ações | `application/AssetApplicationService.ts`; ADR-024 |
 | **Publicar artefato** | payload + proveniência | revisão append-only (dedup por hash) | independe | N/A | `ArtifactStore.publish:82-112` |
 | **Executar pipeline** | pipelineId, input | `ArtifactEnvelope` | independe | N/A | `PipelineRunner.run:59-92` |
 | **Resolver capacidade/experiência** | family, version | matriz de decisões com razões | fail-safe: `requiresSubsystem` → desabilitado | razão explícita | `ExperienceGovernor.resolve:52-68` |
@@ -716,18 +718,19 @@ Componentes versionados hoje (CONFIRMADO):
 | Componente | Chave | Compatibilidade |
 |---|---|---|
 | Protocolo | major.minor | MAJOR idêntico |
-| Blueprint document | schemaVersion + projectId + metadata + paleta | migração explícita antes do replay; v2 persiste identidade, v3 explicita resolução/unidades e v4 persiste paleta semântica |
+| Blueprint document | schemaVersion + projectId + metadata + paleta + spriteRenderer opcional | migração explícita antes do replay; v2 persiste identidade, v3 explicita resolução/unidades, v4 persiste paleta e v5 admite referência de sprite |
 | Artifact | schemaVersion + revision | leitura de revisões antigas preservada |
 | Runtime profile | família + versão | exato ou fallback descendente governado |
 | Shared memory | layoutVersion | binária estrita (divergência = `InvalidBinaryLayout`) |
 
-**DECISÃO NECESSÁRIA:** consolidar em um `docs/COMPATIBILITY.md` a matriz acima e a
-política de bump de cada eixo (hoje dispersa entre docs).
+**DECISÃO ENTREGUE:** `docs/COMPATIBILITY.md` consolida a matriz e a política de
+bump de cada eixo.
 
 ## 20. Persistência, replay e migração
 
-**Modelo (CONFIRMADO):** o Blueprint é salvo como documento declarativo v4
-(`schemaVersion`, `projectId`, `metadata`, paleta de nível e domínios). `metadata.spatial` fixa
+**Modelo (CONFIRMADO):** o Blueprint é salvo como documento declarativo v5
+(`schemaVersion`, `projectId`, `metadata`, paleta de nível, referência
+`spriteRenderer` opcional e domínios). `metadata.spatial` fixa
 posições em `world-pixel`, origem `top-left`, eixo Y `down` e âncora `center`.
 O load reproduz comandos em ordem de
 dependência numa `ProjectSession` temporária. Filters e validações do store são
@@ -737,8 +740,9 @@ preservados; actions, journal e runtime são suprimidos até o commit (ADR-020).
 `migrateBlueprintDocument(raw)` (`BlueprintSerializer.ts`) detecta a versão (documentos
 sem `schemaVersion` = versão 0), **rejeita** versões acima da suportada com erro claro,
 e **migra encadeado** `v(n)→v(n+1)` por um `MIGRATIONS: Map<number, BlueprintMigration>`
-(hoje: `0→1→2→3→4`; v2 introduz `projectId` persistente, v3 explicita
-metadata/unidades e v4 adiciona a paleta semântica de cada nível; somente o
+(hoje: `0→1→2→3→4→5`; v2 introduz `projectId` persistente, v3 explicita
+metadata/unidades, v4 adiciona a paleta semântica de cada nível e v5 admite
+`spriteRenderer` opcional sem inventar referências; somente o
 factory v2 conhecido do template tem suas coordenadas de
 célula convertidas deterministicamente). `documentToCommands` chama a migração **transparentemente**, de modo
 que projetos salvos por builds anteriores continuam abrindo (P0.2 "migração de
@@ -747,13 +751,13 @@ legacy, v0 explícito, rejeição de versão futura, rejeição de não-objeto).
 
 ```mermaid
 graph TD
-  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v4<br/>schemaVersion + projectId + metadata + paleta + dominios")]
+  EXP["exportBlueprint"] --> DOC[("BlueprintDocument v5<br/>schemaVersion + projectId + metadata + paleta + spriteRenderer + dominios")]
   DOC -.-> RAW["raw carregado"]
   subgraph LOAD["LOAD"]
     RAW --> MIG["migrateBlueprintDocument(raw)<br/>(sem schemaVersion = versao 0)"]
     MIG --> V{"versao > suportada?"}
     V -->|"sim"| REJ(["REJEITA (erro claro)"])
-    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2->3->4)"]
+    V -->|"nao"| CHAIN["migra encadeado v(n)->v(n+1)<br/>(MIGRATIONS: 0->1->2->3->4->5)"]
     CHAIN --> TMP["sessao temporaria + replay prepare"]
     TMP --> SEM["validacao semantica + projecao preparada"]
     SEM --> COMMIT["reset e rehydrate<br/>commit ou rollback para A"]
@@ -941,19 +945,17 @@ vazar em log. IDs de correlação recomendados: `correlationId`, `causationId`,
   `execFile` **sem shell** — argumentos nunca são interpretados por um shell, o que
   elimina injeção de comando. **CONFIRMADO** (`AssetPipelineService.ts:35-48`).
 
-**RISCO de trust boundary (CONFIRMADO):** `AssetPipelineService.ingest(filePath)`
-aceita um caminho **arbitrário** e roda ferramentas sobre ele; é exposto por MCP
-(`asset_ingest`). O watcher só dispara dentro de `assetsRoot`, mas a ferramenta MCP
-**não** valida que `filePath` está sob `assetsRoot` (a checagem de `..` existe só em
-`deriveTags`, para nome de tag, não como guarda de acesso). → **Recomendação R-07
-(Alta):** validar, antes de `ingest`, que o caminho canônico resolve para dentro de
-`assetsRoot` (defesa contra path traversal). Sem shell, o risco é leitura/compilação de
-caminho fora do projeto, não RCE — mas ainda é uma fronteira a fechar.
+**R-07 fechado:** `AssetPipelineService` só executa fontes canônicas dentro de
+`assetsRoot`. A fachada aceita uma fonte escolhida externamente, resolve/valida o
+arquivo, copia sem truncamento para uma revisão gerenciada e só então chama o
+pipeline. Diretórios lógicos absolutos, `..`, symlink de escape e colisões
+concorrentes são recusados. GraphQL delega à mesma `EditorSurface`; MCP expõe
+somente a leitura do catálogo e não há bypass direto para `ingest`.
 
 **Regras normativas:** um agente **NÃO DEVE** ter permissão automática para executar
 binários, editar/apagar arquivos fora do projeto, carregar plugins ou abrir sockets
 arbitrários. Schemas/payloads externos **DEVEM** ser validados na borda. Symlinks e
-`..` em caminhos de asset **DEVERIAM** ser resolvidos e barrados (R-07).
+`..` e symlinks em destinos de asset **DEVEM** ser resolvidos e barrados (R-07).
 
 ## 26. Testes (estratégia por camada)
 
@@ -1149,6 +1151,7 @@ Já registrados em [`docs/adr/`](adr/README.md) (status Accepted):
 | [ADR-021](adr/ADR-021-ciclo-de-vida-duravel-do-projeto.md) | Lifecycle de arquivo durável, recovery explícito, templates e unidades canônicas |
 | [ADR-022](adr/ADR-022-historico-global-transacional.md) | Histórico global incremental, projeção otimista e savepoint lógico |
 | [ADR-023](adr/ADR-023-workbench-adaptativo-por-contribuicoes.md) | Workbench adaptativo por contribuições internas e seleção transversal |
+| [ADR-024](adr/ADR-024-pipeline-visual-de-assets.md) | Pipeline visual centralizado na aplicação, operações frias GraphQL e eventos operacionais separados |
 
 Cada ADR **DEVE** conter contexto, decisão, alternativas, consequências, riscos,
 critério de revisão, status, data e links para código e teste.
@@ -1256,7 +1259,8 @@ broadcast); subsistema de engine (manifesto+hints); perfil (nova versão+razões
 **Fase A — Correções críticas de contrato/segurança (P):**
 - ✅ R-02/PR-2/FF-1: `ProjectionResult` é união discriminada com `reason` obrigatório
   em `skipped`/`deferred` (entregue pela ADR-020).
-- R-07: validar `filePath` sob `assetsRoot` em `AssetPipelineService.ingest`.
+- ✅ R-07: ingest canônico restrito a `assetsRoot`; fontes externas são copiadas
+  para revisão privada/isolada pela fachada (ADR-024).
 - R-14: corrigir contagens/drift de docs (I-2..I-6).
 
 **Fase B — Formalização de fronteiras (P/M):**
@@ -1286,7 +1290,8 @@ funcional), P0.7 undo/redo global canônico (ADR-022, entregue), P0.8 diagnósti
   core e adapters DOM não validam CSS, foco nativo e integração do pacote completo.
 - **RISCO-4 (Média):** sem contract test schema↔handler — schemas podem divergir dos
   DTOs sem o CI perceber.
-- **RISCO-5 (Média):** path traversal em `asset_ingest` (R-07).
+- **RISCO-5:** ~~path traversal na importação de assets~~ **fechado** por caminho
+  canônico, cópia gerenciada, isolamento por projeto e testes adversariais.
 - **RISCO-7 (Média):** coerência de MMF no Windows (portabilidade; conhecido/aceito).
 - **RISCO-8 (Baixa-Média):** R8 frágil por heurística de texto.
 - **RISCO-9 (Baixa):** limpeza de MMF órfão pós-crash não confirmada.
@@ -1361,8 +1366,8 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 
 ## E. Plano incremental (por objetivo)
 
-1. **Correções críticas:** ✅ PR-2/FF-1 (`reason` obrigatório) entregue; seguem R-07
-   (path traversal) e prevenção de drift documental.
+1. **Correções críticas:** ✅ PR-2/FF-1 (`reason` obrigatório) e R-07
+   (trust boundary de assets) entregues; manter prevenção de drift documental.
 2. **Formalização arquitetural:** ✅ PR-1 (reset/reidratação na porta) entregue;
    manter os ADRs, incluindo a sessão transacional da ADR-020.
 3. **Melhoria de contratos:** R-05/FF-2/FF-3 (contract tests schema/manifesto/profile),
@@ -1386,7 +1391,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 2. Caminho de mutação único (P-1) — auditável e extensível por hooks.
 3. Adapter como única tradução (P-3) — troca de runtime sem tocar o núcleo.
 4. Contratos como fonte de verdade + fitness functions (P-4, §33).
-5. Sessão transacional por replay (P-10/ADR-020) — documento v4 é preparado em store
+5. Sessão transacional por replay (P-10/ADR-020) — documento v5 é preparado em store
    privado e publicado por troca atômica, sem exigir Blueprint vazio.
 6. Governança de experiência por perfil+manifesto com fail-safe (§3.6).
 7. Zero-GC verificado por teste (P-5) — alocação nos hot loops não regride
@@ -1409,14 +1414,14 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 | 2 | ~~`reason` de projeção não obrigatório por tipo~~ | — | **Resolvido:** união discriminada + FF-1 (ADR-020) |
 | 3 | ~~Reidratação/limpeza fora da porta de adapter~~ | — | **Resolvido:** `resetSession` + `rehydrateFrom` obrigatórios (ADR-020) |
 | 4 | Schemas JSON não exercidos no CI | Média | R-05/FF-2 |
-| 5 | Path traversal em `asset_ingest` | Média | R-07 |
+| 5 | ~~Path traversal na importação de assets~~ | — | **Resolvido:** R-07 + ADR-024 |
 | 6 | ~~Sem migradores de `schemaVersion`~~ **resolvido** (`af83a66`) | — | R-06 (entregue) |
 | 7 | Coerência de MMF no Windows | Média | binding nativo (OPP-12) |
 | 8 | R8 frágil (heurística de texto) | Baixa-Média | derivar por tipo |
 | 9 | Limpeza de MMF órfão pós-crash não confirmada | Baixa | DN-4 |
 | 10 | Erros de domínio como `Error` comum em alguns serviços | Baixa | padronizar |
 | 11 | Sem correlação ponta a ponta (observabilidade) | Baixa-Média | PR-5 |
-| 12 | Sem timeout/cancelamento em pipelines | Baixa | sob requisito |
+| 12 | Sem timeout automático em pipelines; cancelamento explícito entregue | Baixa | timeout sob requisito |
 | 13 | Drift de docs (contagens, textos futuros) | Baixa | R-14 |
 | 14 | Produto embrionário vs plataforma madura (P0.5–P0.9 abertos) | Alta (produto) | milestone ALPHA-0.1 |
 | 15 | Governança órfã (profile `requiresSubsystem` sem manifesto) | Baixa | FF-3 |
@@ -1444,7 +1449,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 | R-02 | middleware | Confirmado | ✅ `reason` obrigatório em skipped/deferred | união `ProjectionResult`; ADR-020 | P-7 | Result tipado | — | união discriminada por `status` | — | Fechada | tipo recusa skipped/deferred sem reason | FF-1 | git revert |
 | R-05 | contracts | Risco | schemas não validados no CI | ausência de teste Ajv | P-4 | — | JSON Schema 2020-12 | contract test de exemplos vs schema (2 lados) | M | Alta | exemplos validam; drift quebra CI | FF-2 | remover job |
 | R-06 | middleware | Confirmado | ~~sem migração de schemaVersion~~ **implementada** (`af83a66`) | `BlueprintSerializer.ts` `migrateBlueprintDocument`/`MIGRATIONS` | P-10 | — | SemVer/schema | ✅ migradores encadeáveis v(n)→v(n+1) + rejeição de versão futura | — | — | doc v0 migra e replica; futura é rejeitada | `blueprint-migration.test.ts` | git revert |
-| R-07 | middleware | Risco | path traversal em ingest | `AssetPipelineService.ts:119` | trust boundary | — | ISO 25010 (segurança) | validar caminho sob `assetsRoot` | P | Alta | caminho externo é rejeitado | teste de borda | remover guarda |
+| R-07 | middleware | Confirmado | ✅ trust boundary de ingest fechado | `AssetPipelineService.assertSourcePath`; `AssetApplicationService.prepareImportSource`; ADR-024 | trust boundary | Application Service | ISO 25010 (segurança) | fonte externa copiada para revisão gerenciada; traversal/symlink/corrida recusados | — | Fechada | pipeline só recebe caminho canônico interno | testes de aplicação/pipeline | git revert |
 | R-08 | docs | Melhoria | sem ADRs | inexistência de `docs/adr/` | ISO 42010 | — | 42010 | 15 ADRs retroativos | P | Média | ADR-001..015 presentes | — | remover diretório |
 | R-14 | docs | Melhoria | contagens/textos desatualizados | `GOVERNANCE.md:102`, `REQUIREMENTS.md:44`, `ARCHITECTURE.md:44,76` | P-4 | — | — | ✅ aplicado (I-2..I-5); resta I-6 (nota de mapeamento de nomes no contrato) | P | Média | docs sem contagens fixas (derivadas do CI) | — | git revert |
 | PR-4 | frontend | Confirmado | ✅ workbench modular e lógica de ferramentas testável | registries puros, `levelEditorTools`, `renderer.ts` mínimo; ADR-023 | P-8 | Registry/Composition Root | ISO 25010 | contribuições internas + adapters finos | — | Fechada | nova contribuição sem switch central; F1 em CI | unit/core/DOM adapters | git revert |

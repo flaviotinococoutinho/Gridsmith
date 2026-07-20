@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "p7m://contracts/blueprint.document",
-  "title": "P7M BlueprintDocument v4",
-  "description": "Snapshot declarativo persistido. Histórico, transactionId, actor e eventos não são persistidos; cada nível v4 inclui sua paleta editorial.",
+  "title": "P7M BlueprintDocument v5",
+  "description": "Snapshot declarativo persistido. Histórico, transactionId, actor e eventos não são persistidos; v5 adiciona uma referência SpriteRenderer opcional e reparável aos archetypes.",
   "type": "object",
   "properties": {
-    "schemaVersion": { "const": 4 },
+    "schemaVersion": { "const": 5 },
     "projectId": { "type": "string", "minLength": 1, "maxLength": 256 },
     "metadata": { "$ref": "#/$defs/projectMetadata" },
     "skeletons": { "type": "array", "items": { "$ref": "#/$defs/skeleton" } },
@@ -153,6 +153,15 @@
         "entityDefId": { "type": "string", "minLength": 1 },
         "fields": { "type": "array", "items": { "$ref": "#/$defs/entityField" } },
         "archetypeId": { "type": "string", "minLength": 1 },
+        "spriteRenderer": {
+          "type": "object",
+          "properties": {
+            "assetId": { "type": "string", "minLength": 1 },
+            "defaultClip": { "type": "string", "minLength": 1 }
+          },
+          "required": ["assetId"],
+          "additionalProperties": false
+        },
         "tags": { "type": "array", "items": { "type": "string" } },
         "editor": {
           "type": "object",

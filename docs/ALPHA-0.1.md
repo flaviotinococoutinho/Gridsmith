@@ -174,9 +174,10 @@ O editor começa pelo projeto, não pela conexão a um pipe.
   close → backup `.bak` → rename → flush do diretório. Cancelamento de Save As
   ou falha de escrita cancela Close e preserva sessão/dirty state
 - [x] Migração de `schemaVersion`: `migrateBlueprintDocument` + registro `MIGRATIONS`
-  encadeado (0→1→2→3→4) com rejeição de versão futura; v2 torna `projectId`
-  obrigatório, v3 adiciona metadata/resolução/unidade espacial explícita e v4
-  persiste a paleta semântica dos níveis —
+  encadeado (0→1→2→3→4→5) com rejeição de versão futura; v2 torna `projectId`
+  obrigatório, v3 adiciona metadata/resolução/unidade espacial explícita, v4
+  persiste a paleta semântica dos níveis e v5 admite a referência opcional
+  `spriteRenderer` sem inventá-la em documentos antigos —
   `middleware/src/canonical/BlueprintSerializer.ts`, testada em
   `middleware/test/blueprint-migration.test.ts`
 - [x] Sessão explícita e substituição transacional: `ProjectSessionManager`
@@ -333,8 +334,8 @@ instalado, release alpha.
 
 ## P1 (depois do P0 — profundidade)
 
-Asset browser com thumbnails e reimport · world map visual · inspector profundo
-de referências/assets · editor de rigs · timeline · graph editor de estados ·
+World map visual · inspector profundo de colisão/referências · editor de rigs ·
+timeline · graph editor de estados ·
 live edit genérico (contrato `TunableDescriptor`) · presets adicionais ·
 acessibilidade validada por e2e (incluindo daltonismo no IntGrid) · i18n.
 

@@ -85,6 +85,16 @@ export interface EntityDefinition {
    * é puramente editorial (a projeção explica isso com razão acionável).
    */
   readonly archetypeId?: string;
+  /**
+   * Associação editorial do archetype a um sprite importado. A referência é
+   * deliberadamente estável por `assetId`: o catálogo pode estar temporariamente
+   * indisponível sem tornar o Blueprint ilegível ou impedir o usuário de reparar
+   * o vínculo pela interface.
+   */
+  readonly spriteRenderer?: {
+    readonly assetId: string;
+    readonly defaultClip?: string;
+  };
   /** Taxonomia (painel de assets / paleta do editor). */
   readonly tags?: readonly string[];
   readonly editor?: { readonly color?: string; readonly icon?: string };
@@ -973,6 +983,28 @@ function validateEntityDefinition(def: EntityDefinition): void {
   }
   if (def.archetypeId !== undefined && (typeof def.archetypeId !== "string" || def.archetypeId.length === 0)) {
     throw new JsonRpcError(RpcErrorCode.InvalidParams, `"archetypeId" must be a non-empty string when present`);
+  }
+  if (def.spriteRenderer !== undefined) {
+    if (
+      typeof def.spriteRenderer !== "object" ||
+      typeof def.spriteRenderer.assetId !== "string" ||
+      def.spriteRenderer.assetId.length === 0
+    ) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"spriteRenderer.assetId" must be a non-empty string`,
+      );
+    }
+    if (
+      def.spriteRenderer.defaultClip !== undefined &&
+      (typeof def.spriteRenderer.defaultClip !== "string" ||
+        def.spriteRenderer.defaultClip.length === 0)
+    ) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"spriteRenderer.defaultClip" must be a non-empty string when present`,
+      );
+    }
   }
   const seen = new Set<string>();
   for (const field of def.fields) {

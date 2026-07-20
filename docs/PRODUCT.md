@@ -25,7 +25,7 @@ O que diferencia o P7M de um editor acoplado a uma engine:
 | Persona | Necessidade | O que o P7M entrega |
 |---|---|---|
 | **Designer de níveis** | Pintar jogabilidade rápido, iterar sem programador | IntGrid + auto-tiling determinístico com preview de regras; world map com vizinhança; undo/redo profundo |
-| **Artista técnico** | Timing e deformação sob controle da arte | Frame tags do Aseprite viram clipes automaticamente; rigs com FABRIK interativo; curvas de easing por segmento |
+| **Artista técnico** | Timing e deformação sob controle da arte | Asset Browser e Inspector Aseprite expõem clips/slices/pivôs; rigs com FABRIK interativo; curvas de easing por segmento |
 | **Programador de gameplay** | Motor previsível e performático | Núcleo DOD Zero-GC testado; física de câmera com parametrização f/ζ/r; contratos binários verificados entre runtimes |
 | **Agente de IA / pipeline** | Operar a ferramenta programaticamente | Ferramentas MCP para todo comando canônico; artefatos com hash e proveniência; hooks/filters inspecionáveis |
 
@@ -60,11 +60,13 @@ graph LR
 ## Estado honesto do produto
 
 > **Diagnóstico (2026-07):** o P7M é hoje uma **plataforma técnica de edição
-> madura com uma aplicação visual embrionária**. As capacidades abaixo estão
-> entregues e verificadas **na plataforma** (modelo, gateway, runtime) — a
-> experiência visual do usuário ainda não as expõe. A conversão em produto é
-> a milestone [`ALPHA-0.1.md`](ALPHA-0.1.md); a matriz funcional honesta em
-> cinco dimensões está em [`REQUIREMENTS.md`](REQUIREMENTS.md).
+> madura com uma aplicação visual ainda incompleta**. Projeto, edição de nível,
+> histórico global, workbench adaptativo e o fluxo visual de assets já possuem
+> jornadas verificáveis; outras capacidades da plataforma ainda não estão
+> expostas como produto. A conversão continua na milestone
+> [`ALPHA-0.1.md`](ALPHA-0.1.md), com a matriz funcional honesta em
+> [`REQUIREMENTS.md`](REQUIREMENTS.md). O pipeline visual de assets não deve ser
+> interpretado como PreviewHost ou gameplay.
 
 ```mermaid
 graph LR
@@ -73,14 +75,16 @@ graph LR
     d2["2 Gateway / API"]
     d3["3 Projecao runtime"]
   end
-  subgraph PROD["Produto (embrionario -> ALPHA-0.1)"]
-    d4["4 UI visual"]
+  subgraph PROD["Produto (parcial -> ALPHA-0.1)"]
+    d4["4 UI visual<br/>projeto, nivel, historico e assets"]
     d5(["5 Jornada e2e do usuario = PRODUTO"])
   end
   d1 --> d2 --> d3 --> d4 --> d5
 ```
 
-*Mostra a maturidade em cinco dimensões sequenciais: as três primeiras (modelo, gateway, projeção) estão prontas na plataforma; a UI visual e a jornada e2e — que fecham o produto — são a lacuna que a ALPHA-0.1 cobre.*
+*Mostra a maturidade em cinco dimensões sequenciais: as três primeiras estão
+prontas na plataforma; a UI já cobre jornadas editoriais específicas, mas a
+jornada e2e completa continua sendo a lacuna da ALPHA-0.1.*
 
 ## Capacidades da plataforma (entregues e verificadas)
 
@@ -96,8 +100,12 @@ graph LR
 - **Níveis**: IntGrid + regras de auto-tiling (wildcards, negação, chance,
   variantes por seed), consolidação em batch estático, world map com
   vizinhança por borda.
-- **Assets**: pipeline Aseprite → artefato canônico com taxonomia por
-  diretório → MGCB → `.xnb`, com watcher e dedup por conteúdo.
+- **Assets**: `AssetApplicationService` centraliza watcher, catálogo, import,
+  reimport, cancelamento, ferramentas e diagnósticos sobre o pipeline Aseprite →
+  artefato canônico → MGCB. O baseline GraphQL alimenta Asset Browser, DnD,
+  miniaturas, fila, Inspector Aseprite e Problems; o Blueprint v5 persiste apenas
+  `EntityDefinition.spriteRenderer { assetId, defaultClip? }` pelo comando
+  `entitydef/update`, sem sujar histórico/dirty com progresso operacional.
 - **Entidades**: definições com campos tipados (schema gera a UI) e
   instâncias validadas com defaults.
 - **Estados visuais**: máquina Gum-like com interpolação interrupt-safe e
@@ -132,8 +140,9 @@ mindmap
       Consolidacao em batch estatico
       World map com vizinhanca por borda
     Assets
-      Pipeline Aseprite ao xnb
-      Watcher e dedup por conteudo
+      AssetApplicationService mais GraphQL
+      Asset Browser e Inspector Aseprite
+      Blueprint v5 associa spriteRenderer
     Entidades e Estados
       Campos tipados geram a UI
       Maquina Gum-like com easing Bezier

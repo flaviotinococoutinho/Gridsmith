@@ -72,7 +72,7 @@ graph LR
 | Envelope de artefato versionável | [`schemas/artifact.envelope.schema.json`](schemas/artifact.envelope.schema.json) |
 | Perfil versionado de runtime | [`schemas/runtime.profile.schema.json`](schemas/runtime.profile.schema.json) |
 | Todos os envelopes estruturais de `BlueprintCommand` | [`schemas/blueprint.commands.schema.json`](schemas/blueprint.commands.schema.json) |
-| Documento de projeto v4 | [`schemas/blueprint.document.schema.json`](schemas/blueprint.document.schema.json) |
+| Documento de projeto v5 | [`schemas/blueprint.document.schema.json`](schemas/blueprint.document.schema.json) |
 | Histórico global da ProjectSession | [`schemas/command-history.schema.json`](schemas/command-history.schema.json) |
 
 O desenho completo (comandos, eventos, hooks, filters, pipelines, adapters e
@@ -125,13 +125,17 @@ graph LR
 A borda app ↔ middleware **não** usa o plano JSON-RPC acima: usa GraphQL
 (superfície baseline completa + destino do fallback) e gRPC (caminho quente
 prioritário) — decisões em [`../docs/adr/`](../docs/adr/README.md)
-(ADR-016/017/018/019/020/022). O lifecycle de arquivo do Electron é tratado
+(ADR-016/017/018/019/020/022/024). O lifecycle de arquivo do Electron é tratado
 separadamente pela ADR-021.
 
 | Contrato | Arquivo | Papel | Operações |
 |---|---|---|---|
-| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | sessão/projeção/snapshot/eventos, `dispatch`, `historyStatus`, `undo` e `redo` + aliases legados |
+| GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | sessão/projeção/snapshot/eventos, histórico e operações frias de catálogo/import/reimport/configuração/reveal de assets |
 | gRPC proto | [`grpc/p7m_editor.proto`](grpc/p7m_editor.proto) — `p7m.editor.v1.EditorHotPath` | caminho quente condicionado pela ADR-019 | `Project*`, `Dispatch`, `HistoryStatus`, `Undo`, `Redo`, query/snapshot + `StreamEventsV2` |
+
+Operações frias de assets permanecem exclusivamente no baseline GraphQL; não
+há RPC gRPC de importação. Progresso usa o mesmo stream/journal como
+`EditorApplicationEvent`, semanticamente separado de `BlueprintEvent`.
 
 Regras de evolução:
 

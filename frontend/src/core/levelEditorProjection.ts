@@ -88,6 +88,11 @@ export interface ProjectedEntityDefinition {
   readonly tags?: readonly string[];
   readonly fields?: readonly ProjectedEntityField[];
   readonly editor?: { readonly color?: string; readonly icon?: string };
+  /** Referência canônica persistida; metadados importados continuam no catálogo. */
+  readonly spriteRenderer?: {
+    readonly assetId: string;
+    readonly defaultClip?: string;
+  };
 }
 
 export interface ProjectedEntityField {

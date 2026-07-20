@@ -37,6 +37,22 @@ import type { BlueprintCommand, CommandActor } from "../domain/BlueprintStore.js
 import type { ExperienceGovernor, ResolvedExperience } from "../runtime/ExperienceGovernor.js";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
 import { JsonRpcError, RpcErrorCode } from "../protocol/jsonrpc.js";
+import {
+  AssetApplicationError,
+  type AssetApplicationService,
+  type AssetCancellationResult,
+  type AssetCatalogFilter,
+  type AssetCatalogResult,
+  type AssetDetails,
+  type AssetOperationResult,
+  type AssetRemoveResult,
+  type AssetRevealResult,
+  type AssetSourceReference,
+  type AssetToolConfiguration,
+  type ConfigureAssetToolsRequest,
+  type ImportAssetRequest,
+} from "../application/AssetApplicationService.js";
+import type { EditorApplicationEvent } from "./EditorApplicationEvent.js";
 
 export const QUERYABLE_PROJECTIONS = [
   "skeletons",
@@ -77,6 +93,7 @@ export interface EditorSurfaceOptions {
   sessions: ProjectSessionManager;
   governor: ExperienceGovernor;
   adapter: RuntimeAdapter;
+  assets?: AssetApplicationService;
 }
 
 interface InFlightDispatch {
@@ -468,6 +485,95 @@ export class EditorSurface {
     return this.options.adapter.isConnected;
   }
 
+  get isAssetPipelineConfigured(): boolean {
+    return this.options.assets !== undefined;
+  }
+
+  /** Catalogo da sessao/projeto ativo; filtros e facetas vivem na aplicacao. */
+  assetCatalog(filter?: AssetCatalogFilter): AssetCatalogResult {
+    try {
+      return this.requireAssets().assetCatalog(filter);
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  assetDetails(assetId: unknown): AssetDetails {
+    try {
+      return this.requireAssets().assetDetails(requireString(assetId, "assetId"));
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  importAsset(request: ImportAssetRequest): AssetOperationResult {
+    try {
+      return this.requireAssets().importAsset(request);
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  reimportAsset(assetId: unknown, operationId?: unknown): AssetOperationResult {
+    try {
+      return this.requireAssets().reimportAsset(
+        requireString(assetId, "assetId"),
+        operationId === undefined ? undefined : requireString(operationId, "operationId"),
+      );
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  async removeAsset(assetId: unknown): Promise<AssetRemoveResult> {
+    try {
+      return await this.requireAssets().removeAsset(requireString(assetId, "assetId"));
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  async configureAssetTools(
+    request: ConfigureAssetToolsRequest,
+  ): Promise<AssetToolConfiguration> {
+    try {
+      return await this.requireAssets().configureAssetTools(request);
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  async revealSource(reference: unknown): Promise<AssetRevealResult> {
+    try {
+      return await this.requireAssets().revealSource(requireAssetSourceReference(reference));
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  async revealOutput(assetId: unknown): Promise<AssetRevealResult> {
+    try {
+      return await this.requireAssets().revealOutput(requireString(assetId, "assetId"));
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  cancelAssetOperation(operationId: unknown): AssetCancellationResult {
+    try {
+      return this.requireAssets().cancelAssetOperation(requireString(operationId, "operationId"));
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
+  /** Inscricao transport-neutral; retorna unsubscribe idempotente. */
+  onApplicationEvent(listener: (event: EditorApplicationEvent) => void): () => void {
+    const assets = this.requireAssets();
+    assets.on("event", listener);
+    return () => assets.off("event", listener);
+  }
+
   private mutateHistory(
     direction: "undo" | "redo",
     options: HistoryMutationOptions,
@@ -639,7 +745,23 @@ export class EditorSurface {
     if (error instanceof HistoryUnavailableError) {
       return new JsonRpcError(RpcErrorCode.InvalidParams, error.message);
     }
+    if (error instanceof AssetApplicationError) {
+      return new JsonRpcError(RpcErrorCode.InvalidParams, error.message, {
+        assetErrorCode: error.code,
+        ...error.details,
+      });
+    }
     return error;
+  }
+
+  private requireAssets(): AssetApplicationService {
+    if (!this.options.assets) {
+      throw new JsonRpcError(
+        RpcErrorCode.EngineNotReady,
+        "Asset pipeline is not configured for this middleware process",
+      );
+    }
+    return this.options.assets;
   }
 
   private assertSameRequest(requestId: string, expected: string, actual: string): void {
@@ -747,6 +869,35 @@ function emptyProjectionSnapshot(): CompleteProjectionSnapshot {
     world: { placements: [], neighbors: {} },
     document: { document: null },
   });
+}
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"${name}" must be a non-empty string`);
+  }
+  return value;
+}
+
+function requireAssetSourceReference(value: unknown): AssetSourceReference {
+  if (typeof value === "string") return { assetId: requireString(value, "assetId") };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new JsonRpcError(
+      RpcErrorCode.InvalidParams,
+      `source reference must contain exactly one of "assetId" or "operationId"`,
+    );
+  }
+  const record = value as Record<string, unknown>;
+  const hasAsset = record["assetId"] !== undefined;
+  const hasOperation = record["operationId"] !== undefined;
+  if (hasAsset === hasOperation) {
+    throw new JsonRpcError(
+      RpcErrorCode.InvalidParams,
+      `source reference must contain exactly one of "assetId" or "operationId"`,
+    );
+  }
+  return hasAsset
+    ? { assetId: requireString(record["assetId"], "assetId") }
+    : { operationId: requireString(record["operationId"], "operationId") };
 }
 
 /** JSON canônico suficiente para detectar reutilização indevida de requestId. */
