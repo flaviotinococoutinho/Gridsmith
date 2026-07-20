@@ -26,6 +26,11 @@ import {
 } from "@p7m/middleware/dist/transport/auth.js";
 import { ProjectLifecycle, type ProjectDescriptor } from "../core/projectLifecycle.js";
 import {
+  buildNewProjectPrompt,
+  resolveNewProjectChoice,
+  type ProjectTemplateOption,
+} from "../core/newProjectChoice.js";
+import {
   ProcessSupervisor,
   type ManagedProcess,
   type ServiceReadiness,
@@ -388,16 +393,53 @@ void app.whenReady().then(async () => {
     }
   };
 
+  /**
+   * Templates anunciados pelo middleware. Falha aqui NÃO impede criar projeto:
+   * sem lista, o fluxo cai no projeto em branco (comportamento anterior).
+   */
+  const availableTemplates = async (): Promise<readonly ProjectTemplateOption[]> => {
+    try {
+      const { templates } = await client.listProjectTemplates();
+      return templates;
+    } catch {
+      return [];
+    }
+  };
+
   const projectCommand = async (
     command: "new" | "open" | "openPath" | "save" | "saveAs" | "close",
-    payload?: { filePath?: string },
+    payload?: { filePath?: string; templateId?: string },
   ): Promise<ProjectStatusPayload> => {
     switch (command) {
       case "new": {
+        // Passo 2 da jornada: escolher "Novo projeto de plataforma 2D". A
+        // decisão é pura (core/newProjectChoice); aqui só há diálogo nativo.
+        let templateId = payload?.templateId;
+        if (templateId === undefined) {
+          const templates = await availableTemplates();
+          const prompt = buildNewProjectPrompt(templates);
+          if (prompt) {
+            const { response } = await dialog.showMessageBox(window, {
+              type: "question",
+              title: prompt.title,
+              message: prompt.message,
+              detail: prompt.detail,
+              buttons: [...prompt.buttons],
+              defaultId: prompt.defaultId,
+              cancelId: prompt.cancelId,
+            });
+            const choice = resolveNewProjectChoice(templates, response);
+            // Cancelar não toca na máquina de estados nem na sessão ativa.
+            if (choice.kind === "cancel") break;
+            if (choice.kind === "template") templateId = choice.templateId;
+          }
+        }
         lifecycle.beginOpen();
         try {
-          const result = await client.createProject();
-          lifecycle.opened(descriptorFromStatus(result.status, "Projeto sem título"));
+          const result = await client.createProject(templateId);
+          lifecycle.opened(
+            descriptorFromStatus(result.status, result.name ?? "Projeto sem título"),
+          );
         } catch (error) {
           lifecycle.openFailed();
           throw error;

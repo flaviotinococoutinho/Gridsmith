@@ -182,10 +182,13 @@ O editor começa pelo projeto, não pela conexão a um pipe.
   `EditorClient.newProjectFromTemplate` / `listProjectTemplates` — testado
   (`middleware/test/project-templates.test.ts`, `editor-gateway.test.ts`,
   `frontend/test/editor-client.integration.test.ts`)
-- [ ] **Template ainda não conectado ao botão "Novo projeto" da UI**:
-  `projectCommand("new")` (`main.ts`) cria um projeto em branco; `newProjectFromTemplate`
-  só é chamado pelo teste de integração — o passo 2 da jornada ("Novo projeto de
-  plataforma 2D") ainda não usa o template
+- [x] **Template conectado ao botão "Novo projeto" da UI**: `projectCommand("new")`
+  lista os templates do middleware e abre a escolha ("Plataforma 2D" · "Projeto em
+  branco" · "Cancelar") antes de criar; a DECISÃO é núcleo puro e testado
+  (`frontend/src/core/newProjectChoice.ts` + `frontend/test/new-project-choice.test.ts`),
+  o `main` só traduz para `showMessageBox`. Cancelar não toca na sessão ativa;
+  sem templates anunciados o fluxo cai no projeto em branco (fail-safe).
+  `payload.templateId` pula o diálogo (automação/e2e do passo 2)
 - [ ] Recovery pós-crash: o autosave grava `.autosave`, mas a restauração na
   inicialização (detectar `.autosave` mais novo que o save e oferecer restaurar) não existe
 - [ ] Menu "Recentes" nativo (recentes são rastreados e enviados ao renderer, mas não há
