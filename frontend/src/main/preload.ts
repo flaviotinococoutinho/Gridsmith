@@ -47,10 +47,13 @@ export interface P7mEditorApi {
     listener: (payload: { snapshot: unknown; record: { reason: string } }) => void,
   ): void;
   // ---- ciclo de vida do projeto (ALPHA-0.1 P0.2) ----
-  /** New/Open/Save/Save As/Close disparados pela UI; diálogos vivem no main. */
+  /**
+   * New/Open/Save/Save As/Close disparados pela UI; diálogos vivem no main.
+   * `templateId` em "new" pula o diálogo de escolha (automação/e2e).
+   */
   projectCommand(
     command: "new" | "open" | "openPath" | "save" | "saveAs" | "close",
-    payload?: { filePath?: string },
+    payload?: { filePath?: string; templateId?: string },
   ): Promise<ProjectStatusPayload>;
   projectStatus(): Promise<ProjectStatusPayload>;
   onProjectStatus(listener: (status: ProjectStatusPayload) => void): void;
