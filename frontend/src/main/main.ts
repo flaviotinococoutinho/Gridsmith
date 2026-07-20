@@ -32,6 +32,7 @@ import {
   type ServiceStatus,
 } from "./ProcessSupervisor.js";
 import { EditorClient, type ProjectStatus } from "./EditorClient.js";
+import { createProjectFromTemplate } from "./newProject.js";
 import {
   ensureSingleInstance,
   hardenNavigation,
@@ -381,14 +382,9 @@ void app.whenReady().then(async () => {
   ): Promise<ProjectStatusPayload> => {
     switch (command) {
       case "new": {
-        lifecycle.beginOpen();
-        try {
-          const result = await client.createProject();
-          lifecycle.opened(descriptorFromStatus(result.status, "Projeto sem título"));
-        } catch (error) {
-          lifecycle.openFailed();
-          throw error;
-        }
+        // Passo 2 da jornada: "Novo projeto" usa o template canônico
+        // "Plataforma 2D" (nível, câmera, luz e Player prontos para editar).
+        await createProjectFromTemplate(client, lifecycle);
         break;
       }
       case "open":

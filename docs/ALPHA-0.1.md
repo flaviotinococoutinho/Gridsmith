@@ -182,10 +182,12 @@ O editor começa pelo projeto, não pela conexão a um pipe.
   `EditorClient.newProjectFromTemplate` / `listProjectTemplates` — testado
   (`middleware/test/project-templates.test.ts`, `editor-gateway.test.ts`,
   `frontend/test/editor-client.integration.test.ts`)
-- [ ] **Template ainda não conectado ao botão "Novo projeto" da UI**:
-  `projectCommand("new")` (`main.ts`) cria um projeto em branco; `newProjectFromTemplate`
-  só é chamado pelo teste de integração — o passo 2 da jornada ("Novo projeto de
-  plataforma 2D") ainda não usa o template
+- [x] Template conectado ao botão "Novo projeto" da UI: `projectCommand("new")`
+  cria a partir do template canônico `platformer-2d` pelo fluxo injetável
+  `frontend/src/main/newProject.ts` (o nome do descritor vem do template;
+  falha restaura exatamente a sessão local anterior) — testado em
+  `frontend/test/new-project.test.ts`, incluindo a existência do template no
+  registro canônico do middleware
 - [ ] Recovery pós-crash: o autosave grava `.autosave`, mas a restauração na
   inicialização (detectar `.autosave` mais novo que o save e oferecer restaurar) não existe
 - [ ] Menu "Recentes" nativo (recentes são rastreados e enviados ao renderer, mas não há
