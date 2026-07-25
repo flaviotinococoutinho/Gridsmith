@@ -10,7 +10,13 @@
 
 import { EventLog } from "../core/eventLog.js";
 import { WorkbenchModel, type BottomTab } from "../core/workbenchModel.js";
-import { panelLabel, projectStateLabel, serviceStateLabel } from "../core/vocabulary.js";
+import {
+  panelLabel,
+  projectStateLabel,
+  runtimeStateLabel,
+  serviceStateLabel,
+} from "../core/vocabulary.js";
+import { presentError } from "../core/errorCatalog.js";
 import { ExperienceGate, type ResolvedExperienceLike } from "../core/experienceGate.js";
 import type { P7mEditorApi, ProjectStatusPayload, ServiceStatusPayload } from "../main/preload.js";
 import { mountLevelEditor } from "./levelEditorView.js";
@@ -33,12 +39,53 @@ const log = new EventLog(500);
 let experienceGate: ExperienceGate | undefined;
 /** Cópia substituível das projeções; resync nunca é tratado como evento incremental. */
 let projectionSnapshot: unknown;
+/** Última verdade do runtime conhecida; o painel Problemas não mente sobre ela. */
+let lastRuntimeState: ProjectStatusPayload["runtimeState"];
+
+const PROJECTION_STATUSES = ["projected", "skipped", "deferred"] as const;
+type ProjectionStatus = (typeof PROJECTION_STATUSES)[number];
+
+/**
+ * A borda de IPC entrega `status: string`. Estreitar aqui — e descartar o que
+ * não reconhecemos — evita que um status desconhecido vire rótulo inventado.
+ */
+function narrowProjection(
+  projection: { status: string; reason?: string } | undefined,
+): { status: ProjectionStatus; reason?: string } | undefined {
+  if (!projection) return undefined;
+  const status = PROJECTION_STATUSES.find((s) => s === projection.status);
+  if (!status) return undefined;
+  return { status, ...(projection.reason ? { reason: projection.reason } : {}) };
+}
+
+/**
+ * Ausência de problema NO LOG não significa "tudo aplicado": a sessão pode
+ * estar pendente ou com falha, e o log só cobre a janela desta sessão de UI.
+ */
+function problemsEmptyHint(): string {
+  if (lastRuntimeState === "failed") {
+    return "A sessão de runtime falhou — nada novo está sendo aplicado.";
+  }
+  if (lastRuntimeState === "deferred") {
+    return "Há trabalho pendente de aplicação no runtime.";
+  }
+  if (lastRuntimeState === "synchronized") return "Tudo aplicado no runtime.";
+  return "Sem projeto aberto ou runtime ainda não informou seu estado.";
+}
 
 // ---------------------------------------------------------------- toolbar
 
 function wireProjectToolbar(): void {
   const run = (command: Parameters<P7mEditorApi["projectCommand"]>[0]) => (): void => {
-    void window.p7m.projectCommand(command).then(applyProjectStatus);
+    // Toda falha do ciclo de vida do projeto chega ao usuário com causa e
+    // ação — antes virava unhandled rejection e sumia.
+    void window.p7m
+      .projectCommand(command)
+      .then((status) => {
+        dismissError();
+        applyProjectStatus(status);
+      })
+      .catch((error: unknown) => showError(error));
   };
   $("btn-new").addEventListener("click", run("new"));
   $("btn-open").addEventListener("click", run("open"));
@@ -54,6 +101,51 @@ function applyProjectStatus(status: ProjectStatusPayload): void {
   const hasProject = status.state !== "no-project";
   ($("btn-save") as HTMLButtonElement).disabled = !hasProject;
   ($("btn-close") as HTMLButtonElement).disabled = !hasProject;
+  applyRuntimeState(status.runtimeState);
+}
+
+/** Verdade do runtime na status bar: sincronizado, pendente ou com falha. */
+function applyRuntimeState(state: ProjectStatusPayload["runtimeState"]): void {
+  lastRuntimeState = state;
+  const el = $("status-runtime");
+  if (!state) {
+    el.textContent = "";
+    delete el.dataset["state"];
+    return;
+  }
+  el.textContent = runtimeStateLabel(state);
+  el.dataset["state"] = state;
+}
+
+// ------------------------------------------------------- superfície de erro
+
+function showError(error: unknown): void {
+  const presented = presentError(error);
+  const banner = $("error-banner");
+  banner.replaceChildren();
+  const title = document.createElement("strong");
+  title.textContent = presented.title;
+  const body = document.createElement("div");
+  body.className = "reason";
+  body.textContent = `${presented.cause} ${presented.action}`;
+  banner.append(title, body);
+  if (presented.detail) {
+    const detail = document.createElement("code");
+    detail.textContent = presented.detail;
+    banner.append(detail);
+  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "Dispensar";
+  close.addEventListener("click", dismissError);
+  banner.append(close);
+  banner.hidden = false;
+}
+
+function dismissError(): void {
+  const banner = $("error-banner");
+  banner.hidden = true;
+  banner.replaceChildren();
 }
 
 // ------------------------------------------------------------------ rail
@@ -141,7 +233,7 @@ function renderBottom(): void {
       .list({ ...(filterText ? { text: filterText } : {}) })
       .filter((e) => e.projectionStatus === "skipped" || e.projectionStatus === "deferred");
     if (problems.length === 0) {
-      content.append(placeholder("Nenhum problema", "Tudo aplicado no runtime."));
+      content.append(placeholder("Nenhum problema", problemsEmptyHint()));
       return;
     }
     for (const entry of problems) {
@@ -237,8 +329,10 @@ async function boot(): Promise<void> {
     else if (action === "redo") activeEditor.redo?.();
   });
   window.p7m.onServiceStatus(renderServices);
-  window.p7m.onBlueprintEvent((event) => {
-    log.record(event as { kind: string } & Record<string, unknown>);
+  window.p7m.onBlueprintEvent((event, projection) => {
+    // A projeção é o que faz o painel Problemas dizer a verdade: sem ela o
+    // contador era estruturalmente zero.
+    log.record(event as { kind: string } & Record<string, unknown>, narrowProjection(projection));
     refreshProblemBadge();
     renderBottom();
   });

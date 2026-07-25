@@ -72,6 +72,12 @@ type CursorEventEnvelope {
   commandSequence: String!
   kind: String!
   payload: JSON!
+  """
+  Resultado da aplicação no runtime; null em eventos de controle e quando não
+  há adapter. `detail` é sempre null aqui — o ACK completo da engine fica só
+  na resposta do dispatch.
+  """
+  projection: Projection
 }
 
 "Janela incremental do EventJournal; events é vazio quando resyncRequired."

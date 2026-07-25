@@ -73,6 +73,31 @@ test("formatRecord sobrevive a detail não serializável", () => {
 
 // ---------- EventJournal ----------
 
+test("journal: a projeção viaja no envelope, congelada e só quando existe", () => {
+  const journal = new EventJournal(8, "middleware-p");
+  journal.activateSession("session-p", "project-p", 0);
+
+  // evento de controle: sem projeção (o cliente distingue de "aplicado")
+  const control = journal.append("project/sessionChanged", { kind: "project/sessionChanged" });
+  assert.equal(control.projection, undefined);
+
+  const applied = journal.append("lightAdded", { kind: "lightAdded" }, {
+    event: "lightAdded",
+    status: "deferred",
+    reason: "no engine session connected",
+  });
+  assert.equal(applied.projection?.status, "deferred");
+  assert.equal(applied.projection?.reason, "no engine session connected");
+
+  // o freeze do envelope é raso; a projeção precisa do seu próprio freeze
+  // porque broadcast JSON-RPC e stream gRPC compartilham a referência do ring
+  assert.ok(Object.isFrozen(applied.projection));
+
+  // sobrevive à leitura incremental (é o caminho do fallback GraphQL)
+  const [replayed] = journal.since(applied.seq - 1n);
+  assert.equal(replayed?.projection?.status, "deferred");
+});
+
 test("journal: seq monotônico, since incremental e emissão ao vivo", () => {
   const journal = new EventJournal(8, "middleware-a");
   journal.activateSession("session-a", "project-a", 0);

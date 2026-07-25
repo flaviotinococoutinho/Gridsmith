@@ -84,15 +84,23 @@ async function makeRig(tag: string, options: RigOptions = {}): Promise<Rig> {
     initialStatus.projectId!,
     initialStatus.commandSequence,
   );
-  sessions.on("event", (event: SessionBlueprintEvent) => {
-    journal.appendForSession(
-      event.projectSessionId,
-      event.projectId,
-      event.commandSequence,
-      event.kind,
-      event,
-    );
-  });
+  sessions.on(
+    "event",
+    (event: SessionBlueprintEvent, projection?: { event: string; status: string; reason?: string }) => {
+      journal.appendForSession(
+        event.projectSessionId,
+        event.projectId,
+        event.commandSequence,
+        event.kind,
+        event,
+        projection && {
+          event: projection.event,
+          status: projection.status as "projected" | "skipped" | "deferred",
+          ...(projection.reason !== undefined ? { reason: projection.reason } : {}),
+        },
+      );
+    },
+  );
   sessions.on("sessionChanged", (event: ProjectSessionChangedEvent) => {
     if (event.action === "activated") {
       journal.activateSession(event.projectSessionId!, event.projectId!, event.commandSequence);
@@ -157,7 +165,11 @@ test("EditorClient v2: conecta via gRPC, despacha, consulta, recebe eventos por 
     assert.equal(client.technicalDiagnostics.activeTransport, "gRPC");
 
     const received: string[] = [];
-    client.onBlueprintEvent((event) => received.push(event.kind));
+    const receivedProjections: Array<{ status: string; reason?: string } | undefined> = [];
+    client.onBlueprintEvent((event, projection) => {
+      received.push(event.kind);
+      receivedProjections.push(projection);
+    });
 
     // dispatch pelo caminho canônico (engine offline → deferred, AST aceita)
     const outcome = await client.dispatch("entitydef/define", {
@@ -173,6 +185,14 @@ test("EditorClient v2: conecta via gRPC, despacha, consulta, recebe eventos por 
     // evento chegou pelo STREAM gRPC
     await new Promise((r) => setTimeout(r, 100));
     assert.deepEqual(received, ["entityDefDefined"]);
+
+    // F5: a projeção viaja NO ENVELOPE, junto do evento — sem ela o painel
+    // Problemas do editor seria estruturalmente zero mesmo com a engine caída.
+    assert.equal(receivedProjections[0]?.status, "deferred");
+    assert.ok(
+      (receivedProjections[0]?.reason ?? "").length > 0,
+      "a projeção adiada precisa chegar ao editor com razão acionável",
+    );
 
     // experiência governada (GraphQL baseline) alimenta o gate da UI
     const experience = await client.resolveExperience("monogame", "3.8.2");

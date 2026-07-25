@@ -35,6 +35,9 @@ interface RawEvent {
   project_id: string;
   command_sequence: string;
   payload_json: string;
+  has_projection?: boolean;
+  projection_status?: string;
+  projection_reason?: string;
 }
 
 interface HotPathClient extends grpc.Client {
@@ -116,6 +119,11 @@ export interface HotSnapshot extends HotCursor {
   readonly projections: Readonly<Record<string, unknown>>;
 }
 
+export interface EventProjection {
+  readonly status: string;
+  readonly reason?: string;
+}
+
 export interface HotEvent {
   readonly seq: string;
   readonly kind: string;
@@ -123,6 +131,8 @@ export interface HotEvent {
   readonly projectId: string;
   readonly commandSequence: string;
   readonly payload: unknown;
+  /** Ausente em eventos de controle e quando não há adapter de runtime. */
+  readonly projection?: EventProjection;
 }
 
 export class GrpcTransport {
@@ -270,13 +280,22 @@ export class GrpcTransport {
         onError(new Error("gRPC event stream emitted data before cursor status"));
         return;
       }
+      const raw = frame.event;
       onEvent({
-        seq: frame.event.seq,
-        kind: frame.event.kind,
-        projectSessionId: frame.event.project_session_id,
-        projectId: frame.event.project_id,
-        commandSequence: frame.event.command_sequence,
-        payload: JSON.parse(frame.event.payload_json),
+        seq: raw.seq,
+        kind: raw.kind,
+        projectSessionId: raw.project_session_id,
+        projectId: raw.project_id,
+        commandSequence: raw.command_sequence,
+        payload: JSON.parse(raw.payload_json),
+        ...(raw.has_projection
+          ? {
+              projection: {
+                status: raw.projection_status ?? "",
+                ...(raw.projection_reason ? { reason: raw.projection_reason } : {}),
+              },
+            }
+          : {}),
       });
     });
     stream.on("error", (err: grpc.ServiceError) => {

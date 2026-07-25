@@ -109,6 +109,9 @@ function serializeEvent(event: EventEnvelope): {
   command_sequence: string;
   kind: string;
   payload_json: string;
+  has_projection: boolean;
+  projection_status: string;
+  projection_reason: string;
 } {
   return {
     seq: event.seq.toString(),
@@ -117,6 +120,11 @@ function serializeEvent(event: EventEnvelope): {
     command_sequence: event.commandSequence.toString(),
     kind: event.kind,
     payload_json: JSON.stringify(event.payload),
+    // proto3 não tem campo opcional sem wrapper: has_projection separa
+    // "sem projeção" de "projetado".
+    has_projection: event.projection !== undefined,
+    projection_status: event.projection?.status ?? "",
+    projection_reason: event.projection?.reason ?? "",
   };
 }
 

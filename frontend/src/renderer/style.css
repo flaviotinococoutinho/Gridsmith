@@ -157,6 +157,31 @@ button:disabled { color: var(--muted); cursor: not-allowed; }
 }
 .problem-card .reason { color: var(--muted); }
 
+/* ---- banner de erro (causa + ação) ---- */
+#error-banner {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: 4px;
+  background: var(--panel);
+  padding: 0.5rem 0.7rem;
+  margin: 0.4rem 0.6rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+#error-banner[hidden] { display: none; }
+#error-banner .reason { color: var(--muted); }
+#error-banner code {
+  color: var(--muted);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+#error-banner button { align-self: flex-start; }
+
+/* verdade do runtime na status bar */
+#status-runtime[data-state="deferred"] { color: var(--warn); }
+#status-runtime[data-state="failed"] { color: var(--warn); font-weight: 600; }
+
 /* ---- inspector ---- */
 #inspector {
   width: 260px;
