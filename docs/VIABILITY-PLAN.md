@@ -354,6 +354,25 @@ O efeito por frente:
 ### F5 — Trilha da verdade da projeção: problemas, divergência e reconciliação
 
 > Complexidade média · sem ADR (execução dentro das decisões vigentes)
+>
+> **Estado: núcleo ENTREGUE.** A projeção passou a viajar no envelope do evento
+> pelas três bordas, o `runtimeState` chegou à barra de status, os cinco sites
+> que descartavam o `DispatchOutcome` passaram a qualificar a mensagem, o
+> `projectCommand` ganhou tratamento de falha com superfície no DOM, e
+> `core/errorCatalog.ts` traduz código de erro em causa e ação em pt-BR. O
+> painel Problemas deixou de afirmar "tudo aplicado no runtime".
+>
+> O mapeamento prévio corrigiu três suposições desta seção, e o texto abaixo as
+> preserva como estavam para deixar o erro visível: (a) o elo que faltava não
+> era o append do journal, era o `publish()` do `ProjectSessionManager`, que
+> entregava um único argumento ao listener; (b) `EventLog.record` **já** aceitava
+> a projeção como segundo parâmetro — ninguém passava porque o evento não a
+> carregava; (c) o `runtimeState` **já chegava** ao processo main e era
+> descartado no `descriptorFromStatus`.
+>
+> **Resta desta frente:** o status `failed` no `ProjectionResult` (a projeção
+> ainda lança em vez de alimentar a trilha), a reidratação isolada por evento
+> com sumário no journal, e a fila única na fronteira do adapter.
 
 **Problema.** O middleware produz razões excelentes — "entity has no archetypeId — set one to spawn it", "no engine session connected", "world layout is editorial until level streaming lands" (MonoGameAdapter.ts:54/135/190) — e a UI afirma "Nenhum problema — Tudo aplicado no runtime" com o badge em 0 (renderer.ts:142). O envelope do journal só carrega seq/kind/payload (EventJournal.ts:14-18, alimentado cru em index.ts:174), o renderer chama `log.record(event)` sem o segundo argumento (renderer.ts:238-242), e o `projection` que o dispatch JÁ devolve (EditorClient.ts:32-35) é descartado em quatro sites de levelEditorView.ts. Pior: a projeção pode FALHAR depois de o store já ter aplicado (CanonicalOrchestrator.ts:42 antes de :45), deixando Blueprint e engine contando histórias diferentes sem nenhuma trilha; e uma falha no meio da reidratação aborta o resto (MonoGameAdapter.ts:201-227) virando uma linha de stderr que só aparece num tooltip.
 
