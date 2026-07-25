@@ -21,6 +21,7 @@ import {
 } from "./transport/GraphQlTransport.js";
 import {
   GrpcTransport,
+  type EventProjection,
   type HotCursor,
   type HotEvent,
   type HotJournalStatus,
@@ -39,6 +40,15 @@ export interface DispatchOutcome {
   readonly event: BlueprintEventPayload;
   readonly projection?: { status: string; reason?: string };
 }
+
+/**
+ * A projeção viaja como SEGUNDO argumento — é resultado de aplicação no
+ * runtime, não parte do evento canônico de domínio.
+ */
+export type BlueprintEventListener = (
+  event: BlueprintEventPayload,
+  projection?: EventProjection,
+) => void;
 
 export interface ProjectionSnapshot extends HotCursor {
   readonly firstAvailableSeq: string;
@@ -133,7 +143,7 @@ const EVENT_BATCH_QUERY = `query EventBatch($instance: String!, $projectSessionI
   ) {
     middlewareInstanceId projectSessionId projectId commandSequence firstAvailableSeq lastEventSeq
     resyncRequired resyncReason
-    events { seq kind projectSessionId projectId commandSequence payload }
+    events { seq kind projectSessionId projectId commandSequence payload projection { status reason } }
   }
 }`;
 
@@ -168,6 +178,7 @@ interface EventBatchWire {
     projectId: string;
     commandSequence: string;
     payload: unknown;
+    projection?: { status: string; reason?: string | null } | null;
   }>;
 }
 
@@ -176,7 +187,7 @@ export class EditorClient {
   private readonly log: Logger;
   private readonly grpc: GrpcTransport;
   private readonly graphql: GraphQlTransport;
-  private readonly eventListeners = new Set<(event: BlueprintEventPayload) => void>();
+  private readonly eventListeners = new Set<BlueprintEventListener>();
   private readonly resyncListeners = new Set<(snapshot: ProjectionSnapshot, record: ResynchronizationRecord) => void>();
   private readonly eventPollMs: number;
   private readonly probeTickMs: number;
@@ -305,7 +316,7 @@ export class EditorClient {
     return { sessionId: this.sessionId };
   }
 
-  onBlueprintEvent(listener: (event: BlueprintEventPayload) => void): () => void {
+  onBlueprintEvent(listener: BlueprintEventListener): () => void {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
   }
@@ -734,7 +745,18 @@ export class EditorClient {
         return;
       }
       for (const event of batch.events) {
-        if (!this.deliver(event)) return;
+        // GraphQL devolve null onde o gRPC omite: normaliza para o mesmo shape.
+        const { projection, ...rest } = event;
+        const delivered: HotEvent = projection
+          ? {
+              ...rest,
+              projection: {
+                status: projection.status,
+                ...(projection.reason ? { reason: projection.reason } : {}),
+              },
+            }
+          : rest;
+        if (!this.deliver(delivered)) return;
       }
       if (this.cursor?.lastEventSeq !== batch.lastEventSeq) {
         await this.resynchronize("poll_window_mismatch");
@@ -799,7 +821,7 @@ export class EditorClient {
     };
     for (const listener of this.eventListeners) {
       try {
-        listener(payload);
+        listener(payload, event.projection);
       } catch (error) {
         this.log.warn("blueprint event listener failed", { message: String(error) });
       }

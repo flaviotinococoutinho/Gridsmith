@@ -268,5 +268,8 @@ function serializeEvent(event: EventEnvelope): Record<string, unknown> {
     commandSequence: event.commandSequence.toString(),
     kind: event.kind,
     payload: event.payload,
+    // omitido (não `null`) quando não houve projeção: o cliente distingue
+    // "evento de controle / sem adapter" de "aplicado no runtime".
+    ...(event.projection ? { projection: event.projection } : {}),
   };
 }

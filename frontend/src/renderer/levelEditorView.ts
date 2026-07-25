@@ -19,6 +19,8 @@ import {
   type LevelTool,
 } from "../core/levelEditorTools.js";
 import { LEVEL_PALETTE, TILE_COLORS, defaultLevelRules } from "../core/levelPresets.js";
+import { presentError } from "../core/errorCatalog.js";
+import { projectionLabel } from "../core/vocabulary.js";
 import type { ExperienceGate } from "../core/experienceGate.js";
 // type-only (apagado na compilação): o módulo real é vendorizado pelo build
 import type { resolveAutoTiles as ResolveAutoTilesFn } from "@p7m/middleware/dist/leveldesign/AutoTiler.js";
@@ -278,10 +280,23 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     entityDefEnsured = true;
   }
 
+  /**
+   * Qualifica a mensagem de sucesso com o que REALMENTE aconteceu no runtime.
+   * O dispatch devolve a projeção; ignorá-la era o que fazia o editor afirmar
+   * que aplicou o que a engine recusou.
+   */
+  function withProjection(base: string, outcome: unknown): string {
+    const projection = (outcome as { projection?: { status?: string; reason?: string } } | undefined)
+      ?.projection;
+    if (!projection || projection.status === "projected") return base;
+    const label = projectionLabel(projection.status ?? "");
+    return projection.reason ? `${base} ${label}: ${projection.reason}.` : `${base} ${label}.`;
+  }
+
   async function placeEntityAt(position: [number, number]): Promise<void> {
     await ensureEntityDef();
     const entityId = nextEntityId(entities, ENTITY_DEF.entityDefId);
-    await window.p7m.dispatch("entity/place", {
+    const outcome = await window.p7m.dispatch("entity/place", {
       entityId,
       entityDefId: ENTITY_DEF.entityDefId,
       position,
@@ -289,22 +304,31 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     });
     entities.set(entityId, { entityId, position });
     selectedEntityId = entityId;
-    status.textContent = `Jogador posicionado em (${position[0]}, ${position[1]}).`;
+    status.textContent = withProjection(
+      `Jogador posicionado em (${position[0]}, ${position[1]}).`,
+      outcome,
+    );
     repaint();
   }
 
   async function moveEntity(marker: EntityMarker, position: [number, number]): Promise<void> {
-    await window.p7m.dispatch("entity/move", { entityId: marker.entityId, position });
-    status.textContent = `Jogador movido para (${position[0]}, ${position[1]}).`;
+    const outcome = await window.p7m.dispatch("entity/move", {
+      entityId: marker.entityId,
+      position,
+    });
+    status.textContent = withProjection(
+      `Jogador movido para (${position[0]}, ${position[1]}).`,
+      outcome,
+    );
   }
 
   async function removeSelectedEntity(): Promise<void> {
     if (!selectedEntityId) return;
     const entityId = selectedEntityId;
-    await window.p7m.dispatch("entity/remove", { entityId });
+    const outcome = await window.p7m.dispatch("entity/remove", { entityId });
     entities.delete(entityId);
     selectedEntityId = undefined;
-    status.textContent = "Jogador removido.";
+    status.textContent = withProjection("Jogador removido.", outcome);
     repaint();
   }
 
@@ -441,11 +465,18 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       rules: defaultLevelRules(),
     });
     try {
-      await window.p7m.dispatch(levelInBlueprint ? "level/update" : "level/define", payload);
+      const outcome = await window.p7m.dispatch(
+        levelInBlueprint ? "level/update" : "level/define",
+        payload,
+      );
       levelInBlueprint = true;
-      status.textContent = "Nível publicado — salve o projeto para persistir (Ctrl+S).";
+      status.textContent = withProjection(
+        "Nível publicado — salve o projeto para persistir (Ctrl+S).",
+        outcome,
+      );
     } catch (err) {
-      status.textContent = `Falha ao publicar: ${err instanceof Error ? err.message : err}`;
+      const presented = presentError(err);
+      status.textContent = `${presented.title}: ${presented.cause} ${presented.action}`;
     }
   }
 

@@ -95,7 +95,10 @@ export interface ProjectSessionManagerOptions {
   readonly createId?: () => string;
 }
 
-/** Eventos: `event` (SessionBlueprintEvent) e `sessionChanged` (controle). */
+/**
+ * Eventos: `event` (SessionBlueprintEvent, ProjectionResult | undefined) e
+ * `sessionChanged` (controle, sem projeção).
+ */
 export class ProjectSessionManager extends EventEmitter implements ProjectSessionPort {
   private activeSession: ProjectSession | undefined;
   private readonly prepared = new WeakSet<ProjectSession>();
@@ -262,7 +265,9 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
         commandSequence: sequence,
         revision: sequence,
       }) as SessionBlueprintEvent;
-      this.publish("event", event);
+      // A projeção acompanha o evento: é o que permite ao editor distinguir
+      // "aplicado no runtime" de "adiado/ignorado com razão".
+      this.publish("event", event, result.projection);
       return { ...result, event };
     }));
   }
@@ -405,10 +410,10 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
   }
 
   /** Observadores são pós-commit e nunca podem alterar o resultado da operação. */
-  private publish(eventName: "event" | "sessionChanged", payload: unknown): void {
+  private publish(eventName: "event" | "sessionChanged", ...args: readonly unknown[]): void {
     for (const listener of this.rawListeners(eventName)) {
       try {
-        Reflect.apply(listener, this, [payload]);
+        Reflect.apply(listener, this, args);
       } catch {
         // Falhas de observação são isoladas; a fonte canônica e o journal
         // confiável não podem ser revertidos por telemetria/clientes externos.

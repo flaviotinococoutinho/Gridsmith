@@ -16,6 +16,14 @@ export interface ProjectStatusPayload {
     projectId?: string;
   };
   recents: Array<{ filePath: string; name: string; lastOpenedUnixMs: number }>;
+  /** Verdade do runtime da sessão ativa; ausente sem projeto aberto. */
+  runtimeState?: "synchronized" | "deferred" | "failed";
+}
+
+/** Resultado da aplicação de um evento no runtime (metadado de transporte). */
+export interface EventProjectionPayload {
+  status: string;
+  reason?: string;
 }
 
 /** Estado de um serviço supervisionado (P0.1) + últimas linhas de log. */
@@ -35,12 +43,15 @@ export interface P7mEditorApi {
   query(projection: string): Promise<unknown>;
   experience(family?: string, version?: string): Promise<unknown>;
   onBlueprintEvent(
-    listener: (event: {
-      kind: string;
-      projectSessionId: string;
-      projectId: string;
-      commandSequence: string;
-    }) => void,
+    listener: (
+      event: {
+        kind: string;
+        projectSessionId: string;
+        projectId: string;
+        commandSequence: string;
+      },
+      projection?: EventProjectionPayload,
+    ) => void,
   ): void;
   /** Snapshot completo após restart/gap; substitui o estado projetado local. */
   onProjectionResync(
@@ -71,7 +82,9 @@ const api: P7mEditorApi = {
   query: (projection) => ipcRenderer.invoke("p7m:query", projection),
   experience: (family, version) => ipcRenderer.invoke("p7m:experience", family, version),
   onBlueprintEvent: (listener) => {
-    ipcRenderer.on("p7m:blueprint-event", (_event, payload) => listener(payload));
+    ipcRenderer.on("p7m:blueprint-event", (_event, payload, projection) =>
+      listener(payload, projection),
+    );
   },
   onProjectionResync: (listener) => {
     ipcRenderer.on("p7m:projection-resync", (_event, payload) => listener(payload));
