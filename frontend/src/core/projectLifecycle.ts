@@ -61,6 +61,35 @@ export class ProjectLifecycleError extends Error {
 
 const MAX_RECENTS = 10;
 
+/**
+ * Estreita a lista de recentes vinda do DISCO.
+ *
+ * O arquivo em `userData` é entrada não confiável: pode estar truncado, ter
+ * sido editado à mão ou vir de uma versão anterior. Sem este filtro, uma
+ * entrada quebrada vira item de UI quebrado. Mesma disciplina que o renderer
+ * já aplica a dado vindo da borda de IPC.
+ *
+ * Descarta o inválido, deduplica por caminho (mantendo o mais recente),
+ * ordena do mais recente para o mais antigo e corta na capacidade.
+ */
+export function parseRecents(input: unknown): RecentProject[] {
+  if (!Array.isArray(input)) return [];
+  const byPath = new Map<string, RecentProject>();
+  for (const raw of input) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const { filePath, name, lastOpenedUnixMs } = raw as Record<string, unknown>;
+    if (typeof filePath !== "string" || filePath.length === 0) continue;
+    if (typeof name !== "string" || name.length === 0) continue;
+    if (typeof lastOpenedUnixMs !== "number" || !Number.isFinite(lastOpenedUnixMs)) continue;
+    const previous = byPath.get(filePath);
+    if (previous && previous.lastOpenedUnixMs >= lastOpenedUnixMs) continue;
+    byPath.set(filePath, { filePath, name, lastOpenedUnixMs });
+  }
+  return [...byPath.values()]
+    .sort((a, b) => b.lastOpenedUnixMs - a.lastOpenedUnixMs)
+    .slice(0, MAX_RECENTS);
+}
+
 export class ProjectLifecycle {
   private state: ProjectState = "no-project";
   private descriptor: ProjectDescriptor | undefined;

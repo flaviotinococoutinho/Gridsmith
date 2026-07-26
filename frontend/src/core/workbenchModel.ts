@@ -6,7 +6,11 @@
  */
 
 import { ExperienceGate, PANEL_REQUIREMENTS, type ResolvedExperienceLike } from "./experienceGate.js";
+import type { ProjectState } from "./projectLifecycle.js";
 import { panelLabel } from "./vocabulary.js";
+
+/** Razão do segundo eixo: painel de edição exige projeto aberto. */
+const NO_PROJECT_REASON = "Crie ou abra um projeto para usar este painel.";
 
 export interface NavigationItem {
   readonly panelId: string;
@@ -21,6 +25,15 @@ export type BottomTab = "problems" | "output" | "history";
 
 export class WorkbenchModel {
   private gate: ExperienceGate | undefined;
+  /**
+   * Segundo eixo de habilitação, composto AQUI e não dentro do
+   * ExperienceGate: "há projeto aberto?" é fato de SESSÃO, não capacidade de
+   * runtime. Enfiá-lo no gate quebraria a origem da razão (`profile-rule` /
+   * `live-manifest`), que a UI promete nunca genericizar.
+   *
+   * Default fail-safe: sem informação de projeto, nenhum painel de edição.
+   */
+  private projectState: ProjectState = "no-project";
   private activePanel: string | undefined;
   private bottomTab: BottomTab = "output";
   private readonly listeners = new Set<() => void>();
@@ -29,7 +42,7 @@ export class WorkbenchModel {
   applyExperience(experience: ResolvedExperienceLike): void {
     this.gate = new ExperienceGate(experience);
     // painel ativo que ficou desabilitado perde o foco (fail-safe)
-    if (this.activePanel && !this.gate.panel(this.activePanel).enabled) {
+    if (this.activePanel && !this.isEnabled(this.activePanel)) {
       this.activePanel = undefined;
     }
     // sem painel ativo: foca o primeiro habilitado
@@ -37,6 +50,27 @@ export class WorkbenchModel {
       this.activePanel = this.navigation().find((item) => item.enabled)?.panelId;
     }
     this.notify();
+  }
+
+  /** Estado do projeto observado; refoca ou desfoca no mesmo critério fail-safe. */
+  applyProjectState(state: ProjectState): void {
+    if (state === this.projectState) return;
+    this.projectState = state;
+    if (this.activePanel && !this.isEnabled(this.activePanel)) {
+      this.activePanel = undefined;
+    }
+    if (!this.activePanel) {
+      this.activePanel = this.navigation().find((item) => item.enabled)?.panelId;
+    }
+    this.notify();
+  }
+
+  get currentProjectState(): ProjectState {
+    return this.projectState;
+  }
+
+  private isEnabled(panelId: string): boolean {
+    return this.navigation().find((item) => item.panelId === panelId)?.enabled === true;
   }
 
   get runtimeLabel(): string {
@@ -53,16 +87,22 @@ export class WorkbenchModel {
 
   /** Itens do rail, na ordem canônica dos painéis. */
   navigation(): NavigationItem[] {
+    const hasProject = this.projectState !== "no-project";
     return Object.keys(PANEL_REQUIREMENTS).map((panelId) => {
       const answer = this.gate?.panel(panelId) ?? {
         enabled: false,
         reason: "Aguardando conexão com o middleware",
       };
+      // PRECEDÊNCIA: a governança fala primeiro. Um painel negado pelo perfil
+      // ou pelo manifesto vivo mantém ESSA razão mesmo sem projeto — trocá-la
+      // por "abra um projeto" esconderia o motivo real do usuário.
+      const enabled = answer.enabled && hasProject;
+      const reason = !answer.enabled ? answer.reason : NO_PROJECT_REASON;
       return {
         panelId,
         label: panelLabel(panelId),
-        enabled: answer.enabled,
-        ...(answer.enabled ? {} : { reason: answer.reason }),
+        enabled,
+        ...(enabled ? {} : { reason }),
         active: panelId === this.activePanel,
       };
     });

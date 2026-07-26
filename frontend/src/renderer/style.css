@@ -221,3 +221,39 @@ button:disabled { color: var(--muted); cursor: not-allowed; }
 .service-chip.state-retrying { border-color: #8a6d1f; color: #e0c264; }
 .service-chip.state-failed { border-color: var(--danger); color: var(--danger); }
 #status-services button { font-size: 0.9em; }
+
+/* ---- tela inicial (frente F8) ---- */
+.welcome-view { padding: 1.4rem 1.8rem; overflow-y: auto; height: 100%; }
+.welcome-view h2 { margin: 0 0 0.2rem; }
+.welcome-view h3 { font-size: 0.95rem; margin: 0 0 0.5rem; color: var(--muted); }
+.welcome-actions { display: flex; gap: 0.5rem; margin: 1rem 0 1.6rem; }
+.welcome-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 1.6rem;
+}
+.template-card,
+.recent-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.7rem;
+  margin-bottom: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  cursor: pointer;
+}
+.template-card:hover,
+.recent-item:hover { border-color: var(--muted); }
+
+/* sem projeto aberto a moldura de edição some: a tela inicial é a tela */
+body[data-project-state="no-project"] #panel-rail,
+body[data-project-state="no-project"] #inspector { display: none; }
+
+@media (max-width: 720px) {
+  .welcome-columns { grid-template-columns: minmax(0, 1fr); }
+}
