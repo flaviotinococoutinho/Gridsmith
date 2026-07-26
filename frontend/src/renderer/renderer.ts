@@ -20,6 +20,9 @@ import { presentError } from "../core/errorCatalog.js";
 import { ExperienceGate, type ResolvedExperienceLike } from "../core/experienceGate.js";
 import type { P7mEditorApi, ProjectStatusPayload, ServiceStatusPayload } from "../main/preload.js";
 import { mountLevelEditor } from "./levelEditorView.js";
+import { mountWelcome } from "./welcomeView.js";
+import { describeWelcome } from "../core/welcomeModel.js";
+import type { ProjectState, RecentProject } from "../core/projectLifecycle.js";
 
 /** Ações do editor ativo (menu Editar e atalhos globais roteiam para cá). */
 const activeEditor: { undo?: () => void; redo?: () => void } = {};
@@ -41,6 +44,24 @@ let experienceGate: ExperienceGate | undefined;
 let projectionSnapshot: unknown;
 /** Última verdade do runtime conhecida; o painel Problemas não mente sobre ela. */
 let lastRuntimeState: ProjectStatusPayload["runtimeState"];
+/** Recentes e templates alimentam a tela inicial; chegam pelo status/IPC. */
+let lastRecents: readonly RecentProject[] = [];
+let lastTemplates: Array<{ id: string; label: string; description: string }> = [];
+let connected = false;
+
+const PROJECT_STATES: readonly ProjectState[] = [
+  "no-project",
+  "opening",
+  "open-clean",
+  "open-dirty",
+  "saving",
+  "closing",
+];
+
+/** A borda entrega `state` como string livre; estreitar evita estado inventado. */
+function narrowProjectState(state: string): ProjectState {
+  return PROJECT_STATES.find((s) => s === state) ?? "no-project";
+}
 
 const PROJECTION_STATUSES = ["projected", "skipped", "deferred"] as const;
 type ProjectionStatus = (typeof PROJECTION_STATUSES)[number];
@@ -102,6 +123,13 @@ function applyProjectStatus(status: ProjectStatusPayload): void {
   ($("btn-save") as HTMLButtonElement).disabled = !hasProject;
   ($("btn-close") as HTMLButtonElement).disabled = !hasProject;
   applyRuntimeState(status.runtimeState);
+
+  lastRecents = (status.recents ?? []) as readonly RecentProject[];
+  // o CSS recolhe rail e inspector sem uma segunda lógica em JS
+  document.body.dataset["projectState"] = status.state;
+  // notifica o model: ele reexecuta rail/vista/rodapé, então a tela inicial
+  // aparece e some sozinha, sem show/hide manual
+  model.applyProjectState(narrowProjectState(status.state));
 }
 
 /** Verdade do runtime na status bar: sincronizado, pendente ou com falha. */
@@ -177,7 +205,60 @@ function renderView(): void {
   host.replaceChildren();
   const panel = model.currentPanel;
   if (!panel) {
-    host.append(placeholder("Bem-vindo ao P7M", "Crie ou abra um projeto para começar."));
+    const view = describeWelcome({
+      projectState: model.currentProjectState,
+      recents: lastRecents,
+      templates: lastTemplates,
+      connected,
+      now: () => Date.now(),
+    });
+    if (view.visible) {
+      mountWelcome({
+        host,
+        setCleanup: (cleanup) => {
+          cleanupActiveView = cleanup;
+        },
+        view,
+        onNew: (templateId) => {
+          void window.p7m
+            .projectCommand("new", templateId ? { templateId } : undefined)
+            .then((status) => {
+              dismissError();
+              applyProjectStatus(status);
+            })
+            .catch((error: unknown) => showError(error));
+        },
+        onOpen: () => {
+          void window.p7m
+            .projectCommand("open")
+            .then((status) => {
+              dismissError();
+              applyProjectStatus(status);
+            })
+            .catch((error: unknown) => showError(error));
+        },
+        onOpenPath: (filePath) => {
+          void window.p7m
+            .projectCommand("openPath", { filePath })
+            .then((status) => {
+              dismissError();
+              applyProjectStatus(status);
+            })
+            .catch((error: unknown) => showError(error));
+        },
+        onOpenExample: () => {
+          /* ligado quando o exemplo versionado existir */
+        },
+      });
+      return;
+    }
+    // com projeto aberto e nenhum painel habilitado, a governança é a razão
+    host.append(
+      placeholder(
+        "Nenhum painel disponível",
+        "A governança de runtime desabilitou todos os painéis; veja a razão no rail.",
+      ),
+    );
     return;
   }
   if (panel === "level-editor") {
@@ -348,8 +429,16 @@ async function boot(): Promise<void> {
 
   try {
     await window.p7m.connect();
+    connected = true;
     $("connection-dot").className = "dot online";
     $("status-connection").textContent = "Conectado ao middleware";
+    // templates antes do status: o primeiro render da tela inicial já sai com
+    // os cards, em vez de aparecer vazio e piscar quando chegarem
+    try {
+      lastTemplates = (await window.p7m.projectTemplates()).templates;
+    } catch {
+      // sem templates a tela inicial ainda oferece Novo e Abrir
+    }
     applyProjectStatus(await window.p7m.projectStatus());
 
     const experience = (await window.p7m.experience()) as ResolvedExperienceLike;

@@ -24,7 +24,12 @@ import {
   generateTransportAuthToken,
   loadTransportAuthToken,
 } from "@p7m/middleware/dist/transport/auth.js";
-import { ProjectLifecycle, type ProjectDescriptor } from "../core/projectLifecycle.js";
+import {
+  ProjectLifecycle,
+  parseRecents,
+  type ProjectDescriptor,
+  type RecentProject,
+} from "../core/projectLifecycle.js";
 import {
   buildNewProjectPrompt,
   resolveNewProjectChoice,
@@ -227,9 +232,11 @@ function recentsFile(): string {
   return path.join(app.getPath("userData"), "recent-projects.json");
 }
 
-function loadRecents(): [] {
+function loadRecents(): RecentProject[] {
   try {
-    return JSON.parse(fs.readFileSync(recentsFile(), "utf8"));
+    // arquivo em userData é entrada NÃO confiável: parseRecents descarta o
+    // inválido em vez de deixar item quebrado chegar à tela inicial
+    return parseRecents(JSON.parse(fs.readFileSync(recentsFile(), "utf8")));
   } catch {
     return [];
   }
@@ -566,6 +573,11 @@ void app.whenReady().then(async () => {
   ipcMain.handle("p7m:project-command", (_event, command, payload) =>
     projectCommand(command, payload),
   );
+  // a tela inicial oferece os templates como cards; sem este handler ela só
+  // conseguiria reabrir o diálogo nativo que o menu já usa
+  ipcMain.handle("p7m:project-templates", async () => ({
+    templates: await availableTemplates(),
+  }));
   ipcMain.handle("p7m:project-status", () =>
     statusOf(lifecycle, client.activeProjectStatus?.runtimeState),
   );

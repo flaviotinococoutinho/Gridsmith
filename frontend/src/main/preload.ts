@@ -67,6 +67,10 @@ export interface P7mEditorApi {
     payload?: { filePath?: string; templateId?: string },
   ): Promise<ProjectStatusPayload>;
   projectStatus(): Promise<ProjectStatusPayload>;
+  /** Templates de projeto para a tela inicial (cards de "Novo projeto"). */
+  projectTemplates(): Promise<{
+    templates: Array<{ id: string; label: string; description: string }>;
+  }>;
   onProjectStatus(listener: (status: ProjectStatusPayload) => void): void;
   /** Ações do menu nativo roteadas ao renderer (undo/redo do editor ativo). */
   onMenuAction(listener: (action: "undo" | "redo") => void): void;
@@ -94,6 +98,7 @@ const api: P7mEditorApi = {
   },
   projectCommand: (command, payload) => ipcRenderer.invoke("p7m:project-command", command, payload),
   projectStatus: () => ipcRenderer.invoke("p7m:project-status"),
+  projectTemplates: () => ipcRenderer.invoke("p7m:project-templates"),
   onProjectStatus: (listener) => {
     ipcRenderer.on("p7m:project-status", (_event, status) => listener(status));
   },

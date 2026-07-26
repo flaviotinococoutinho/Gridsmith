@@ -112,6 +112,8 @@ test("sem experiência: tudo desabilitado com razão de aguardo (fail-safe)", ()
 test("experiência aplicada: rótulos humanos, foco automático no primeiro habilitado", () => {
   const model = new WorkbenchModel();
   model.applyExperience(EXPERIENCE);
+  // habilitar painel exige DOIS eixos: governança de runtime E projeto aberto
+  model.applyProjectState("open-clean");
 
   const items = model.navigation();
   const level = items.find((i) => i.panelId === "level-editor")!;
@@ -128,6 +130,7 @@ test("experiência aplicada: rótulos humanos, foco automático no primeiro habi
 test("ativar painel desabilitado é recusado; re-resolução tira o foco de painel que sumiu", () => {
   const model = new WorkbenchModel();
   model.applyExperience(EXPERIENCE);
+  model.applyProjectState("open-clean");
   assert.equal(model.activatePanel("embedded-preview"), false);
   assert.equal(model.currentPanel, "level-editor");
 
@@ -152,4 +155,56 @@ test("notificações de mudança e aba inferior", () => {
   model.selectBottomTab("problems");
   assert.equal(model.currentBottomTab, "problems");
   assert.ok(changes >= 2);
+});
+
+// ------------------------------------------- gating por projeto aberto (F8)
+
+test("sem projeto aberto nenhum painel de edição habilita, mesmo com a governança OK", () => {
+  const model = new WorkbenchModel();
+  model.applyExperience(EXPERIENCE);
+  // default fail-safe: o model nasce em "no-project"
+  for (const item of model.navigation()) {
+    assert.equal(item.enabled, false, `${item.panelId} não deveria habilitar sem projeto`);
+    assert.ok((item.reason ?? "").length > 0, `${item.panelId} sem razão exibível`);
+  }
+  assert.equal(model.currentPanel, undefined);
+});
+
+test("a governança tem precedência: sua razão nunca é mascarada pela de projeto", () => {
+  const model = new WorkbenchModel();
+  model.applyExperience(EXPERIENCE);
+
+  // sem projeto, o painel que a governança JÁ negava mantém a razão do perfil
+  const semProjeto = model.navigation().find((i) => i.panelId === "embedded-preview")!;
+  assert.equal(semProjeto.reason, "chega no 3.8.2");
+
+  // e o painel que a governança permite recebe a razão do eixo de projeto
+  const level = model.navigation().find((i) => i.panelId === "level-editor")!;
+  assert.match(level.reason ?? "", /projeto/i);
+});
+
+test("abrir projeto foca o primeiro painel habilitado; fechar desfoca", () => {
+  const model = new WorkbenchModel();
+  model.applyExperience(EXPERIENCE);
+  assert.equal(model.currentPanel, undefined);
+
+  model.applyProjectState("open-clean");
+  assert.equal(model.currentPanel, "level-editor");
+
+  // fechar o projeto não pode deixar o editor montado sobre nada
+  model.applyProjectState("no-project");
+  assert.equal(model.currentPanel, undefined);
+  assert.equal(model.navigation().every((i) => !i.enabled), true);
+});
+
+test("estado de projeto repetido não notifica à toa", () => {
+  const model = new WorkbenchModel();
+  model.applyExperience(EXPERIENCE);
+  model.applyProjectState("open-clean");
+  let changes = 0;
+  model.onChange(() => changes++);
+  model.applyProjectState("open-clean");
+  assert.equal(changes, 0);
+  model.applyProjectState("open-dirty");
+  assert.equal(changes, 1);
 });

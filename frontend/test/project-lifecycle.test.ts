@@ -4,6 +4,7 @@ import {
   ProjectLifecycle,
   ProjectLifecycleError,
   type LifecycleEvent,
+  parseRecents,
 } from "../src/core/projectLifecycle.js";
 
 function makeLifecycle(startMs = 0): { lifecycle: ProjectLifecycle; tick: (ms: number) => void } {
@@ -170,4 +171,43 @@ test("transições fora de ordem falham com erros tipados", () => {
   assert.throws(() => lifecycle.opened({ name: "x" }), ProjectLifecycleError);
   assert.throws(() => lifecycle.beginSave(), ProjectLifecycleError);
   assert.throws(() => lifecycle.confirmClose(), ProjectLifecycleError);
+});
+
+// ------------------------------------- recentes vindos do disco (frente F8)
+
+test("parseRecents saneia o arquivo em disco: entrada inválida nunca vira item de UI", () => {
+  const parsed = parseRecents([
+    { filePath: "/a.p7m.json", name: "A", lastOpenedUnixMs: 100 },
+    { filePath: "/b.p7m.json", name: "B", lastOpenedUnixMs: 300 },
+    { filePath: "", name: "sem caminho", lastOpenedUnixMs: 200 },
+    { filePath: "/c.p7m.json", name: "", lastOpenedUnixMs: 200 },
+    { filePath: "/d.p7m.json", name: "D", lastOpenedUnixMs: Number.NaN },
+    { filePath: "/e.p7m.json", name: "E" },
+    "texto solto",
+    null,
+  ]);
+  assert.deepEqual(parsed.map((r) => r.filePath), ["/b.p7m.json", "/a.p7m.json"]);
+});
+
+test("parseRecents deduplica por caminho mantendo a abertura mais recente", () => {
+  const parsed = parseRecents([
+    { filePath: "/a.p7m.json", name: "Antigo", lastOpenedUnixMs: 100 },
+    { filePath: "/a.p7m.json", name: "Novo", lastOpenedUnixMs: 500 },
+  ]);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0]?.name, "Novo");
+});
+
+test("parseRecents respeita a capacidade e tolera arquivo corrompido", () => {
+  const muitos = Array.from({ length: 25 }, (_, i) => ({
+    filePath: `/p${i}.p7m.json`,
+    name: `P${i}`,
+    lastOpenedUnixMs: i,
+  }));
+  assert.equal(parseRecents(muitos).length, 10);
+  assert.equal(parseRecents(muitos)[0]?.filePath, "/p24.p7m.json");
+  // arquivo corrompido não derruba o boot do editor
+  assert.deepEqual(parseRecents(undefined), []);
+  assert.deepEqual(parseRecents({ nao: "e uma lista" }), []);
+  assert.deepEqual(parseRecents("[]"), []);
 });
