@@ -15,6 +15,8 @@ import {
   dragCells,
   hitMarker,
   nextEntityId,
+  pickEntityDef,
+  pickLevel,
   type CellPoint,
   type LevelTool,
 } from "../core/levelEditorTools.js";
@@ -44,16 +46,25 @@ export interface LevelEditorContext {
   readonly setCleanup: (cleanup: () => void) => void;
   /** Gate da experiência (governança por runtime); pode não existir offline. */
   readonly gate: ExperienceGate | undefined;
+  /** Nível a abrir; sem ele a vista abre o primeiro nível do projeto. */
+  readonly levelId?: string;
 }
 
 export function mountLevelEditor(ctx: LevelEditorContext): void {
   const { host, activeEditor, gate } = ctx;
-  const LEVEL_ID = "nivel-1";
+  // O editor NÃO é dono destes valores: eles descrevem o nível ABERTO. Só
+  // valem como partida de um projeto vazio; a hidratação os substitui pelo
+  // que o Blueprint tiver, venha do template canônico, de um agente ou de
+  // outro editor. Tratá-los como constantes do editor era o que fazia um
+  // projeto de template abrir com o canvas em branco.
+  let levelId = ctx.levelId ?? "nivel-1";
   let doc = new IntGridDocument(48, 27);
   // integração com o save (P0.2 ⇄ P0.4): publicações viram level/define ou
   // level/update no Blueprint — e daí para o documento salvo do projeto
   let levelInBlueprint = false;
-  const tileSize = 16;
+  let tileSize = 16;
+  let seed = 1;
+  let rules: ReturnType<typeof defaultLevelRules> = defaultLevelRules();
   let activeValue = 1;
   let tool: LevelTool = "pencil";
 
@@ -61,9 +72,14 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   // do mundo, hidratados do Blueprint e mantidos pelos próprios dispatches
   interface EntityMarker {
     entityId: string;
+    entityDefId: string;
     position: [number, number];
   }
-  const ENTITY_DEF = { entityDefId: "jogador", archetypeId: "player" };
+  // idem: default de projeto vazio, substituído pela definição do projeto
+  let entityDef: { entityDefId: string; archetypeId?: string } = {
+    entityDefId: "jogador",
+    archetypeId: "player",
+  };
   const entities = new Map<string, EntityMarker>();
   let entityDefEnsured = false;
   let selectedEntityId: string | undefined;
@@ -152,8 +168,8 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       void loadAutoTiler().then((resolve) => {
         previewTiles = resolve(
           { width: doc.width, height: doc.height, values: doc.snapshot() },
-          defaultLevelRules() as never,
-          1,
+          rules as never,
+          seed,
         ).tiles;
         repaint();
       });
@@ -273,7 +289,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   async function ensureEntityDef(): Promise<void> {
     if (entityDefEnsured) return;
     try {
-      await window.p7m.dispatch("entitydef/define", { ...ENTITY_DEF, fields: [] });
+      await window.p7m.dispatch("entitydef/define", { ...entityDef, fields: [] });
     } catch {
       // já definida (projeto reaberto): a definição vive no Blueprint
     }
@@ -295,14 +311,14 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
 
   async function placeEntityAt(position: [number, number]): Promise<void> {
     await ensureEntityDef();
-    const entityId = nextEntityId(entities, ENTITY_DEF.entityDefId);
+    const entityId = nextEntityId(entities, entityDef.entityDefId);
     const outcome = await window.p7m.dispatch("entity/place", {
       entityId,
-      entityDefId: ENTITY_DEF.entityDefId,
+      entityDefId: entityDef.entityDefId,
       position,
       fields: {},
     });
-    entities.set(entityId, { entityId, position });
+    entities.set(entityId, { entityId, entityDefId: entityDef.entityDefId, position });
     selectedEntityId = entityId;
     status.textContent = withProjection(
       `Jogador posicionado em (${position[0]}, ${position[1]}).`,
@@ -458,12 +474,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
 
   async function publish(): Promise<void> {
     // as MESMAS regras do preview ("Ver arte"): preview ≡ publicação
-    const payload = doc.toLevelPayload({
-      levelId: LEVEL_ID,
-      tileSize,
-      seed: 1,
-      rules: defaultLevelRules(),
-    });
+    const payload = doc.toLevelPayload({ levelId, tileSize, seed, rules });
     try {
       const outcome = await window.p7m.dispatch(
         levelInBlueprint ? "level/update" : "level/define",
@@ -489,10 +500,26 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   void (async () => {
     try {
       const result = (await window.p7m.query("levels")) as {
-        levels?: Array<{ levelId: string; width: number; height: number; intGrid: number[] }>;
+        levels?: Array<{
+          levelId: string;
+          width: number;
+          height: number;
+          intGrid: number[];
+          tileSize?: number;
+          seed?: number;
+          rules?: ReturnType<typeof defaultLevelRules>;
+        }>;
       };
-      const existing = result.levels?.find((level) => level.levelId === LEVEL_ID);
+      const existing = pickLevel(result.levels ?? [], ctx.levelId);
       if (existing) {
+        // o nível aberto passa a ditar id, escala, seed e regras — publicar
+        // vira level/update DELE, não level/define de um segundo nível
+        levelId = existing.levelId;
+        if (typeof existing.tileSize === "number" && existing.tileSize > 0) {
+          tileSize = existing.tileSize;
+        }
+        if (typeof existing.seed === "number") seed = existing.seed;
+        if (Array.isArray(existing.rules) && existing.rules.length > 0) rules = existing.rules;
         doc = new IntGridDocument(existing.width, existing.height, existing.intGrid);
         levelInBlueprint = true;
         viewport.fit(doc.width, doc.height, tileSize);
@@ -504,12 +531,22 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         entities?: Array<{ entityId: string; entityDefId: string; position: [number, number] }>;
       };
       for (const entity of placed.entities ?? []) {
-        entities.set(entity.entityId, { entityId: entity.entityId, position: [...entity.position] });
+        entities.set(entity.entityId, {
+          entityId: entity.entityId,
+          entityDefId: entity.entityDefId,
+          position: [...entity.position],
+        });
       }
       const defs = (await window.p7m.query("entityDefs")) as {
-        entityDefs?: Array<{ entityDefId: string }>;
+        entityDefs?: Array<{ entityDefId: string; archetypeId?: string }>;
       };
-      entityDefEnsured = (defs.entityDefs ?? []).some((d) => d.entityDefId === ENTITY_DEF.entityDefId);
+      const chosen = pickEntityDef(defs.entityDefs ?? []);
+      if (chosen) {
+        // usa a definição QUE O PROJETO TEM: criar uma paralela produziria
+        // entidades sem archetypeId, que a projeção recusa com razão
+        entityDef = chosen;
+        entityDefEnsured = true;
+      }
       if (entities.size > 0) repaint();
     } catch {
       // gateway indisponível: o editor continua editável com um grid vazio

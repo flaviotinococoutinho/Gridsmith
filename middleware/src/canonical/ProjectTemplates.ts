@@ -25,8 +25,29 @@ export interface ProjectTemplate {
 
 const PLATFORMER_WIDTH = 16;
 const PLATFORMER_HEIGHT = 9;
+const PLATFORMER_TILE_SIZE = 16;
 const SOLID = 1;
 const EMPTY = 0;
+
+/**
+ * Célula → posição no mundo em PIXELS, ancorada no centro da célula.
+ *
+ * O contrato canônico mede o mundo em pixels (`contracts/schemas/
+ * actors.methods.schema.json`: "Posição no mundo em pixels [x, y]"), e o
+ * retângulo do nível é `width × tileSize` por `height × tileSize`. A engine
+ * consome a posição crua — nenhuma camada converte unidade. Escrever célula
+ * onde o contrato pede pixel coloca o objeto dentro da célula (0,0).
+ *
+ * Mesma convenção do editor (`frontend/src/core/levelEditorTools.ts`,
+ * `cellCenter`), para o que o template cria coincidir com o que o editor
+ * grava ao arrastar o mesmo objeto.
+ */
+function cellCenterPx(cellX: number, cellY: number): [number, number] {
+  return [
+    cellX * PLATFORMER_TILE_SIZE + PLATFORMER_TILE_SIZE / 2,
+    cellY * PLATFORMER_TILE_SIZE + PLATFORMER_TILE_SIZE / 2,
+  ];
+}
 
 /** IntGrid de partida: chão na base + paredes nas laterais, resto vazio. */
 function platformerIntGrid(): number[] {
@@ -51,7 +72,7 @@ export function createPlatformer2DDocument(): BlueprintDocument {
     levelId: "level-1",
     width: PLATFORMER_WIDTH,
     height: PLATFORMER_HEIGHT,
-    tileSize: 16,
+    tileSize: PLATFORMER_TILE_SIZE,
     seed: 1,
     intGrid: platformerIntGrid(),
     // Regra default: célula sólida (1) → tile 1. O editor refina depois.
@@ -72,14 +93,16 @@ export function createPlatformer2DDocument(): BlueprintDocument {
   const player: EntityInstance = {
     entityId: "player-1",
     entityDefId: "player",
-    position: [2, PLATFORMER_HEIGHT - 2],
+    // em pé sobre o chão (a última linha é sólida), dentro da parede esquerda
+    position: cellCenterPx(2, PLATFORMER_HEIGHT - 2),
     fields: {},
   };
 
   const light: LightSpec = {
     lightId: "key-light",
     type: "point",
-    position: [PLATFORMER_WIDTH / 2, PLATFORMER_HEIGHT / 2],
+    // centro do nível em pixels — o mesmo espaço do `radius` abaixo
+    position: cellCenterPx(PLATFORMER_WIDTH / 2, PLATFORMER_HEIGHT / 2),
     height: 1,
     color: [1, 1, 1],
     intensity: 1.2,
