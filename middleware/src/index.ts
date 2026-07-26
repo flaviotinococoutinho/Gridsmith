@@ -35,6 +35,7 @@ import { CapabilityRegistry, type EngineManifest } from "./domain/CapabilityRegi
 import { EngineBridge } from "./domain/EngineBridge.js";
 import { startMcpStdio } from "./mcp/McpFacade.js";
 import { ExperienceGovernor } from "./runtime/ExperienceGovernor.js";
+import type { ProjectionResult } from "./runtime/RuntimeAdapter.js";
 import { bindEngineProjectSessionLifecycle } from "./runtime/EngineProjectSessionLifecycle.js";
 import { MonoGameAdapter } from "./runtime/MonoGameAdapter.js";
 import { RuntimeProfileRegistry } from "./runtime/RuntimeProfile.js";
@@ -100,13 +101,20 @@ async function main(): Promise<void> {
   // Uma única porta de aplicação para JSON-RPC, GraphQL, gRPC e MCP.
   const surface = new EditorSurface({ sessions, governor, adapter });
   const journal = new EventJournal();
-  sessions.on("event", (event: SessionBlueprintEvent) => {
+  sessions.on("event", (event: SessionBlueprintEvent, projection?: ProjectionResult) => {
     journal.appendForSession(
       event.projectSessionId,
       event.projectId,
       event.commandSequence,
       event.kind,
       event,
+      // `detail` (ACK cru da engine) fica só na resposta do dispatch; no fio
+      // de eventos viaja apenas o que o editor precisa para exibir a verdade.
+      projection && {
+        event: projection.event,
+        status: projection.status,
+        ...(projection.reason !== undefined ? { reason: projection.reason } : {}),
+      },
     );
   });
   sessions.on("sessionChanged", (event: ProjectSessionChangedEvent) => {

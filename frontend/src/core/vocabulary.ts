@@ -71,6 +71,17 @@ export const SERVICE_STATE_LABELS: Readonly<Record<string, string>> = {
   failed: "Falhou",
 };
 
+/**
+ * Verdade do runtime para a sessão de projeto ativa. Diferente de
+ * `PROJECTION_LABELS`, que qualifica UM evento: aqui é o estado agregado da
+ * sessão inteira, exibido na barra de status.
+ */
+export const RUNTIME_STATE_LABELS: Readonly<Record<string, string>> = {
+  synchronized: "Sincronizado com o runtime",
+  deferred: "Pendente de aplicação no runtime",
+  failed: "Sessão de runtime com falha",
+};
+
 /** Fallback legível: "preview.embedded" → "Preview embedded". */
 export function humanize(id: string): string {
   const words = id.replace(/[._/-]+/g, " ").trim();
@@ -88,3 +99,4 @@ export const eventLabel = lookup(EVENT_LABELS);
 export const projectionLabel = lookup(PROJECTION_LABELS);
 export const projectStateLabel = lookup(PROJECT_STATE_LABELS);
 export const serviceStateLabel = lookup(SERVICE_STATE_LABELS);
+export const runtimeStateLabel = lookup(RUNTIME_STATE_LABELS);

@@ -242,15 +242,25 @@ interface ProjectStatusPayload {
     projectId?: string;
   };
   recents: readonly unknown[];
+  /**
+   * Verdade do runtime para a sessão ativa: `synchronized` (tudo aplicado),
+   * `deferred` (há comando não projetado) ou `failed` (sessão fail-closed).
+   * Ausente quando não há projeto aberto.
+   */
+  runtimeState?: "synchronized" | "deferred" | "failed";
 }
 
-function statusOf(lifecycle: ProjectLifecycle): ProjectStatusPayload {
+function statusOf(
+  lifecycle: ProjectLifecycle,
+  runtimeState?: ProjectStatus["runtimeState"],
+): ProjectStatusPayload {
   return {
     state: lifecycle.currentState,
     windowTitle: lifecycle.windowTitle,
     isDirty: lifecycle.isDirty,
     ...(lifecycle.project !== undefined ? { project: lifecycle.project } : {}),
     recents: lifecycle.recentProjects,
+    ...(runtimeState !== undefined ? { runtimeState } : {}),
   };
 }
 
@@ -291,7 +301,10 @@ void app.whenReady().then(async () => {
   const broadcast = (): void => {
     if (window && !window.isDestroyed()) {
       window.setTitle(lifecycle.windowTitle);
-      window.webContents.send("p7m:project-status", statusOf(lifecycle));
+      window.webContents.send(
+        "p7m:project-status",
+        statusOf(lifecycle, client.activeProjectStatus?.runtimeState),
+      );
     }
     fs.writeFileSync(recentsFile(), JSON.stringify(lifecycle.recentProjects));
   };
@@ -462,7 +475,7 @@ void app.whenReady().then(async () => {
         break;
       }
     }
-    return statusOf(lifecycle);
+    return statusOf(lifecycle, client.activeProjectStatus?.runtimeState);
   };
 
   // Conexão idempotente: com supervisão, o próprio waitReady da engine já
@@ -507,7 +520,9 @@ void app.whenReady().then(async () => {
   ipcMain.handle("p7m:project-command", (_event, command, payload) =>
     projectCommand(command, payload),
   );
-  ipcMain.handle("p7m:project-status", () => statusOf(lifecycle));
+  ipcMain.handle("p7m:project-status", () =>
+    statusOf(lifecycle, client.activeProjectStatus?.runtimeState),
+  );
 
   // Configuração refinada do Electron (appConfig.ts): janela endurecida
   // (sandbox, navegação bloqueada), estado persistido entre sessões
@@ -558,12 +573,15 @@ void app.whenReady().then(async () => {
   );
 
   let projectReconciliationGeneration = 0;
-  client.onBlueprintEvent((event) => {
+  client.onBlueprintEvent((event, projection) => {
     // Um callback atrasado de A nunca suja nem chega ao renderer de B.
     if (event.projectSessionId !== lifecycle.project?.projectSessionId) return;
     if (lifecycle.commandApplied()) void autosave();
     if (!window.isDestroyed()) {
-      window.webContents.send("p7m:blueprint-event", event);
+      // A projeção acompanha o evento: o renderer precisa dela para saber se
+      // o comando chegou ao runtime ou ficou pendente com razão.
+      window.webContents.send("p7m:blueprint-event", event, projection);
+      broadcast();
     }
   });
   client.onResynchronized((snapshot, record) => {

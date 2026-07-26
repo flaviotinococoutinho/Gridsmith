@@ -12,6 +12,18 @@ import { EventEmitter } from "node:events";
 export type EventSequence = bigint;
 export type EventSequenceInput = string | number | bigint;
 
+/**
+ * Resultado da APLICAÇÃO do evento no runtime. É metadado de transporte —
+ * viaja no envelope, nunca dentro do evento canônico de domínio. Declarado
+ * aqui (e não em `runtime/`) porque as bordas GraphQL/gRPC só podem importar
+ * `transport/` (regra R12).
+ */
+export interface EnvelopeProjection {
+  readonly event: string;
+  readonly status: "projected" | "skipped" | "deferred";
+  readonly reason?: string;
+}
+
 export interface EventEnvelope {
   readonly seq: EventSequence;
   readonly projectSessionId: string;
@@ -19,6 +31,8 @@ export interface EventEnvelope {
   readonly commandSequence: EventSequence;
   readonly kind: string;
   readonly payload: unknown;
+  /** Ausente em eventos de controle e quando não há adapter de runtime. */
+  readonly projection?: EnvelopeProjection;
 }
 
 export type ResyncReason =
@@ -128,13 +142,14 @@ export class EventJournal extends EventEmitter {
     return this.position;
   }
 
-  append(kind: string, payload: unknown): EventEnvelope {
+  append(kind: string, payload: unknown, projection?: EnvelopeProjection): EventEnvelope {
     return this.appendForSession(
       this.partition.projectSessionId,
       this.partition.projectId,
       inferCommandSequence(payload) ?? this.partition.commandSequence,
       kind,
       payload,
+      projection,
     )!;
   }
 
@@ -148,6 +163,7 @@ export class EventJournal extends EventEmitter {
     commandSequence: EventSequenceInput,
     kind: string,
     payload: unknown,
+    projection?: EnvelopeProjection,
   ): EventEnvelope | undefined {
     const sequence = parseEventSequence(commandSequence);
     if (
@@ -168,6 +184,9 @@ export class EventJournal extends EventEmitter {
       commandSequence: sequence,
       kind,
       payload,
+      // congela a CÓPIA: broadcast JSON-RPC e stream gRPC compartilham a mesma
+      // referência do ring — o freeze do envelope é raso.
+      ...(projection ? { projection: Object.freeze({ ...projection }) } : {}),
     });
     this.partition.ring.push(envelope);
     if (this.partition.ring.length > this.capacity) this.partition.ring.shift();

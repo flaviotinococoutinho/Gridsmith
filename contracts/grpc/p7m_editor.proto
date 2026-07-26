@@ -159,6 +159,14 @@ message EventEnvelope {
   string project_session_id = 4;
   string project_id = 5;
   uint64 command_sequence = 6;
+  // Resultado da aplicação no runtime. Metadado de transporte: viaja no
+  // envelope, nunca dentro do evento canônico. Ausente (has_projection=false)
+  // em eventos de controle e quando não há adapter.
+  bool has_projection = 7;
+  // "", projected, skipped ou deferred.
+  string projection_status = 8;
+  // Razão acionável quando o status é skipped ou deferred.
+  string projection_reason = 9;
 }
 
 message EventStreamStatus {

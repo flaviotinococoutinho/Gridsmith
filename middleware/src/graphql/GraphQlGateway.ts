@@ -18,6 +18,7 @@ import { buildSchema, graphql, type GraphQLSchema } from "graphql";
 import type { EditorSurface } from "../canonical/EditorSurface.js";
 import type {
   EventEnvelope,
+  EnvelopeProjection,
   EventJournal,
   JournalReadResult,
 } from "../transport/EventJournal.js";
@@ -78,6 +79,7 @@ function serializeEvent(event: EventEnvelope): {
   commandSequence: string;
   kind: string;
   payload: unknown;
+  projection?: EnvelopeProjection;
 } {
   return {
     seq: event.seq.toString(),
@@ -86,6 +88,7 @@ function serializeEvent(event: EventEnvelope): {
     commandSequence: event.commandSequence.toString(),
     kind: event.kind,
     payload: event.payload,
+    ...(event.projection ? { projection: event.projection } : {}),
   };
 }
 
