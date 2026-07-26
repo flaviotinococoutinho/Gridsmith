@@ -304,6 +304,37 @@ O efeito por frente:
 ### F3 — O manifesto vivo atravessa as bordas: editorConcepts, limites reais e contratos dos 14 comandos
 
 > Complexidade **alta** · **exige ADR**
+>
+> **Revisão contra o código atual: a frente se fatia em duas, e a ordem muda.**
+> Todos os achados seguem abertos — `editorConcepts()` continua com três
+> consumidores fora de teste (a fachada MCP e dois drivers de fase), o app sobe
+> o middleware com `--no-mcp`, `constraints` ainda devolve apenas
+> `maxTextureSize` e `maxVertexShaderRegisters`, `MAX_LEVEL_CELLS` continua
+> hardcoded, as projeções consultáveis continuam `String` livre nas duas bordas
+> e os comandos canônicos continuam sem schema em `contracts/` (as entradas de
+> lá descrevem métodos middleware → engine, nenhuma descreve comando canônico).
+>
+> **F3a — desbloqueia a F4, custo baixo:** limites reais mesclados em
+> `constraints` com namespace (um arquivo, sem tocar contrato — `constraints`
+> já é `JSON!` no SDL e não há RPC de experiência no proto); `MAX_LEVEL_CELLS`
+> lido do registry com o valor atual como piso sem engine; **uma** rota de
+> conceitos por borda, sem inflar `snapshot`/`eventBatch`/`StreamEventsV2`; e a
+> correlação pública entre o `lightId` canônico e o slot da engine, que hoje é
+> gravada num mapa privado e descartada — o canal (`Projection.detail`) já
+> existe.
+>
+> **F3b — dívida de contrato, não bloqueia ninguém:** os schemas dos comandos
+> canônicos, a promoção das projeções a enum e a fitness function de paridade.
+>
+> **Correção de custo, em duas mãos.** A reverificação anterior afirmou que o
+> custo "subiu porque as bordas foram reescritas sem levar o manifesto junto" —
+> o raciocínio não se sustenta, porque as superfícies novas são todas escopadas
+> à sessão de projeto e não precisam carregar conceitos. Mas a revisão que
+> afirmou o contrário ("caiu, o trilho já foi medido") **também caiu na
+> refutação**: o precedente citado mede o custo de um campo novo em mensagem
+> existente, não o de uma **rota nova** — e o único precedente de rota nova no
+> repositório foi caro. Conclusão honesta: o custo de F3a é baixo por ser quase
+> todo fora de contrato; o da rota de conceitos permanece o de sempre.
 
 **Problema.** A arquitetura declara que a UI materializa painéis, gizmos e propriedades a partir de `editorConcepts()` (CapabilityRegistry.ts:6-9 e docs/ARCHITECTURE.md:92), mas essa função tem consumidor apenas no MCP (McpFacade.ts:178-187) e em dois drivers de teste — e no app real o middleware sobe com `--no-mcp` (main.ts:120), então o manifesto não chega a NINGUÉM. Nenhuma borda do app o expõe (verificado no SDL, no proto e no EditorGateway), os limites verdadeiros da engine (maxLights=256, maxTilemaps=8, maxCellsPerTilemap=65536, maxActors=256, maxSkeletons=64) ficam fora de `constraints`, que só carrega maxTextureSize/maxVertexShaderRegisters do perfil, e os 14 comandos canônicos atravessam todas as bordas como JSON opaco sem schema em contracts/ — ao contrário do que o próprio proto afirma (p7m_editor.proto:6-10).
 
@@ -329,6 +360,48 @@ O efeito por frente:
 ### F4 — Superfícies geradas pelo manifesto: registry de painéis, modelo de seleção e inspector schema-driven
 
 > Complexidade **alta** · sem ADR (execução dentro das decisões vigentes)
+>
+> **Revisão contra o código atual: a frente não é monolítica atrás da F3, e
+> ganhou uma dependência dura que o plano não via.**
+>
+> O diagnóstico segue de pé, com as contagens reconferidas: o rail tem seis
+> painéis fixos, a engine publica sete painéis distintos entre oito
+> subsistemas, e a interseção é **dois**. Com a engine ligada, os seis botões
+> ficam habilitados e cinco levam a tela morta. Nada da frente existe —
+> nenhum `selection.ts`, `panelRegistry.ts`, `propertySchema.ts` ou
+> `inspectorView.ts`, e o inspector continua sem um único escritor em
+> TypeScript.
+>
+> **A dependência nova, e é bloqueante para metade da frente: o inspector só
+> consegue LER.** Não existem `entity/update`, `entitydef/update` nem
+> `light/update` no modelo canônico — logo, um inspector schema-driven pode
+> exibir e não pode salvar. Escrita depende de **F7**, não de F3.
+>
+> **A segunda correção é de desenho: as `properties` do manifesto NÃO são o
+> payload do comando canônico.** O manifesto descreve os botões da *engine*;
+> o comando tem outra forma. `lutStrength` não existe em `LightSpec`; a câmera
+> publica seis propriedades contra nove campos em `CameraSettings`, e a
+> validação cobre um subconjunto. Gerar controle a partir do manifesto e
+> despachá-lo direto produziria comando inválido — é preciso uma tradução
+> explícita entre os dois vocabulários, que o plano tratava como se fosse
+> identidade.
+>
+> **O que NÃO depende de F3 e pode começar já:** o `panelRegistry` como
+> "terceira fonte" (o que este build implementa) — painel sem `mount` deixa de
+> ser habilitável, o que mata os cinco placeholders sem esperar o manifesto; as
+> razões de governança em pt-BR (as dos perfis já estão, o inglês vem das
+> geradas e dos fail-safes); dar consumidor ao `featureLabel`, hoje exportado e
+> sem uso; o inspector de **leitura**, hidratado pelas projeções que já
+> atravessam o fio (`entities`, `entityDefs`, `camera`, `lights`); e o painel de
+> câmera, já que `camera/configure` faz merge parcial e a projeção existe.
+>
+> **O que depende de F3:** derivar a lista de painéis do manifesto, o estado
+> "previsto com fase", e os `min`/`max`/`default` dos controles.
+>
+> **O que a F5 já pagou desta frente:** o catálogo de erros, a projeção viajando
+> no envelope do evento e o `runtimeState` na barra de status — qualquer painel
+> novo que despache alimenta o painel Problemas de graça e não precisa inventar
+> texto de erro.
 
 **Problema.** O rail é uma lista hardcoded de 6 painéis (experienceGate.ts:31-38 + vocabulary.ts:11-18 + if-chain em renderer.ts:89-106) que intersecta em 2 os 7 que a engine publica: rig-editor, mesh-inspector, camera-rig, state-graph e asset-taxonomy não têm porta de entrada, enquanto shader-editor, asset-compiler, embedded-preview e debug-overlay são inventados pelo frontend e levam a placeholders — 5 de 6 botões habilitados entregam tela morta, e três deles continuam clicáveis mesmo SEM engine. Ao mesmo tempo, o inspector existe só como casca no DOM (index.html:39-42, estilos dt/dd prontos em style.css:160-171, zero ocorrências de "inspector" em qualquer .ts) e não há modelo de seleção: `selectedEntityId` é uma variável local que só desenha um anel branco (levelEditorView.ts:67). Câmera (6 propriedades com min/max/default e `camera/configure` completo até o fio) e luz (`light/add`/`light/remove` completos) são inalcançáveis por falta APENAS de UI.
 
@@ -465,10 +538,17 @@ O efeito por frente:
 > unidade, por isso a suíte passava com o defeito; agora há um que falha se a
 > posição couber dentro de uma célula.
 >
-> **Resta desta frente:** a tela inicial real com Recentes e "Abrir exemplo"
-> (os recentes são persistidos e trafegam no payload, mas nunca são
-> renderizados), o diretório `examples/` versionado, o segundo template
-> contrastante, e o gating dos painéis por projeto aberto.
+> **Segunda leva entregue:** a tela inicial existe (ações, cards de template,
+> recentes com tempo relativo, dica de estado vazio, desabilitar com razão
+> quando os serviços não subiram), os recentes finalmente chegam à tela e são
+> saneados na leitura do disco, os painéis passaram a exigir projeto aberto —
+> com a governança mantendo precedência na razão exibida — e entrou o segundo
+> template ("Aventura top-down"), com os testes de template rodando sobre o
+> registro inteiro em vez de só o platformer.
+>
+> **Resta desta frente:** o diretório `examples/` versionado com um projeto
+> completo e a ação "Abrir exemplo" ligada a ele (a ação já existe no modelo,
+> condicionada a `exampleAvailable`).
 
 **Problema.** O único template curado do produto é inalcançável — o `case "new"` só faz `lifecycle.opened({ name: "Projeto sem título" })` (main.ts:261-265) e o preload sequer expõe listProjectTemplates/newProjectFromTemplate (preload.ts:26-47), embora ambos existam e sejam testados em EditorClient.ts:192-235. Não há um único arquivo de exemplo no repositório (nem .aseprite, nem .png, nem .p7m.json), os recentes são persistidos e enviados no payload mas nunca renderizados (zero ocorrências de "recents" no renderer), a tela de boas-vindas some assim que a conexão sobe deixando o canvas editável SEM projeto (workbenchModel.ts:35-38 × renderer.ts:84-88) e, quando o template finalmente for ligado, ele ainda não abrirá: o editor procura "nivel-1" e o template grava "level-1", usa "jogador" contra "player", trata 1 como Chão enquanto o template usa 1 para chão E parede, e grava posição em pixels enquanto o template usa células (levelEditorTools.ts:63-65 × ProjectTemplates.ts:75).
 
