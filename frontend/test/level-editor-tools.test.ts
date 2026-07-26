@@ -13,6 +13,8 @@ import {
   dragCells,
   hitMarker,
   nextEntityId,
+  pickEntityDef,
+  pickLevel,
 } from "../src/core/levelEditorTools.js";
 
 test("dragCells: retângulo cobre a área em qualquer ordem de cantos; linha usa Bresenham", () => {
@@ -79,4 +81,54 @@ test("nextEntityId: incremental e pulando ids ocupados", () => {
   existing.set("jogador-3", {});
   existing.delete("jogador-1"); // {2,3}: size+1 = 3 está ocupado → avança para 4
   assert.equal(nextEntityId(existing, "jogador"), "jogador-4");
+});
+
+// ---------------------------------------------------------------- seletores
+//
+// Estas duas decisões definem o que o usuário vê ao abrir um projeto. Quando
+// eram constantes na vista ("nivel-1", "jogador"), um projeto criado pelo
+// template canônico ("level-1", "player") abria com o canvas vazio.
+
+test("pickLevel: sem preferência abre o primeiro nível do projeto", () => {
+  const levels = [{ levelId: "level-1" }, { levelId: "outro" }];
+  assert.equal(pickLevel(levels)?.levelId, "level-1");
+});
+
+test("pickLevel: respeita o nível preferido quando ele existe", () => {
+  const levels = [{ levelId: "level-1" }, { levelId: "subsolo" }];
+  assert.equal(pickLevel(levels, "subsolo")?.levelId, "subsolo");
+});
+
+test("pickLevel: preferência inexistente não deixa o canvas vazio", () => {
+  const levels = [{ levelId: "level-1" }];
+  // era exatamente este caso que quebrava: o editor pedia "nivel-1" e o
+  // projeto tinha "level-1" — em vez de nada, abre o que existe
+  assert.equal(pickLevel(levels, "nivel-1")?.levelId, "level-1");
+});
+
+test("pickLevel: projeto sem nível nenhum devolve undefined", () => {
+  assert.equal(pickLevel([]), undefined);
+  assert.equal(pickLevel([], "qualquer"), undefined);
+});
+
+test("pickEntityDef: prefere definição com archetypeId (a que vira ator vivo)", () => {
+  const defs = [
+    { entityDefId: "decorativo" },
+    { entityDefId: "player", archetypeId: "player" },
+  ];
+  assert.equal(pickEntityDef(defs)?.entityDefId, "player");
+});
+
+test("pickEntityDef: sem nenhuma com archetypeId, cai na primeira", () => {
+  const defs = [{ entityDefId: "decorativo" }, { entityDefId: "outro" }];
+  assert.equal(pickEntityDef(defs)?.entityDefId, "decorativo");
+});
+
+test("pickEntityDef: archetypeId vazio não conta como spawnável", () => {
+  const defs = [{ entityDefId: "vazio", archetypeId: "" }, { entityDefId: "bom", archetypeId: "p" }];
+  assert.equal(pickEntityDef(defs)?.entityDefId, "bom");
+});
+
+test("pickEntityDef: projeto sem definições devolve undefined", () => {
+  assert.equal(pickEntityDef([]), undefined);
 });

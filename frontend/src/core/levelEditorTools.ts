@@ -94,3 +94,39 @@ export function nextEntityId(existing: ReadonlySet<string> | ReadonlyMap<string,
   while (has(`${prefix}-${n}`)) n++;
   return `${prefix}-${n}`;
 }
+
+/**
+ * Escolhe o nível que a vista deve abrir.
+ *
+ * O editor NÃO pode assumir um id: um projeto pode vir do template canônico,
+ * de um agente MCP ou de outro editor, cada um com seus próprios ids. Sem
+ * isto, um projeto cujo nível se chame diferente abre com o canvas vazio e a
+ * publicação cria um SEGUNDO nível ao lado do original.
+ *
+ * Preferido quando informado (seleção explícita do usuário); senão o primeiro
+ * da projeção, que é a ordem canônica do Blueprint.
+ */
+export function pickLevel<T extends { levelId: string }>(
+  levels: readonly T[],
+  preferredId?: string,
+): T | undefined {
+  if (preferredId !== undefined) {
+    const preferred = levels.find((level) => level.levelId === preferredId);
+    if (preferred) return preferred;
+  }
+  return levels[0];
+}
+
+/**
+ * Escolhe a definição de entidade que a ferramenta de placement usa.
+ *
+ * Prefere uma definição COM `archetypeId`: só essas viram ator vivo no
+ * runtime — sem ele a projeção devolve `skipped` com razão, e o usuário
+ * posiciona algo que nunca aparece no jogo.
+ */
+export function pickEntityDef<T extends { entityDefId: string; archetypeId?: string }>(
+  defs: readonly T[],
+): T | undefined {
+  return defs.find((def) => typeof def.archetypeId === "string" && def.archetypeId.length > 0)
+    ?? defs[0];
+}
