@@ -444,6 +444,31 @@ O efeito por frente:
 ### F8 — Primeira sessão curada: template no "Novo", conteúdo de exemplo, recentes e vocabulário unificado
 
 > Complexidade média · sem ADR (execução dentro das decisões vigentes)
+>
+> **Estado: parcialmente entregue.** O botão "Novo projeto" passou a criar a
+> partir do template canônico, com escolha de template por diálogo nativo e a
+> decisão em núcleo puro (`core/newProjectChoice.ts`). Em seguida fechou-se o
+> que faltava para esse projeto **aparecer**: o template gravava posição em
+> células violando o contrato (`contracts/schemas/actors.methods.schema.json`
+> diz "pixels do mundo", e nenhuma camada converte — o player caía dentro da
+> célula (0,0) e a luz tinha `position` em células com `radius` em pixels), e o
+> editor assumia os ids `nivel-1`/`jogador` contra os `level-1`/`player` do
+> template, abrindo o canvas vazio e criando um segundo nível ao publicar.
+> Hoje `levelId`, `tileSize`, seed e regras descrevem o nível **aberto**, vindo
+> da projeção, e a escolha de nível e de definição vive em núcleos puros
+> testados (`pickLevel`, `pickEntityDef`).
+>
+> Uma correção de rumo vale registro: o texto abaixo supunha que o editor
+> estivesse errado na unidade. A verificação da cadeia — schema, validação,
+> adapter, `EngineService`, `ActorStore`, `Lighting2D` e o shader — provou o
+> contrário: o **template** é que violava o contrato. Nenhum teste fixava a
+> unidade, por isso a suíte passava com o defeito; agora há um que falha se a
+> posição couber dentro de uma célula.
+>
+> **Resta desta frente:** a tela inicial real com Recentes e "Abrir exemplo"
+> (os recentes são persistidos e trafegam no payload, mas nunca são
+> renderizados), o diretório `examples/` versionado, o segundo template
+> contrastante, e o gating dos painéis por projeto aberto.
 
 **Problema.** O único template curado do produto é inalcançável — o `case "new"` só faz `lifecycle.opened({ name: "Projeto sem título" })` (main.ts:261-265) e o preload sequer expõe listProjectTemplates/newProjectFromTemplate (preload.ts:26-47), embora ambos existam e sejam testados em EditorClient.ts:192-235. Não há um único arquivo de exemplo no repositório (nem .aseprite, nem .png, nem .p7m.json), os recentes são persistidos e enviados no payload mas nunca renderizados (zero ocorrências de "recents" no renderer), a tela de boas-vindas some assim que a conexão sobe deixando o canvas editável SEM projeto (workbenchModel.ts:35-38 × renderer.ts:84-88) e, quando o template finalmente for ligado, ele ainda não abrirá: o editor procura "nivel-1" e o template grava "level-1", usa "jogador" contra "player", trata 1 como Chão enquanto o template usa 1 para chão E parede, e grava posição em pixels enquanto o template usa células (levelEditorTools.ts:63-65 × ProjectTemplates.ts:75).
 
