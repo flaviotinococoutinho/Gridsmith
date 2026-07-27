@@ -14,6 +14,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +43,8 @@ import {
   type ServiceStatus,
 } from "./ProcessSupervisor.js";
 import { EditorClient, type ProjectStatus } from "./EditorClient.js";
+import { ProjectFileService } from "./project/ProjectFileService.js";
+import { NodeProjectFileSystem } from "./project/NodeProjectFileSystem.js";
 import {
   ensureSingleInstance,
   hardenNavigation,
@@ -289,6 +292,7 @@ void app.whenReady().then(async () => {
     ? loadTransportAuthToken()
     : generateTransportAuthToken();
   const client = new EditorClient(pipeName, { authToken });
+  const projectFiles = new ProjectFileService(new NodeProjectFileSystem(), () => randomUUID());
   const lifecycle = new ProjectLifecycle(Date.now, {}, loadRecents());
   let window: BrowserWindow;
 
@@ -317,7 +321,10 @@ void app.whenReady().then(async () => {
         statusOf(lifecycle, client.activeProjectStatus?.runtimeState),
       );
     }
-    fs.writeFileSync(recentsFile(), JSON.stringify(lifecycle.recentProjects));
+    // best-effort e durável: a lista de recentes nunca justifica derrubar o app
+    void projectFiles
+      .writeJsonFile(recentsFile(), lifecycle.recentProjects)
+      .catch(() => undefined);
   };
   lifecycle.onEvent(() => broadcast());
 
@@ -348,7 +355,10 @@ void app.whenReady().then(async () => {
     ) {
       throw new Error("project session changed before the document could be written");
     }
-    fs.writeFileSync(filePath, JSON.stringify(document, null, 2));
+    // escrita durável: temporário no mesmo diretório, fsync, rename atômico e
+    // cópia anterior preservada em .bak. Um crash no meio jamais deixa o
+    // projeto do usuário truncado.
+    await projectFiles.writeProject(filePath, document);
   };
 
   // Autosave: limiar de comandos (via commandApplied) + intervalo (tick)
@@ -364,7 +374,7 @@ void app.whenReady().then(async () => {
         lifecycle.project.filePath !== filePath ||
         client.activeProjectSessionId !== expectedProjectSessionId
       ) return;
-      fs.writeFileSync(`${filePath}.autosave`, JSON.stringify(document));
+      await projectFiles.writeAutosave(filePath, document);
     } catch {
       // autosave é best-effort; o save explícito reporta erros
     }
