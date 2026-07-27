@@ -124,6 +124,10 @@ function applyProjectStatus(status: ProjectStatusPayload): void {
   ($("btn-close") as HTMLButtonElement).disabled = !hasProject;
   applyRuntimeState(status.runtimeState);
 
+  // aviso pontual da recuperação: aparece uma vez, no lugar onde o usuário já
+  // olha para saber o estado do projeto
+  if (status.notice) $("status-project").textContent = status.notice;
+
   lastRecents = (status.recents ?? []) as readonly RecentProject[];
   // o CSS recolhe rail e inspector sem uma segunda lógica em JS
   document.body.dataset["projectState"] = status.state;

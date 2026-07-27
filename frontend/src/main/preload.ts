@@ -18,6 +18,8 @@ export interface ProjectStatusPayload {
   recents: Array<{ filePath: string; name: string; lastOpenedUnixMs: number }>;
   /** Verdade do runtime da sessão ativa; ausente sem projeto aberto. */
   runtimeState?: "synchronized" | "deferred" | "failed";
+  /** Aviso pontual (ex.: recuperação restaurada). */
+  notice?: string;
 }
 
 /** Resultado da aplicação de um evento no runtime (metadado de transporte). */

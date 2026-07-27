@@ -863,6 +863,22 @@ Depois delas vem a cauda: o Asset Browser com inspector Aseprite (inseparável
 de E6 e E10), o `spriteRenderer` com o bump v5 (inseparável de E8, porque
 depende de `entitydef/update` — hoje só existe `entitydef/define`, que rejeita
 duplicata) e os campos do wizard reexpressos sobre o núcleo puro da `main`.
+> **Onda 1 entregue (E1, E2, E3).** A escrita do projeto passou a ser durável
+> (temporário, `flush`, `rename` atômico, `.bak`, publicação no-clobber no
+> "Novo"); o autosave ganhou leitor e ciclo de vida — antes era gravado e nunca
+> lido —, com as quatro saídas do diálogo de recuperação e a regra de que o
+> sidecar só some por **save confirmado ou descarte explícito**; e abrir um
+> `.p7m.json` por argumento ou por segunda instância passou a rotear o caminho
+> em vez de só piscar a janela, com fila para o pedido que chega antes de o
+> ciclo de projeto existir.
+>
+> **A extração expôs três premissas de etapas futuras**, todas realinhadas ao
+> código de hoje: a validação de documento exigia o campo `metadata` (v3) e
+> teria recusado salvar todo documento válido atual; o helper de teste chamava
+> o factory de template com opções que ainda não existem; e o arquivo de fakes
+> arrastava portas das etapas seguintes. É exatamente o acoplamento que o
+> fatiamento existe para revelar antes de virar dívida.
+
 ### 8.3. O que descartar do PR
 
 A `main` já resolveu estes pontos por outro desenho. Reintroduzi-los duplicaria
