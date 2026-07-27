@@ -98,18 +98,25 @@ export function hardenNavigation(window: BrowserWindow): void {
  * Instância única: retorna false quando ESTA instância deve sair (outra já
  * roda); registra o foco da janela principal quando uma segunda tentar abrir.
  */
-export function ensureSingleInstance(getWindow: () => BrowserWindow | undefined): boolean {
+export function ensureSingleInstance(
+  getWindow: () => BrowserWindow | undefined,
+  onSecondInstance?: (argv: readonly string[], workingDirectory: string) => void,
+): boolean {
   const isPrimary = app.requestSingleInstanceLock();
   if (!isPrimary) {
     app.quit();
     return false;
   }
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv, workingDirectory) => {
     const window = getWindow();
     if (window) {
       if (window.isMinimized()) window.restore();
       window.focus();
     }
+    // a segunda instância morre, mas o ARGUMENTO dela não: abrir um .p7m.json
+    // pelo gerenciador de arquivos com o app já aberto tem de abrir o projeto,
+    // não só piscar a janela
+    onSecondInstance?.(argv, workingDirectory);
   });
   return true;
 }

@@ -44,7 +44,13 @@ import {
 } from "./ProcessSupervisor.js";
 import { EditorClient, type ProjectStatus } from "./EditorClient.js";
 import { ProjectFileService } from "./project/ProjectFileService.js";
+import {
+  planRecovery,
+  planWithoutRecovery,
+  type RecoveryDecision,
+} from "../core/recoveryPlan.js";
 import { NodeProjectFileSystem } from "./project/NodeProjectFileSystem.js";
+import { projectPathFromArgs } from "./project/ProjectLaunchRouting.js";
 import {
   ensureSingleInstance,
   hardenNavigation,
@@ -262,11 +268,14 @@ interface ProjectStatusPayload {
    * Ausente quando não há projeto aberto.
    */
   runtimeState?: "synchronized" | "deferred" | "failed";
+  /** Aviso pontual (ex.: recuperação restaurada); consumido uma única vez. */
+  notice?: string;
 }
 
 function statusOf(
   lifecycle: ProjectLifecycle,
   runtimeState?: ProjectStatus["runtimeState"],
+  notice?: string,
 ): ProjectStatusPayload {
   return {
     state: lifecycle.currentState,
@@ -275,14 +284,37 @@ function statusOf(
     ...(lifecycle.project !== undefined ? { project: lifecycle.project } : {}),
     recents: lifecycle.recentProjects,
     ...(runtimeState !== undefined ? { runtimeState } : {}),
+    ...(notice ? { notice } : {}),
   };
 }
 
 let mainWindow: BrowserWindow | undefined;
 
+/**
+ * Aberturas pedidas de fora (argumento de linha de comando ou segunda
+ * instância). O pedido pode chegar ANTES de o ciclo de projeto existir, então
+ * ele espera numa fila em vez de se perder.
+ */
+const pendingOpenPaths: string[] = [];
+let routeOpenPath: ((filePath: string) => void) | undefined;
+
+function requestExternalOpen(filePath: string | undefined): void {
+  if (!filePath) return;
+  if (routeOpenPath) routeOpenPath(filePath);
+  else pendingOpenPaths.push(filePath);
+}
+
 void app.whenReady().then(async () => {
-  // instância única: a segunda sai; a primeira ganha foco (appConfig.ts)
-  if (!ensureSingleInstance(() => mainWindow)) return;
+  // instância única: a segunda sai, a primeira ganha foco — e o ARGUMENTO da
+  // segunda é roteado, para abrir um .p7m.json pelo gerenciador de arquivos
+  if (
+    !ensureSingleInstance(
+      () => mainWindow,
+      (argv, workingDirectory) => requestExternalOpen(projectPathFromArgs(argv, workingDirectory)),
+    )
+  ) {
+    return;
+  }
 
   const pipeName = pipeNameFromArgs();
   const externalServices = process.argv.includes("--external-services");
@@ -293,6 +325,8 @@ void app.whenReady().then(async () => {
     : generateTransportAuthToken();
   const client = new EditorClient(pipeName, { authToken });
   const projectFiles = new ProjectFileService(new NodeProjectFileSystem(), () => randomUUID());
+  /** Aviso da última recuperação; some no próximo status para não grudar na tela. */
+  let recoveryNotice = "";
   const lifecycle = new ProjectLifecycle(Date.now, {}, loadRecents());
   let window: BrowserWindow;
 
@@ -316,9 +350,11 @@ void app.whenReady().then(async () => {
   const broadcast = (): void => {
     if (window && !window.isDestroyed()) {
       window.setTitle(lifecycle.windowTitle);
+      const notice = recoveryNotice;
+      recoveryNotice = "";
       window.webContents.send(
         "p7m:project-status",
-        statusOf(lifecycle, client.activeProjectStatus?.runtimeState),
+        statusOf(lifecycle, client.activeProjectStatus?.runtimeState, notice),
       );
     }
     // best-effort e durável: a lista de recentes nunca justifica derrubar o app
@@ -359,6 +395,9 @@ void app.whenReady().then(async () => {
     // cópia anterior preservada em .bak. Um crash no meio jamais deixa o
     // projeto do usuário truncado.
     await projectFiles.writeProject(filePath, document);
+    // save CONFIRMADO é o único momento (junto do descarte explícito) em que o
+    // sidecar pode sumir: o arquivo agora contém o trabalho que ele guardava.
+    await projectFiles.discardAutosave(filePath);
   };
 
   // Autosave: limiar de comandos (via commandApplied) + intervalo (tick)
@@ -423,6 +462,24 @@ void app.whenReady().then(async () => {
     }
   };
 
+  /** Quatro saídas explícitas; fechar a janela do diálogo equivale a cancelar. */
+  const chooseRecovery = async (autosaveModifiedAtMs: number): Promise<RecoveryDecision> => {
+    const quando = new Date(autosaveModifiedAtMs).toLocaleString("pt-BR");
+    const { response } = await dialog.showMessageBox(window, {
+      type: "question",
+      title: "Recuperação disponível",
+      message: "Existe trabalho recuperado mais recente que o arquivo salvo.",
+      detail:
+        `Recuperação de ${quando}. "Restaurar" abre esse conteúdo no projeto original; ` +
+        `"Abrir cópia" mantém o original intocado; "Ignorar" descarta a recuperação.`,
+      buttons: ["Restaurar", "Abrir cópia", "Ignorar", "Cancelar"],
+      defaultId: 0,
+      cancelId: 3,
+      noLink: true,
+    });
+    return (["restore", "copy", "ignore", "cancel"] as const)[response] ?? "cancel";
+  };
+
   const projectCommand = async (
     command: "new" | "open" | "openPath" | "save" | "saveAs" | "close",
     payload?: { filePath?: string; templateId?: string },
@@ -476,19 +533,35 @@ void app.whenReady().then(async () => {
           filePath = picked.filePaths[0]!;
         }
         if (!filePath) break;
+        // Recuperação: um sidecar mais novo que o arquivo salvo significa que o
+        // editor caiu entre dois saves. O usuário decide; nada é apagado sem
+        // ordem explícita dele.
+        const candidate = await projectFiles.detectRecovery(filePath);
+        const plan = candidate
+          ? planRecovery(await chooseRecovery(candidate.autosaveModifiedAtMs))
+          : planWithoutRecovery();
+        if (!plan.proceed) break;
+        if (plan.discardAutosave) await projectFiles.discardAutosave(filePath);
+
         // Parse local acontece antes da transação; JSON inválido sequer altera
         // a máquina de estados e a sessão A continua íntegra.
-        const document: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        const document: unknown =
+          plan.source === "autosave"
+            ? await projectFiles.readAutosave(filePath)
+            : await projectFiles.readDocument(filePath);
         lifecycle.beginOpen();
         try {
           const result = await client.openProjectDocument(document);
+          const nome = path.basename(filePath).replace(/\.p7m\.json$/, "");
           lifecycle.opened(
-            descriptorFromStatus(
-              result.status,
-              path.basename(filePath).replace(/\.p7m\.json$/, ""),
-              filePath,
-            ),
+            plan.bindToFile
+              ? descriptorFromStatus(result.status, nome, filePath)
+              : descriptorFromStatus(result.status, `${nome} (recuperado)`),
           );
+          // conteúdo recuperado nunca esteve no arquivo: abrir limpo faria o
+          // usuário fechar sem salvar e perder o mesmo trabalho de novo
+          if (plan.openDirty) lifecycle.commandApplied();
+          if (plan.notice) recoveryNotice = plan.notice;
         } catch (err) {
           lifecycle.openFailed();
           throw err;
@@ -583,6 +656,22 @@ void app.whenReady().then(async () => {
   ipcMain.handle("p7m:project-command", (_event, command, payload) =>
     projectCommand(command, payload),
   );
+
+  // A partir daqui o ciclo de projeto existe: liga o roteador e drena o que
+  // chegou antes (argumento de inicialização ou segunda instância precoce).
+  routeOpenPath = (filePath: string): void => {
+    void projectCommand("openPath", { filePath })
+      .then((status) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("p7m:project-status", status);
+        }
+      })
+      .catch((error: unknown) => {
+        console.error(`[p7m] falha ao abrir ${filePath}: ${String(error)}`);
+      });
+  };
+  requestExternalOpen(projectPathFromArgs(process.argv));
+  while (pendingOpenPaths.length > 0) routeOpenPath(pendingOpenPaths.shift()!);
   // a tela inicial oferece os templates como cards; sem este handler ela só
   // conseguiria reabrir o diálogo nativo que o menu já usa
   ipcMain.handle("p7m:project-templates", async () => ({
