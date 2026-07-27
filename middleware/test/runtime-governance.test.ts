@@ -538,3 +538,45 @@ test("filter que corrompe o kind do comando é rejeitado", async () => {
     /must preserve the command kind/,
   );
 });
+
+// ------------- limites reais da engine em constraints (frente F3a) --------
+
+/**
+ * O perfil só conhece limites ESTÁTICOS da família de runtime. Os limites que
+ * o editor precisa para barrar antes de virar erro genérico — quantas luzes
+ * cabem, quantas células por tilemap — vivem no manifesto vivo, derivados das
+ * constantes do núcleo DOD, e nunca chegavam à UI.
+ */
+test("constraints mescla os limites publicados pelo manifesto, com namespace", () => {
+  const registry = new CapabilityRegistry(new EnginePipeServer({ pipeName: "test-constraints" }));
+  const comLimites: EngineManifest = {
+    ...LIVE_MANIFEST,
+    subsystems: {
+      lighting: { status: "available", limits: { maxLights: 256 } },
+      level: { status: "available", limits: { maxTilemaps: 8, maxCellsPerTilemap: 65536 } },
+      actors: { status: "available", limits: { maxActors: 256 } },
+    },
+  };
+  (registry as unknown as { current: EngineManifest }).current = comLimites;
+
+  const governor = new ExperienceGovernor(makeRegistry(), registry);
+  const { constraints } = governor.resolve("monogame", "3.8.2");
+
+  // namespace por subsistema: nomes iguais em subsistemas distintos não colidem
+  assert.equal(constraints["lighting.maxLights"], 256);
+  assert.equal(constraints["level.maxCellsPerTilemap"], 65536);
+  assert.equal(constraints["actors.maxActors"], 256);
+  // o que o perfil já declarava continua lá
+  assert.equal(typeof constraints["maxTextureSize"], "number");
+});
+
+test("sem engine conectada, constraints continua sendo o do perfil", () => {
+  const governor = new ExperienceGovernor(makeRegistry());
+  const { constraints, liveManifestConsidered } = governor.resolve("monogame", "3.8.2");
+  assert.equal(liveManifestConsidered, false);
+  assert.equal(
+    Object.keys(constraints).some((k) => k.includes(".")),
+    false,
+    "sem manifesto não deve haver limite com namespace",
+  );
+});

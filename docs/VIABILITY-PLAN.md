@@ -326,6 +326,25 @@ O efeito por frente:
 > **F3b — dívida de contrato, não bloqueia ninguém:** os schemas dos comandos
 > canônicos, a promoção das projeções a enum e a fitness function de paridade.
 >
+> **Parcialmente entregue.** Os limites reais do manifesto passaram a ser
+> mesclados em `constraints` com namespace por subsistema
+> (`lighting.maxLights`, `level.maxCellsPerTilemap`, `actors.maxActors`), com o
+> perfil mantendo precedência; e a correlação entre o `lightId` canônico e o
+> slot da engine deixou de morrer num mapa privado — viaja em
+> `Projection.detail`, o canal que já existia.
+>
+> **Um item da F3a não pode ser feito como foi escrito.** "`MAX_LEVEL_CELLS`
+> lê do registry" exigiria o `BlueprintStore` importar o `CapabilityRegistry`,
+> o que **viola a regra R3** (o coração do domínio só importa validadores puros
+> e o protocolo de erros) — e a norma da casa é mover a dependência, não
+> relaxar a regra. O limite estático continua sendo a guarda do domínio, que
+> precisa valer com ou sem engine; o limite **real** agora chega à UI por
+> `constraints`, que é onde ele serve para barrar antes de virar erro genérico.
+> Fica pendente apenas o consumo desse limite pelo editor.
+>
+> **Segue aberto da F3a:** a rota de conceitos por borda — hoje bloqueada por
+> colisão com o PR de workbench adaptativo, que reescreve as mesmas bordas.
+>
 > **Correção de custo, em duas mãos.** A reverificação anterior afirmou que o
 > custo "subiu porque as bordas foram reescritas sem levar o manifesto junto" —
 > o raciocínio não se sustenta, porque as superfícies novas são todas escopadas

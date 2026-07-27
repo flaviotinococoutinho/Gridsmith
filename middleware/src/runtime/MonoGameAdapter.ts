@@ -132,7 +132,14 @@ export class MonoGameAdapter implements RuntimeAdapter {
           toEngineLight(event.light),
         );
         this.engineLightIds.set(event.light.lightId, lightId);
-        return { event: event.kind, status: "projected" };
+        // O slot da engine deixa de morrer no mapa privado: publicá-lo em
+        // `detail` é o que permite a um inspector correlacionar a luz canônica
+        // com o slot real (e diagnosticar "por que esta luz não acende").
+        return {
+          event: event.kind,
+          status: "projected",
+          detail: { lightId: event.light.lightId, engineLightId: lightId },
+        };
       }
 
       case "lightRemoved": {
