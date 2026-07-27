@@ -107,11 +107,23 @@ graph TD
 
 | Regra | Imposição |
 |---|---|
-| **Zero-GC nos hot loops** (nenhuma alocação em `ComputeWorldPoses`, `TryReadStable`, câmera, luzes, skinning, tilemap) | testes `*_is_allocation_free` (`GC.GetAllocatedBytesForCurrentThread`) |
+| **Zero-GC nos hot loops** (nenhuma alocação em `ComputeWorldPoses`, `TryReadStable`, câmera, luzes, skinning, tilemap) | testes `*_is_allocation_free` (`GC.GetAllocatedBytesForCurrentThread`) — exigem **tiered compilation desligada** no projeto de teste, ver nota abaixo |
 | **Determinismo por seed** (AutoTiler, shake, simulação de câmera) | testes de igualdade bit a bit com mesmo seed |
 | **Contratos binários nunca divergem** (struct C# ↔ escritor Node) | offsets por reflexão + checksum FNV-1a cruzado nos e2e |
 | **Shaders ≡ referências de CPU** | `Lighting2D`/`ColorLut`/`LinearBlendSkinning`/`BonePacker` testados; e2e valida por reimplementação TS independente |
 | **Toda mutação passa pelo orquestrador** (filters → AST → actions → projeção) | R7 + testes do gateway/adapter; `EngineBridge` é diagnóstico |
+
+> **Por que a suíte da engine roda com tiered compilation desligada.** Os testes
+> `*_is_allocation_free` exigem **zero** byte alocado. Com tiered compilation, o
+> runtime pode promover um método a tier1 **dentro da janela de medição**, e a
+> alocação dessa recompilação entra na conta — o teste falha sem que o código de
+> produção tenha alocado nada. Isso já ocorreu no CI com dois testes distintos,
+> em commits que não tocavam a engine. O aquecimento explícito de cada teste não
+> resolve sozinho: em runner lento a promoção acontece depois dele. Por isso
+> `P7m.Engine.Ipc.Tests.csproj` fixa `<TieredCompilation>false</TieredCompilation>`.
+> Isso **não afrouxa a garantia** — o assert continua exigindo zero; apenas
+> remove o artefato de medição. Não reverter sem substituir por outro mecanismo
+> determinístico.
 | **Troca de projeto é atômica e compartilhada por todas as bordas** | R13 + testes de `ProjectSessionManager`, gateways e dois clientes |
 | **Perfis publicados são imutáveis** | `RuntimeProfileRegistry.register` rejeita re-registro (testado) |
 | **Fail-safe de experiência** (sem prova de suporte → recurso desabilitado com razão) | testes do `ExperienceGovernor`/`ExperienceGate` |
