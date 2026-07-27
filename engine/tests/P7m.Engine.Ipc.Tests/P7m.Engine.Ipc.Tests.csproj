@@ -1,6 +1,23 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>false</IsPackable>
+    <!--
+      Tiered compilation DESLIGADA por causa dos testes `*_is_allocation_free`.
+
+      Eles medem `GC.GetAllocatedBytesForCurrentThread()` antes e depois de um
+      laço e exigem ZERO byte (RNF-01). Com tiered compilation, o runtime pode
+      promover um método a tier1 DENTRO da janela de medição, e a alocação
+      dessa recompilação entra na conta — o teste falha sem que o código de
+      produção tenha alocado nada. Já aconteceu em CI com dois testes
+      diferentes (leitor de shared memory e dinâmica de câmera), em commits que
+      não tocavam a engine.
+
+      O aquecimento explícito de cada teste não resolve sozinho: em runner
+      lento ou disputado a promoção acontece depois dele. Isto NÃO afrouxa a
+      garantia — o assert continua exigindo zero; apenas remove o artefato de
+      medição. Não reverter sem substituir por outro mecanismo determinístico.
+    -->
+    <TieredCompilation>false</TieredCompilation>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
