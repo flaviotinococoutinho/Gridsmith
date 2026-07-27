@@ -806,6 +806,161 @@ Estado: 🔴 aberto · 🟡 parcial (uma camada resolvida, outra não) · 🟢 r
 | MGT-11 | 🔴 aberto | **PANEL_REQUIREMENTS é uma lista hardcoded no frontend que diverge dos painéis que a engine publica**<br/>*(incoerente)* | `frontend/src/core/experienceGate.ts:31-38` `frontend/src/core/workbenchModel.ts:56-68` `experienceGate.ts:84-88` `engine/src/P7m.Engine.Runtime/EngineDescriptor.cs:52` | A promessa arquitetural do repositório — "a UI materializa painéis a partir do manifesto em vez de hardcodar o que a engine sabe fazer" (comentário em CapabilityRegistry.ts:6-9) — está invertida na prática: a UI hardcoda uma lista que nem i… | baixa |
 | MGT-12 | 🔴 aberto | **O canal engine→editor só transporta ping e log; não há telemetria de runtime para nenhum overlay ou inspetor**<br/>*(inexistente)* | `middleware/src/ipc/EnginePipeServer.ts` `middleware/src/index.ts:199-201` `middleware/src/runtime/profiles/monogame.ts:59,87` | Nada do que acontece dentro da engine é observável no editor: posição viva dos atores, posição da câmera após o spring-damper, frame pacing, custo de luzes. | alta |
 
+## 8. Integração do PR de lifecycle/workbench/assets: fatiamento em etapas
+
+O PR aberto que consolida lifecycle, histórico, workbench e pipeline de assets
+(154 arquivos, +31.972/−2.002, seis commits) **deixou de ser um PR**: virou um
+roteiro de quatro frentes empilhado num branch, enquanto a `main` andou por
+baixo dele. Esta seção o converte em etapas integráveis.
+
+Hoje ele é três coisas com destinos diferentes:
+
+1. **Um núcleo de infraestrutura que a `main` não tem e não encostou** — save
+   atômico, recovery de autosave, publicação de artefato em duas fases,
+   endurecimento do pipeline de assets, store transacional e histórico
+   canônico. É a maior parte do valor e o menor risco de merge.
+2. **Uma camada de UX que a `main` já refez por outro desenho, às vezes
+   melhor** — tela inicial, escolha de template, catálogo de erros, gating por
+   projeto aberto. Aqui o PR não é ganho: é conflito. A extração **descarta**,
+   não mescla.
+3. **Duas colisões duras que exigem decisão antes de qualquer linha de código**
+   (§8.1).
+
+### 8.1. Onda 0 — decisões antes do código
+
+Nenhuma etapa começa antes destas quatro decisões:
+
+- **O `EventEnvelope` do proto pertence à `main`.** A `main` publicou os campos
+  7, 8 e 9 como `has_projection`/`projection_status`/`projection_reason`; o PR
+  ocupou **os mesmos números** com `transaction_id`/`document_state_id`/
+  `history_entry_id`. Isso **não é conflito de texto, é incompatibilidade
+  binária** — um build intermediário decodificaria um campo como o outro. Os
+  campos de histórico são renumerados a partir de 10.
+- **A cadeia de versões do documento é v3 → v4 → v5, um bump por etapa**, nessa
+  ordem. Ninguém sobe versão fora dela.
+- **A lista de descarte (§8.3) é decisão de produto**, não preferência de quem
+  faz o merge. Reintroduzir a tela inicial ou o wizard do PR depois de aprovado
+  o descarte é retrabalho puro.
+- **O branch é fechado sem merge** e permanece como referência de leitura.
+
+### 8.2. As dez etapas
+
+| Etapa | Conteúdo | Tam. | Depende |
+|---|---|---|---|
+| **E1 — Durabilidade da escrita e integridade do documento** | Traz `frontend/src/main/project/ProjectFileService.ts` (224 linhas) e `NodeProjectFileSystem.ts` (145) e liga nos dois pontos onde a main ainda escreve direto: `origin/main:frontend/src/main/main.ts:351` (`fs.writeFileSync(file… | medio | nada |
+| **E2 — Recovery de autosave após crash** | `detectRecovery()` comparando o mtime do sidecar `.autosave` com o do original, `readAutosave`/`discardAutosave`, e `ElectronProjectDialogs.chooseRecovery` com as quatro saídas (Restaurar / Abrir cópia / Ignorar / Cancelar). Po… | medio | E1 |
+| **E3 — Segunda instância e abrir .p7m.json por argumento** | `frontend/src/main/project/ProjectLaunchRouting.ts` (`projectPathFromArgs` resolvendo caminho relativo contra o cwd recebido do SO, `focusExistingProjectWindow`), segundo parâmetro `onSecondInstance` em `ensureSingleInstance` (… | pequeno | nada (mas fazer depois de E2, para que abrir por argv já… |
+| **E4 — Lint de contratos no docs:verify (schemas JSON + paridade COMMAND_KINDS ≡ enum GraphQL)** | Bloco novo de `scripts/verify-docs.mjs` (+141 no PR) que valida sintaxe, refs locais e `required` dos JSON Schemas, e exige cobertura IDÊNTICA entre `COMMAND_KINDS`, o enum `CommandKind` do SDL e `contracts/schemas/blueprint.co… | medio | nada |
+| **E5 — Publicação de artefato em duas fases + pipeline de assets endurecido** | `ArtifactStore.preparePublish()` devolvendo `{candidate, commit()}` com checagem de baseline antes do commit, tombstones `retire()`/`isRetired()`, `restore()` e `activate(id, revision)` para rollback (`publish()` passa a ser `p… | medio | nada |
+| **E6 — Camada de aplicação de assets + superfície fria GraphQL (sem UI)** | `middleware/src/application/AssetApplicationService.ts` (2056 linhas, novo): catálogo particionado por sessão de projeto, `importAsset/reimportAsset/removeAsset/configureAssetTools/revealSource/revealOutput/cancelAssetOperation… | grande | E5 (e E4 para o lint dos schemas) |
+| **E7 — Blueprint v3: metadata de produto, unidade espacial e migração reconciliada** | `middleware/src/leveldesign/GridCoordinates.ts` canônico (`cellToWorldCenter`, `worldToCell`, `WORLD_POSITION_UNIT`/`CELL_ORIGIN`/`WORLD_Y_AXIS`/`ENTITY_ANCHOR`), substituindo o `cellCenterPx()` inline da main (origin/main:midd… | medio | E4 |
+| **E8 — Domínio transacional, comandos in-place e proveniência do comando** | `BlueprintStore`: `planBatch`/`commitBatch`/`fork` com `mutationVersion` como CAS interno (lote validado num draft privado, commit síncrono — falha no 3º comando NUNCA deixa os dois primeiros aplicados), `applyWithInverse`, `re… | grande | E4 |
+| **E9 — Histórico global transacional: undo/redo canônico, level/patch e paleta (v4)** | `CommandHistory` de 45 para 396 linhas: entradas imutáveis com forward/inverse/actor/transactionId/barrier, pilhas past/future, `documentStateId`/`historyCursor` como identidade lógica distinta do relógio `commandSequence`, `ap… | grande | E7 (v3 antes de v4), E8 (inversos precisam do store trans… |
+| **E10 — Casca do workbench por contribuições, preservando o que a main entregou** | Os 13 módulos de framework de ef7b044 — `capabilityRegistry`, `contributionContext`, `panelRegistry`, `commandRegistry`, `toolRegistry`, `inspectorRegistry`, `selectionService`, `workbenchLayout`, `workbenchMetrics`, `editorMod… | grande | E9 (aba Histórico e o feedback de comando do inspector);… |
+
+Cada etapa é mergeável sozinha, com CI verde e critério de aceite verificável.
+Depois delas vem a cauda: o Asset Browser com inspector Aseprite (inseparável
+de E6 e E10), o `spriteRenderer` com o bump v5 (inseparável de E8, porque
+depende de `entitydef/update` — hoje só existe `entitydef/define`, que rejeita
+duplicata) e os campos do wizard reexpressos sobre o núcleo puro da `main`.
+### 8.3. O que descartar do PR
+
+A `main` já resolveu estes pontos por outro desenho. Reintroduzi-los duplicaria
+superfície — e manter dois catálogos ou duas telas iniciais é pior do que
+perder o trabalho:
+
+| Do PR | Porque a versão da `main` fica | O que ainda vale aproveitar |
+|---|---|---|
+| Tela inicial inline no renderer | `core/welcomeModel.ts` é puro, testado, e trata offline | as ações "Abrir exemplo" e "Abrir recente", como entradas no modelo existente |
+| Wizard de novo projeto no renderer | `core/newProjectChoice.ts` puro + diálogo nativo | os campos coletados (nome, pasta, resolução, tileSize), reexpressos no modelo da `main`, e o lado middleware (materialização pura do template) |
+| Catálogo de feedback por prefixo de mensagem | `core/errorCatalog.ts` traduz por **código** JSON-RPC, com causa e ação | a distinção domínio × disponibilidade, como campo dentro da entrada existente |
+| Troca do banner de erro por outra superfície | o banner atual já tem `presentError` ligado | — |
+| Sanitização de recentes no construtor | `parseRecents` já faz isso, exportado e testado | `removeRecent()` e a poda de recentes cujo arquivo sumiu |
+| Reescrita do `workbenchModel` sem o eixo de projeto | o segundo eixo é deliberado, com precedência governança → projeto | — |
+
+Há **um descarte do lado da `main`**, e ele acontece na E7: quando o módulo
+canônico de coordenadas entrar, os dois templates passam a usar a conversão
+única e o helper inline sai. Não deixar as duas conversões coexistindo.
+
+### 8.4. A cadeia de migração é o item mais perigoso
+
+A `main` já distribui um "Novo projeto" funcional com dois templates, então
+**documentos v2 gravados por ela existem no disco de usuários** e precisam abrir
+depois de tudo.
+
+E há uma sutileza que só apareceu ao comparar os dois lados: a `main` corrigiu
+as coordenadas do template **sem bump e sem migração**. Existem, portanto,
+**dois documentos v2 diferentes no mundo** — um com posições em célula (gerado
+antes da correção) e um em pixels (gerado hoje). A impressão digital que o PR
+usa para reconhecer o template histórico só descreve o primeiro; com o segundo
+ela não casa, o que por acaso produz o comportamento certo (não converter duas
+vezes) — mas por acidente, não por desenho.
+
+A migração v2 → v3 precisa de **quatro ramos explícitos, cada um com teste
+nomeado**: template pré-correção (converte), template pós-correção (não
+converte), o segundo template que o PR desconhece (não converte) e documento
+editado à mão (**nunca** converte — converter às cegas destrói projeto de
+usuário).
+
+Três mecanismos garantem que documento antigo continue abrindo, todos
+verificáveis por CI: um corpus de fixtures versionado que cresce a cada bump,
+com pelo menos um documento por origem conhecida; round-trip estrutural em cada
+fixture; e a regra de um bump por etapa, jamais renumerado isoladamente.
+
+## 9. Plano de desenvolvimento unificado
+
+As oito frentes do diagnóstico (§4) e as dez etapas de integração (§8) são a
+mesma fila de trabalho. Ordenadas por **desbloqueio e risco**, não por
+complexidade:
+
+```mermaid
+graph TD
+  O0["Onda 0<br/>decisoes: proto, cadeia de versoes, descarte"]
+  O1["Onda 1<br/>E1 E2 E3 durabilidade da escrita"]
+  O2["Onda 2<br/>E4 lint de contratos"]
+  O3["Onda 3<br/>E5 E6 assets (paralelo)"]
+  O4["Onda 4<br/>E7 documento v3 + coordenadas"]
+  O5["Onda 5<br/>E8 dominio transacional"]
+  O6["Onda 6<br/>E9 historico global v4 + proto renumerado"]
+  O7["Onda 7<br/>E10 casca por contribuicoes"]
+  F1["F1 host grafico MonoGame<br/>(independente, a raiz)"]
+  F3a["F3a rota de conceitos<br/>(destravada apos E10)"]
+
+  O0 ==> O1 ==> O2 ==> O4 ==> O5 ==> O6 ==> O7
+  O2 ==> O3
+  O3 -.->|"corre em paralelo"| O4
+  O6 -.-> F3a
+  O7 -.-> F3a
+  F1 -.->|"nao depende de nada disto"| O1
+```
+
+*Mostra a fila unificada: a Onda 0 é decisão, as ondas 1 e 2 são ganho puro sem disputa de desenho, os assets correm em paralelo com o documento, e a casca do workbench fica por último porque é a que mais colide com a UX recém-entregue. O host gráfico da MonoGame (F1) é ortogonal e pode começar a qualquer momento.*
+
+**Por que esta ordem.** As ondas 1 e 2 vêm primeiro porque são o único bloco que
+é **puro ganho**: a `main` ainda escreve o projeto com escrita direta, e um
+crash durante o save pode destruir o trabalho do usuário — é o maior risco de
+dano real em produção e o menor risco de merge. A onda 2 é a rede que torna as
+frentes de domínio revisáveis: com ela, esquecer o enum ou o schema quebra o CI
+em vez de virar bug de contrato meses depois. Os assets vêm cedo, e não no fim,
+porque não tocam proto, renderer nem versão de documento — e porque hoje são
+código semi-morto no app e ao mesmo tempo a superfície com maior risco de
+segurança. A casca do workbench fica por último porque é a que mais colide com
+o que a `main` acabou de entregar e a que menos desbloqueia as demais.
+
+**O que fica caro, sem maquiagem.** A camada de aplicação de assets, o domínio
+transacional e o histórico global são grandes. O histórico é **indivisível** —
+undo/redo, identidade lógica do documento e renumeração do proto formam uma
+unidade que não fecha pela metade. Os demais admitem corte, com custo.
+
+**As frentes do diagnóstico entram assim:** F5 e F8 já entregaram seus núcleos;
+F3a entregou os limites reais e a correlação de luz, e sua rota de conceitos
+fica destravada quando a casca do workbench aterrissar; F4 é absorvida pela
+onda 7, com a ressalva de que o inspector só escreve depois que o domínio
+transacional der os comandos de atualização; F6 é absorvida pelas ondas 5 e 6;
+F7 se dilui entre as ondas 4, 5 e 6; e **F1, o host gráfico da MonoGame,
+permanece ortogonal** — não depende de nada disto e continua sendo a raiz não
+atacada.
+
 ## 7. Como este plano se relaciona com o resto da documentação
 
 - [`ALPHA-0.1.md`](ALPHA-0.1.md) descreve a milestone e a jornada de aceite; este
