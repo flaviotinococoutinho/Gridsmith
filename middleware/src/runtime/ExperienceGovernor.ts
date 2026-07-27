@@ -61,7 +61,7 @@ export class ExperienceGovernor {
       profileVersion: profile.version,
       displayName: profile.displayName,
       capabilities: profile.capabilities,
-      constraints: profile.constraints ?? {},
+      constraints: mergeConstraints(profile.constraints, manifest),
       decisions,
       liveManifestConsidered: manifest !== undefined,
     };
@@ -117,4 +117,35 @@ export class ExperienceGovernor {
       reason: rule.reason,
     };
   }
+}
+
+/**
+ * Junta os limites do PERFIL com os limites REAIS publicados pelo manifesto
+ * vivo (frente F3a).
+ *
+ * O perfil só conhece o que é estático da família de runtime
+ * (`maxTextureSize`, registradores de shader). Os limites que o editor
+ * precisa para barrar uma operação ANTES de ela virar erro genérico —
+ * quantas luzes cabem, quantas células por tilemap, quantos atores — vivem no
+ * manifesto da engine, derivados das constantes do núcleo DOD, e nunca
+ * chegavam à UI.
+ *
+ * O namespace por subsistema (`lighting.maxLights`) evita colisão entre
+ * subsistemas que usam o mesmo nome de limite, e mantém legível de onde cada
+ * número veio. O perfil tem precedência: um limite estático declarado à mão
+ * não é sobrescrito pelo manifesto.
+ */
+function mergeConstraints(
+  profileConstraints: Readonly<Record<string, number>> | undefined,
+  manifest: EngineManifest | undefined,
+): Readonly<Record<string, number>> {
+  const merged: Record<string, number> = {};
+  for (const [subsystem, spec] of Object.entries(manifest?.subsystems ?? {})) {
+    for (const [name, value] of Object.entries(spec.limits ?? {})) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        merged[`${subsystem}.${name}`] = value;
+      }
+    }
+  }
+  return Object.freeze({ ...merged, ...(profileConstraints ?? {}) });
 }
