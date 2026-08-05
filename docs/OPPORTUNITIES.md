@@ -76,9 +76,9 @@ quadrantChart
 | OPP-01 | **Editores de canvas em workers** (curvas, rigs, grafos de estado) | Alto — é a cara da ferramenta | M | `TimelineCurve`, `solveFabrik`, `VisualStateMachine`, `CubicBezierEasing.samplePath` — todos puros e testados (regra F1 garante portabilidade a workers) |
 | OPP-02 | **Preview embutido do MonoGame** no painel do editor | Alto — feedback imediato | M/A | perfil 3.8.2 já governa `preview.embedded`; `DeferredRenderer` pronto; falta host de janela acoplado |
 | OPP-03 | **Live edit generalizado** (tunables por subsistema, estilo FlatRedBall) | Alto | M | padrão provado em `camera/configure` (merge parcial); manifesto já declara `properties` com tipo/faixa |
-| OPP-04 | **Preview de regras de auto-tiling em tempo real** no pincel de IntGrid | Médio | B | `resolveAutoTiles` é puro e rápido; `IntGridDocument` já entrega snapshots |
+| OPP-04 | ✅ **ENTREGUE dentro de P0.4** — preview de regras de auto-tiling em tempo real no pincel de IntGrid | Médio | B | "Ver arte" com debounce de 80 ms usa o MESMO resolvedor da projeção (AutoTiler vendorizado), com teste "preview ≡ publicação" |
 | OPP-05 | **Undo/redo global do Blueprint** (não só IntGrid) | Alto | M | todo evento carrega dados de inverso em potencial; o orquestrador é o ponto único para capturar |
-| OPP-06 | **Templates de projeto** ("plataforma 2D pronto para tocar") | Médio | B | `BlueprintDocument` é o formato de template natural (replay canônico valida tudo) |
+| OPP-06 | ✅ **ENTREGUE dentro de P0.2/F8** — templates de projeto ("plataforma 2D pronto para tocar") | Médio | B | dois documentos canônicos (`platformer-2d`, `top-down-2d`) em `ProjectTemplates.ts`, expostos por `project/templates` e conectados ao botão "Novo" e à tela inicial |
 
 O alicerce de **OPP-05** (undo/redo global) é o fluxo canônico de mutação: como toda mutação passa por um único caminho, o `store.apply(filtered)` é o ponto único onde capturar o inverso de cada evento — não há mutação fora dele.
 

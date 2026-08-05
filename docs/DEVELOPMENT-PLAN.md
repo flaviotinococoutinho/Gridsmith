@@ -1,0 +1,671 @@
+# Plano de desenvolvimento — guia de continuação
+
+> **Para quem é este documento.** Para qualquer pessoa ou IA que abra este
+> repositório sem contexto anterior e precise continuar o projeto. Ele diz o
+> que o P7M é, o que já está entregue, o que está decidido, o que falta e em
+> que ordem — com receitas executáveis para as partes mais complexas. Leia-o
+> junto de [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) (o diagnóstico com
+> evidência) e de [`GOVERNANCE.md`](GOVERNANCE.md) (as regras que o CI impõe).
+>
+> **Regra de leitura:** em conflito entre este documento e o código, o código
+> vence — e o documento deve ser corrigido no mesmo PR que expôs o conflito.
+> Anti-drift é valor de primeira classe aqui (`npm run docs:verify` bloqueia).
+
+## 1. O que é o P7M, em um parágrafo
+
+Editor visual de jogos 2D como ecossistema local de três processos: um
+**frontend** Electron (shell fina; núcleos puros em `frontend/src/core/`), um
+**middleware** Node que guarda a verdade do projeto como modelo canônico
+(comandos → eventos, replay, artefatos, governança de runtime) e uma **engine**
+.NET 8/MonoGame determinística (DOD, Zero-GC) tratada como *projeção
+materializada* do modelo — reconectar é reidratar. O usuário "pinta
+significado" (IntGrid) e a arte é derivada por regras determinísticas
+(AutoTiler por seed). Agentes de IA operam o mesmo caminho canônico via MCP.
+
+## 2. Mapa de leitura para uma IA recém-chegada
+
+Ordem recomendada de leitura antes de tocar em qualquer coisa:
+
+| # | Arquivo | O que dá |
+|---|---|---|
+| 1 | [`../CLAUDE.md`](../CLAUDE.md) | comandos, regras inegociáveis, mapa mínimo |
+| 2 | Este documento | estado, decisões, fila de trabalho, receitas |
+| 3 | [`GOVERNANCE.md`](GOVERNANCE.md) | as regras executáveis (fitness functions) e o DoD por tipo de mudança |
+| 4 | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) | diagnóstico com evidência, catálogo de gaps, fatiamento do ex-PR de lifecycle |
+| 5 | [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md) | a constituição (princípios, protocolos, versionamento) |
+| 6 | [`adr/`](adr/README.md) | decisões arquiteturais registradas |
+| 7 | [`ALPHA-0.1.md`](ALPHA-0.1.md) | a milestone de produto e seus checkboxes |
+
+## 3. Invariantes — o que NUNCA pode quebrar
+
+Cada linha abaixo é imposta por teste; violar quebra o CI. Uma IA que "melhore"
+algo violando uma destas linhas está errando, não melhorando.
+
+| Invariante | Quem impõe |
+|---|---|
+| Toda mutação passa pelo caminho canônico único (`dispatch` → filters → store → actions → projeção); as bordas (JSON-RPC, GraphQL, gRPC, MCP) são fachadas finas sobre a `EditorSurface` | P-1, R12, testes de gateway |
+| Dependências apontam para DENTRO; libs de borda são exclusivas dos seus diretórios (SDK MCP/`zod` em `mcp/`, `graphql` em `graphql/`, `@grpc/*` em `grpc/`; no frontend, SDKs de transporte só em `main/transport/`, `core/` puro) | R1, R10, R11, F1, F5 (testes de arquitetura das duas suítes) |
+| Na engine, `Runtime` NUNCA referencia `Graphics` — o host gráfico acopla por fora | E3/E4 em `engine/tests/P7m.Engine.Ipc.Tests/ArchitectureTests.cs` |
+| `BlueprintStore` só importa validadores puros: a guarda estática de células é deliberada, e o limite REAL da engine chega à UI por `constraints`, não por import | R3; a norma é **mover a dependência, não relaxar a regra** |
+| Contratos vivem em `contracts/` e as cópias em `dist/` devem ser byte-idênticas (rode `npm run build` no middleware após editar SDL/proto) | teste de paridade em `middleware/test/transport-gateways.test.ts` |
+| Posição no mundo é em **pixels** (célula → pixel pelo centro da célula); o middleware repassa cru e a engine consome cru | `contracts/schemas/actors.methods.schema.json` + teste de unidade em `middleware/test/project-templates.test.ts` |
+| Zero-GC nos hot loops da engine (0 bytes por frame), medido com tiered compilation **desligada** no projeto de teste — não reverter sem substituto determinístico | testes `*_is_allocation_free` + nota em [`GOVERNANCE.md`](GOVERNANCE.md) |
+| O sidecar `.autosave` só é removido após save confirmado ou descarte explícito do usuário | `frontend/test/recovery-plan.test.ts` |
+| Um bump de `BLUEPRINT_DOCUMENT_VERSION` por PR, sempre com migração encadeada e fixtures; documento editado à mão **nunca** é convertido às cegas | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.4 + `middleware/test/blueprint-migration.test.ts` |
+| Falha de DOMÍNIO nunca troca o transporte; o fallback gRPC→GraphQL é só para falha DE TRANSPORTE, com eventos contínuos por `seq` | `frontend/test/transport-router.test.ts` |
+| Governança visível: painel/ferramenta desabilitada sempre carrega a RAZÃO (perfil ou manifesto vivo); a razão da governança tem precedência sobre a de projeto | `ExperienceGovernor`/`experienceGate` + `frontend/test/workbench-core.test.ts` |
+| Nenhum id interno aparece na UI; todo texto passa pelo vocabulário/catálogo pt-BR | `frontend/src/core/vocabulary.ts`, `frontend/src/core/errorCatalog.ts` + testes |
+| Diagramas SEMPRE em Mermaid; commits em pt-BR descritivo; sem contagens de teste fixadas em docs | `npm run docs:verify` |
+
+## 4. Registro de decisões (o que JÁ está decidido — não redecidir)
+
+| Decisão | Conteúdo | Onde está registrada |
+|---|---|---|
+| Transports do app | GraphQL baseline completo + gRPC prioritário no caminho quente com fallback imediato e histerese de repromoção | ADR-016/017/018 |
+| Fatiamento do ex-PR de lifecycle | Dez etapas E1–E10 + cauda, cada uma mergeável sozinha; o branch `codex/project-lifecycle-20260719` foi fechado sem merge e permanece como **referência de leitura** (`git show <commit>:<path>`) | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8 |
+| Proto `EventEnvelope` | Os campos 7/8/9 pertencem à projeção (`has_projection`/`projection_status`/`projection_reason`) e são **imutáveis para sempre**; campos de histórico entram **a partir do 10** — a colisão com o ex-PR é binária, não textual | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.1 |
+| Cadeia de versões do documento | v3 na E7 → v4 na E9 → v5 na cauda; **um bump por PR**; a migração 2→3 tem quatro ramos explícitos | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.4 |
+| Lista de descarte | A UX do ex-PR que a `main` refez por outro desenho NÃO volta (tela inicial inline, wizard no renderer, catálogo por prefixo de mensagem…); reaproveitar apenas o que a tabela lista | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.3 |
+| Regime de curadoria (avaliação da "cebola") | Adotar como **vocabulário + linha de DoD**, sem reorganizar código e sem o termo "temperatura" (colide com "caminho quente"): todo vocabulário curado novo exige versão + proveniência, `reason` quando nega, e teste de consistência com quem o consome | §10 deste documento (ADR-021 pendente de redação) |
+| Medição Zero-GC | Tiered compilation desligada no csproj de teste; a garantia continua intacta | [`GOVERNANCE.md`](GOVERNANCE.md) |
+
+## 5. Como trabalhar neste repositório (protocolo operacional)
+
+1. **Branch**: uma etapa por branch e por PR. Nunca empilhe duas etapas no
+   mesmo PR — foi exatamente o que transformou o ex-PR de lifecycle em um
+   roteiro impossível de revisar.
+2. **Antes de codar**: leia a receita da etapa (§9) e os arquivos que ela cita.
+   Se a receita mandar `git show <commit>:<path>`, é implementação de
+   referência do branch fechado — **adapte ao código de hoje**, não cole às
+   cegas (as extrações da Onda 1 acharam premissas de versões futuras
+   embutidas).
+3. **Validação completa antes de qualquer push** (da raiz):
+   ```bash
+   cd middleware && npm run build && npm test && cd ..
+   cd frontend  && npm run build && npm test && cd ..
+   cd engine    && dotnet test && cd ..        # PATH="$HOME/.dotnet:$PATH" se preciso
+   ./scripts/verify-phase1.sh && ./scripts/verify-phase2.sh \
+     && ./scripts/verify-phase3.sh && ./scripts/verify-phase4.sh
+   ./scripts/verify-transports.sh
+   npm run docs:verify
+   ```
+4. **Commits** em pt-BR descritivo, explicando o PORQUÊ; docs atualizadas no
+   mesmo PR que muda comportamento (inclusive marcar entregas no
+   [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) e os checkboxes do
+   [`ALPHA-0.1.md`](ALPHA-0.1.md)).
+5. **Contratos**: mudou SDL/proto → mude os DOIS lados do fio + `npm run build`
+   no middleware (paridade `dist/`) + gateways + cliente.
+6. **Ordem de confiança quando as fontes divergem**: o código > os blockquotes
+   das frentes no `VIABILITY-PLAN` > as tabelas de diagnóstico daquele
+   documento. As tabelas são registro histórico e estão explicitamente
+   marcadas como tal.
+
+## 6. O que já está entregue (snapshot)
+
+Verificado contra a `main` no momento da escrita; a fonte contínua é o CI.
+
+**Plataforma (fases 1–3.6):** IPC JSON-RPC 2.0 com framing binário e handshake
+versionado; shared memory com seqlock e checksum FNV-1a cruzado; motor gráfico
+com deferred shading 2D, skinning e câmera de segunda ordem (referências de CPU
+testadas espelhando os shaders); AutoTiler determinístico por seed; modelo
+canônico com hooks/filters, artefatos versionáveis e pipelines; governança de
+runtime por perfis versionados imutáveis + manifesto vivo (`engine/describe`).
+
+**Transports do app (ADR-016/017/018):** GraphQL baseline + gRPC quente com
+fallback imediato, histerese de repromoção e continuidade de eventos por `seq`
+(`EventJournal` particionado por sessão, cursor composto, resync explícito).
+
+**Sessão de projeto transacional:** cada projeto tem store/histórico/
+orquestrador próprios; troca atômica com compare-and-swap
+(`expectedProjectSessionId`); reidratação serializada na mesma fila.
+
+**Verdade da projeção (F5, núcleo):** o resultado da projeção viaja no envelope
+do evento pelas três bordas; `runtimeState` na barra de status; catálogo de
+erros pt-BR (código → título/causa/ação); o painel Problemas deixou de afirmar
+"tudo aplicado" sem evidência.
+
+**Primeira sessão (F8, parcial):** o botão "Novo projeto" cria do template
+canônico com escolha por diálogo; dois templates (plataforma e top-down) em
+**pixels do mundo**, com teste que trava a unidade; tela inicial com ações,
+cards de template e recentes; gating de painéis por projeto aberto com
+precedência da governança; o editor de níveis hidrata QUALQUER projeto
+(seletores puros `pickLevel`/`pickEntityDef` — fim dos ids fixos).
+
+**F3a (parcial):** limites reais do manifesto mesclados em `constraints` com
+namespace por subsistema (`lighting.maxLights`…), com precedência do perfil;
+correlação `lightId`↔slot da engine publicada em `Projection.detail`.
+
+**Onda 1 do fatiamento (E1–E3):** escrita durável (temporário → `flush` →
+`rename`, `.bak`, no-clobber no "Novo") nos três pontos de escrita; recovery de
+autosave com quatro saídas e ciclo de vida do sidecar; segunda instância e
+`argv` roteando `.p7m.json` com fila.
+
+**Infra de qualidade:** regras arquiteturais executáveis nas três camadas +
+regras semânticas; anti-drift de docs (`npm run docs:verify`); e2e das fases
+1–4 + transports; medição Zero-GC determinística.
+
+## 7. Fila viva de pendências
+
+Auditadas contra o código; cada linha tem evidência verificável. **Gravidade**
+é o efeito no usuário, não o esforço:
+
+- **bloqueia-jornada** — impede um passo da jornada de aceite do
+  [`ALPHA-0.1.md`](ALPHA-0.1.md).
+- **degrada-experiência** — a jornada passa, mas com dano visível.
+- **dívida-técnica** — invisível ao usuário hoje; encarece tudo depois.
+
+### 7.1. Bloqueia a jornada
+
+| # | Pendência | Evidência | Onde no plano |
+|---|---|---|---|
+| B1 | **F1 inteira**: não existe host gráfico MonoGame — nenhum pixel é desenhado | `engine/src/` tem só Core, Graphics, Ipc e Runtime; o csproj do Runtime não referencia Graphics | F1 (receita §9.5) |
+| B2 | **Tileset/atlas não existe em nenhuma camada** — "pinte significado, derive arte" termina em `tileId` inteiro | busca por `tileset`/`atlas` em `middleware/src`, `frontend/src` e `contracts/` não retorna nada | F1 (receita §9.5) |
+| B3 | **P0.5 — preview embutido** (run/pause/stop, live edit, overlays) | não existe classe `Game`/`GraphicsDeviceManager` na engine; o "Runtime MonoGame" é headless | F1, onda B |
+| B4 | **P0.7 — undo/redo global** no nível do comando canônico | `CommandHistory` declara no cabeçalho que é só o relógio lógico; undo segue local ao IntGrid | E8 + E9 (receita §9.4) |
+| B5 | **Placement de câmera e luz com handles no canvas** | a vista do editor de níveis não menciona câmera nem luz; `camera/configure`, `light/add` e `light/remove` existem completos no canônico, sem UI | F4 (absorvida pela E10) |
+| B6 | **Archetype só carrega posição** — transform/sprite/animação/colisão não cruzam o fio | os parâmetros de spawn na engine são `(EntityId, ArchetypeId, Position)`; o `ActorStore` guarda só archetypes e posições | F7 + F1 (sem tileset nada vira sprite) |
+| B7 | **F2 residual (a)**: o store de sessão vive só em memória — reiniciar o middleware apaga o projeto | não há nenhuma escrita em disco no `ProjectSessionManager` | F2 residual (gate de milestone) |
+| B8 | **F3a residual**: a rota de conceitos (`editorConcepts`) não atravessa nenhuma borda do app | os únicos consumidores são o MCP e dois drivers de teste; o app sobe o middleware com `--no-mcp` | F3a — destrava após a E10 |
+| B9 | **F4 inteira**: inspector sem um único escritor em TS, sem modelo de seleção, sem registro de painéis | não existe `inspectorView.ts` nem `selection.ts`/`panelRegistry.ts`; o rail é hardcoded e leva a telas mortas | F4 → E10 |
+| B10 | **F6 inteira**: o estado da vista vive no closure — trocar de aba OU um resync remoto remonta o editor e destrói grid não publicado, undo, zoom/pan e seleção | o handler de resync chama `renderView()`; a vista recria o documento IntGrid a cada mount | F6 → E8/E9 |
+| B11 | **F6: pintar não suja o documento** — fechar ou trocar descarta a pintura sem diálogo | `commandApplied` só dispara em evento de Blueprint; não existe marcação de sujeira local | F6 |
+| B12 | **F7 inteira**: CRUD assimétrico, sem camadas em `LevelSpec`, campos nunca cruzam o runtime, pipeline de assets sem porta no app | os mesmos kinds do diagnóstico continuam em `commandShape.ts`; `middleware/src/application/` não existe | F7 → E5/E6/E8/E9 |
+| B13 | **P0.9 — empacotamento** (executável por plataforma, bundling, smoke do artefato, release alpha) | nenhuma configuração de Electron Builder/Forge; o workflow de CI não tem job de artefato | **órfã** — só existe como P0.9 da milestone |
+| B14 | **P0.1 — caminhos empacotados** na supervisão (fecha junto com P0.9) | idem acima | **órfã** (P0.9) |
+
+### 7.2. Degrada a experiência
+
+| # | Pendência | Evidência | Onde no plano |
+|---|---|---|---|
+| D1 | Menu "Recentes" nativo | o menu nativo tem só Arquivo/Editar/Exibir; os recentes só aparecem na tela inicial | **órfã** |
+| D2 | Painéis redimensionáveis e layouts salvos | o único resize é o do canvas; nenhuma persistência de layout | E10 (`workbenchLayout`) |
+| D3 | Razões da governança traduzidas — os perfis já estão em pt-BR; o inglês vem das razões GERADAS pelo governor | mensagens geradas em inglês exibidas em tooltip | F4 (razão como código estável + `vocabulary.ts`) |
+| D4 | Edição da paleta de tipos (a paleta é constante de build, não dado do projeto) | a vista importa uma paleta fixa; nenhum comando canônico de paleta | F7 + E9 (`level/palette`, v4) |
+| D5 | Diretório `examples/` versionado e a ação "Abrir exemplo" | o diretório não existe; o modelo da tela inicial tem o flag e ninguém o satisfaz | F8 residual |
+| D6 | Inspector de entidades tipadas (só leitura hoje seria possível) | não existe escritor do painel em TS | F4; escrita bloqueada por F7/E8 |
+| D7 | F2 residual (c): trocar de projeto com trabalho sujo descarta sem diálogo | os ramos `new`/`open` não passam por `requestClose()` | F2 residual |
+| D8 | F3a residual: nenhuma view consome `constraints` — a UI não antecipa teto de luzes/células/atores | o merge existe no governor; nenhuma vista lê o registro | F3a (parte "consumo") |
+| D9 | F4: a governança é resolvida UMA vez no boot — o rail congela se a engine subir ou cair depois | só há uma chamada de `experience()`, dentro do boot | F4 |
+| D10 | F5 residual: status `failed` na projeção, reidratação abortando no primeiro erro sem trilha por item, fila única na fronteira do adapter | registrado no blockquote da frente F5 | F5 residual |
+| D11 | F6: undo/redo continua local ao IntGrid | o histórico do middleware ainda é só o relógio lógico | E9 |
+| D12 | E5 pendente: publicação de artefato em duas fases, tombstones e rollback | o `ArtifactStore` só tem `publish` monofásico | E5 (receita §9.2) |
+| D13 | E6 pendente: camada de aplicação de assets + superfície fria GraphQL | `middleware/src/application/` não existe | E6 |
+| D14 | E7 pendente: Blueprint v3 (metadata, `GridCoordinates`, migração de quatro ramos) | a versão do documento ainda é 2; não existe `GridCoordinates.ts` | E7 (receita §9.3) |
+| D15 | E8 pendente: domínio transacional (`planBatch`/`commitBatch`/`fork`, `applyWithInverse`, comandos in-place, proveniência) | nenhum desses símbolos existe no `BlueprintStore` | E8 (receita §9.4) |
+| D16 | E9 pendente: histórico global transacional com `level/patch`, paleta e bump v4 | idem D11 + campos de histórico ausentes do proto | E9 (receita §9.4) |
+| D17 | E10 pendente: casca do workbench por contribuições (nenhum dos módulos de framework existe) | `frontend/src/core/` e `frontend/src/renderer/` não têm nenhum deles | E10 |
+| D18 | Cauda: asset browser com inspector, `spriteRenderer` com bump v5, campos do wizard sobre o núcleo puro da `main` | o "Novo" hoje só escolhe template por diálogo de botões | cauda pós-E10 |
+| D19 | DoD ainda não exige "todo domínio editável expõe create/update/delete" | o modelo segue assimétrico e o DoD não menciona simetria | F7 + E8 |
+| D20 | P0.8 parcial: falta navegação ao objeto, fix automático e consolidação de compatibilidade/pipeline no painel | o painel existe e é honesto; as três funções não | F4 + F5 residual |
+| D21 | F1: canal engine→editor só transporta handshake/ping/log — nenhum overlay de runtime é possível | são os únicos métodos registrados no servidor de pipe | F1 (telemetria) |
+
+### 7.3. Dívida técnica
+
+| # | Pendência | Evidência | Onde no plano |
+|---|---|---|---|
+| T1 | E4 pendente: lint de contratos no `docs:verify` (sintaxe/refs/`required` dos schemas + paridade `COMMAND_KINDS` ≡ enum do SDL) | o verificador só checa que arquivos referenciados existem | E4 (receita §9.1) |
+| T2 | F3b: os comandos canônicos não têm schema em `contracts/`; projeções consultáveis viajam como string livre | `contracts/schemas/` só descreve métodos middleware→engine | F3b, junto de E4 |
+| T3 | `GOVERNANCE.md` declara schemas como fonte de verdade dos comandos, e eles não existem | mesma evidência de T2 | E4/F3b (corrigir o texto OU criar os schemas) |
+| T4 | F2 residual: laço de reescrita do autosave (não existe `lifecycle.autosaved()`) | o tick compara com o instante do último save explícito, que o autosave não atualiza | F2 residual |
+| T5 | F8/F2 borda: a reconciliação de status ignora o retorno de `requestClose()` e fecha o projeto em silêncio | chamada bare, descartando a decisão | F2 residual |
+| T6 | F4: `featureLabel` exportado e sem consumidor | só a definição aparece na busca | F4 |
+| T7 | Render/edição fora da main thread (workers) | nenhum `new Worker` no frontend; só comentários prometendo portabilidade | OPP-01 (P1) |
+| T8 | E2E visual (Playwright + Electron) da jornada de aceite | nenhuma dependência de Playwright no repositório | **órfã** — é a prova de produto prometida junto de P0.9 |
+| T9 | Riscos técnicos ativos: coerência de MMF no Windows sem binding nativo; shaders sem compilação no CI | o único workflow não tem job de mgcb/Wine | OPP-12, OPP-09 |
+| T10 | Escala de mapa acima de 64k células por streaming/chunks | nenhuma implementação de chunk no middleware ou na engine | OPP-10 (Fase 5) |
+| T11 | Rigging/FABRIK, Timeline, Máquina de estados e World map: núcleos prontos sem vista | os módulos puros existem; nenhuma vista os monta | P1 da milestone |
+| T12 | Backlog sem início: harness de física, agente revisor de blueprint, regras de terreno por borda (Wang), fixtures de replay como regressão de conteúdo | o AutoTiler menciona Wang só em comentário; o `HookBus` tem a infra de filters sem nenhum lint de domínio registrado | OPPORTUNITIES (P1/P2) |
+
+> **Pendências órfãs** (B13, B14, D1, T8) não pertencem a nenhuma frente nem
+> etapa. São reais e não têm dono no plano — quem as atacar deve criar a
+> entrada correspondente aqui e no [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md)
+> antes de codar.
+
+## 8. Ordem recomendada de ataque
+
+Duas trilhas independentes. A trilha de **domínio** é uma cadeia (cada etapa
+depende da anterior); a trilha de **runtime visual** (F1) é ortogonal e pode
+começar a qualquer momento — é a raiz nunca atacada, e é ela que faz o produto
+parecer um editor de jogos em vez de um editor de JSON.
+
+```mermaid
+flowchart TD
+  E4["E4 — lint de contratos<br/>(rede de segurança)"] --> E5["E5 — artefato em duas fases"]
+  E4 --> E7["E7 — Blueprint v3<br/>(GridCoordinates + metadata)"]
+  E4 --> E8["E8 — domínio transacional"]
+  E5 --> E6["E6 — camada de aplicação de assets"]
+  E7 --> E9["E9 — histórico global (v4)"]
+  E8 --> E9
+  E9 --> E10["E10 — casca do workbench<br/>(absorve F4)"]
+  E6 --> E10
+  E10 --> F3a["F3a — rota de conceitos"]
+  E10 --> CAUDA["cauda: asset browser,<br/>spriteRenderer (v5), wizard"]
+  F1A["F1 onda A — host gráfico<br/>+ tileset/atlas + telemetria"] --> F1B["F1 onda B — preview embutido"]
+  F1B --> P09["P0.9 — empacotamento"]
+```
+
+*Mostra as duas trilhas do plano: a cadeia de domínio E4→E10 com a cauda, e a trilha ortogonal do host gráfico F1 que desemboca no empacotamento.*
+
+**Próximo passo natural: E4.** É pequena, não depende de ninguém e é a rede que
+torna todas as etapas de domínio revisáveis — sem ela, cada kind novo pode
+entrar pela metade sem que o CI perceba.
+
+## 9. Receitas executáveis
+
+Cada receita é auto-contida: pré-requisitos, passos, armadilhas conhecidas e
+critério de aceite. As armadilhas não são decoração — várias vieram de erros
+reais cometidos durante as extrações da Onda 1.
+
+### 9.1. Receita E4 — lint de contratos no `docs:verify`
+
+**Objetivo.** Que seja impossível acrescentar um comando canônico pela metade:
+o CI passa a exigir que `COMMAND_KINDS`, o enum `CommandKind` do SDL e os
+schemas JSON dos comandos cubram exatamente o mesmo conjunto.
+
+**Pré-requisitos.** Nenhum. É a etapa mais barata da fila e desbloqueia a
+revisão de todas as outras.
+
+**Passos.**
+
+1. Crie o diretório de schemas de comando em `contracts/schemas/` com um
+   arquivo por comando canônico (o nome sugerido é `blueprint.commands.json`
+   com `$defs` por kind, para não explodir a árvore em arquivos minúsculos).
+   Cada `$def` descreve o payload aceito pela borda — o mesmo shape que
+   `reshapeCommand` reconstrói. **Não invente campos**: extraia da união
+   `BlueprintCommand` em `middleware/src/domain/BlueprintStore.ts` e das
+   validações que o store já aplica.
+2. Em `scripts/verify-docs.mjs`, acrescente um bloco de verificação que:
+   (a) faz `JSON.parse` de todo `contracts/schemas/*.json` e falha com o
+   caminho e a mensagem do parser; (b) resolve as `$ref` locais e falha em
+   referência pendurada; (c) exige que todo `required` cite propriedade
+   declarada em `properties`.
+3. No mesmo script, extraia os três conjuntos e compare:
+   - `COMMAND_KINDS` de `middleware/src/canonical/commandShape.ts` — leia por
+     regex sobre o texto-fonte, **não** importe o módulo (o script roda na raiz
+     e não deve depender do build do middleware);
+   - os membros do `enum CommandKind` do SDL (a convenção é o kind com `/`
+     trocado por `_`);
+   - as chaves de `$defs` do schema de comandos.
+
+   Falhe listando a diferença nos dois sentidos, com o nome do kind órfão.
+4. Registre a nova regra em [`GOVERNANCE.md`](GOVERNANCE.md), no DoD de comando
+   canônico: "o lint de contratos do `docs:verify` quebra se faltar qualquer
+   perna".
+5. Se a §T3 se confirmar (o `GOVERNANCE.md` já declarava os schemas como fonte
+   de verdade), a criação do passo 1 fecha a contradição — anote isso no
+   commit.
+
+**Armadilhas.**
+
+- O script de verificação de docs roda a partir da **raiz** e não tem
+  `node_modules` do middleware disponível de forma garantida. Leia o TypeScript
+  como texto; não tente `import()` do `dist/`.
+- A troca de `/` por `_` é convenção, não regra escrita. Extraia a convenção do
+  enum existente antes de assumi-la, e falhe com mensagem explícita se um kind
+  novo não seguir o padrão — é melhor do que aceitar em silêncio.
+- **Não fixe contagens** ("os 14 kinds") em nenhuma doc: o próprio
+  `docs:verify` bloqueia contagens de teste, e contagem de kinds envelhece do
+  mesmo jeito. Escreva "todos os kinds".
+- Rodar `npm run build` no middleware antes de `npm test` continua obrigatório:
+  o teste de paridade compara a cópia dos contratos em `dist/` byte a byte.
+
+**Aceite.** `npm run docs:verify` verde na raiz e **vermelho** quando você
+remove temporariamente um membro do enum do SDL (teste manual obrigatório: um
+lint que nunca falhou não é um lint). Suítes do middleware e do frontend
+inalteradas.
+
+### 9.2. Receita E5 — publicação de artefato em duas fases
+
+**Objetivo.** Que publicar artefato deixe de ser uma escrita irreversível: um
+candidato preparado, validado contra a baseline, e só então comitado — com
+tombstone e rollback.
+
+**Pré-requisitos.** Nenhum, mas fazer depois da E4 dá o lint de contratos de
+graça.
+
+**Passos.**
+
+1. Em `middleware/src/canonical/ArtifactStore.ts`, transforme `publish(input)`
+   em açúcar sobre `preparePublish(input)`: `preparePublish` devolve
+   `{candidate, commit()}`, onde `candidate` é o envelope calculado (hash de
+   conteúdo, revisão prevista) e `commit()` revalida que a revisão corrente
+   ainda é a baseline que o candidato viu. Se mudou, lance conflito com o
+   código de erro de conflito de sessão que **já existe** no protocolo — não
+   crie código novo.
+2. Acrescente `retire(artifactId)` gravando tombstone, `isRetired(artifactId)`,
+   `restore(artifactId)` e `activate(artifactId, revision)` para rollback.
+   Tombstone é entrada no histórico, **nunca** remoção: o histórico de
+   revisões é append-only e a reidratação depende disso.
+3. Publique os eventos correspondentes (`retired`, `restored`, `activated`) no
+   mesmo `EventEmitter` que já emite `published`, para o journal os enxergar.
+4. Propague pela `EditorSurface` (as bordas são fachadas finas — regra R12) e,
+   se a E4 já estiver merged, acrescente os schemas correspondentes e rode o
+   lint.
+5. Testes: (a) `commit()` de um candidato obsoleto conflita; (b) artefato
+   aposentado não é resolvido por consulta padrão mas continua no histórico;
+   (c) `activate` de revisão antiga muda o que a consulta padrão devolve sem
+   apagar nada; (d) round-trip de reidratação preserva tombstones.
+
+**Armadilhas.**
+
+- Não implemente `retire` como `delete` no `Map` de revisões. O que parece
+  simplificação destrói a auditabilidade que é a razão de o artefato ser
+  versionado.
+- `publish()` continua existindo e com a mesma assinatura: há chamadores hoje.
+  Quebrar a assinatura transforma uma etapa média numa etapa grande.
+
+**Aceite.** Suíte do middleware verde com os quatro testes novos; nenhum
+chamador existente de `publish()` alterado.
+
+### 9.3. Receita E7 — Blueprint v3
+
+**Objetivo.** Que todo documento v2 já gravado em disco — template
+pré-correção em células, template pós-correção em pixels, top-down, ou editado
+à mão — abra correto no build v3, que passa a declarar a unidade espacial e a
+metadata de produto no próprio arquivo.
+
+**Pré-requisitos.** Suítes verdes. E4 idealmente merged antes. A referência de
+leitura é o commit fechado do ex-PR (`git show <commit>:middleware/src/leveldesign/GridCoordinates.ts`
+e o `BlueprintSerializer.ts` do mesmo commit).
+
+**Passos.**
+
+1. **GERE O CORPUS DE FIXTURES ANTES DE QUALQUER MUDANÇA DE CÓDIGO**, com a
+   `main` ainda emitindo v2. Crie `middleware/test/fixtures/documents/` e gere
+   `v2-platformer-main.json` e `v2-topdown-main.json` por replay + export a
+   partir dos factories atuais — é a forma REALMENTE gravada em disco, com os
+   campos padrão materializados na instância, diferente do factory cru.
+2. Gere `v2-platformer-base.json` (pré-correção, posições em CÉLULA) copiando o
+   anterior e trocando **apenas** as posições pelas do template histórico
+   (confira com `git show <commit-do-template-antigo>:middleware/src/canonical/ProjectTemplates.ts`).
+   Escreva `v2-editado-a-mao.json` à mão, com números pequenos que PARECEM
+   célula de propósito, garantindo que não case com nenhuma impressão digital e
+   que continue válido para replay.
+3. Crie `middleware/src/leveldesign/GridCoordinates.ts` com as constantes
+   canônicas (unidade de posição, origem da célula, sentido do eixo Y, âncora
+   da entidade), `cellToWorldCenter` e `worldToCell`, ambas com asserção de
+   célula inteira não negativa e de tamanho de tile inteiro ≥ 1.
+4. Em `BlueprintSerializer.ts`: suba a versão do documento para 3; adicione
+   `ProjectMetadata` (nome, resolução de referência, bloco espacial), o valor
+   padrão e o validador; acrescente `metadata` ao documento; `exportBlueprint`
+   ganha o terceiro parâmetro com default, para não quebrar chamadores.
+5. Registre a migração 2→3 com **quatro ramos explícitos** por impressão
+   digital do documento (o hash estável já exclui o id do projeto, mas
+   **inclui** a versão — os shapes precisam do `schemaVersion: 2` embutido, ou
+   nada casa e tudo cai no ramo padrão):
+   - **(a)** platformer pré-correção → CONVERTE as posições de célula para
+     pixel; metadata com o nome do template;
+   - **(b)** platformer pós-correção → NÃO converte; só carimba metadata;
+   - **(c)** top-down → NÃO converte; metadata com o nome do template. **Este
+     fingerprint não existe na referência** (ela é anterior ao segundo
+     template): derive-o do factory atual;
+   - **(d)** padrão → NUNCA converte nada; metadata genérica.
+
+   São **dois** fingerprints por origem, não um: o documento em disco tem os
+   campos padrão materializados, o factory cru não.
+6. Em `ProjectTemplates.ts`, **apague** o helper de conversão inline e importe
+   `cellToWorldCenter` — não deixe as duas conversões coexistindo. Adicione
+   `metadata` aos dois documentos. **Não** traga opções de template, preview,
+   defaults ou os inputs GraphQL do wizard: são da cauda.
+7. Retenha a metadata na sessão para o save fazer round-trip do nome: a sessão
+   ganha o campo, `prepareSession` recebe e clona com validação, e a
+   `EditorSurface` passa a metadata da sessão ao exportar.
+8. No frontend, `serializeProjectDocument` passa a **exigir** `metadata` quando
+   a versão do documento for ≥ 3, mantendo v2 aceito (autosave antigo).
+9. Testes: **um teste nomeado por ramo**, cada um lendo sua fixture; mais o
+   round-trip estrutural do corpus (para cada arquivo: migrar → converter em
+   comandos sem lançar → replay em store novo → exportar → migrar de novo é
+   idempotente).
+10. Atualize [`COMPATIBILITY.md`](COMPATIBILITY.md): a versão, a cadeia de
+    migração e o ponteiro para o corpus de fixtures.
+
+**Armadilhas.**
+
+- **A ordem dos passos é parte da receita.** Depois do bump, os factories
+  emitem v3 e a fixture sairia errada. Fixtures são bytes congelados: nunca as
+  regenere; o corpus só CRESCE a cada bump.
+- **A luz do platformer vive na meia-célula.** `cellToWorldCenter` rejeita
+  célula não inteira. A referência usa piso; a `main` corrigida emite o centro
+  da meia-célula — os dois divergem em alguns pixels. **Escolha um**, escreva o
+  número exato no teste e registre a escolha no commit, para a próxima IA não
+  "harmonizar" os dois valores depois.
+- **O ramo (d) NUNCA converte.** Não invente heurística do tipo "posição menor
+  que o tile ⇒ está em célula": converter às cegas destrói projeto de usuário.
+  O aceite do ramo (d) é igualdade bit a bit das posições.
+- Não remova o helper de centro de célula do **frontend**: `core/` é puro e não
+  pode importar módulo do middleware. O descarte vale para o helper do
+  middleware.
+- Documento mais novo que o build continua REJEITADO — mantenha o teste de
+  versão futura passando com o número novo.
+
+**Aceite.** Suítes do middleware e do frontend verdes, incluindo os quatro
+testes nomeados de ramo e o round-trip do corpus; `docs:verify` verde;
+verificação pontual de que o helper antigo sumiu do middleware, de que a
+migração do documento editado à mão preserva as posições bit a bit e de que a
+do platformer pré-correção move o player para o pixel esperado.
+
+### 9.4. Receita E8 + E9 — domínio transacional e histórico global
+
+> **Duas etapas, dois PRs, nesta ordem.** A E8 é mergeável sozinha; a E9 é
+> indivisível.
+
+**Objetivo.** Undo/redo canônico multi-borda (UI, MCP, agentes) com lote
+atômico, proveniência do comando, identidade lógica do documento e
+compatibilidade binária do envelope com clientes antigos.
+
+**Pré-requisitos.** E8 exige E4. E9 exige E7 **e** E8 — a cadeia de versões é
+um bump por etapa. Confirme que a versão do documento está em 3 antes de
+começar a E9. Referência de leitura: o commit de histórico do branch fechado.
+
+**Passos da E8.**
+
+1. Estenda o modelo de comando: tipos de ator (`human`/`agent`/`pipeline`),
+   metadata do comando e contexto (id de transação + metadata) compondo cada
+   membro da união; acrescente os kinds in-place (`light/update`,
+   `entitydef/update`, `entitydef/remove`, `entity/properties`) e a opção de
+   substituição em `camera/configure`. **Não** traga `level/patch` nem paleta —
+   são E9.
+2. Reescreva o núcleo do store como transacional: `apply` vira fachada de
+   `applyWithInverse`, que delega a `planBatch`/`commitBatch`. `planBatch` clona
+   o estado num draft privado com versão de mutação e aplica tudo lá;
+   `commitBatch` valida que o plano nasceu deste store e que a versão base não
+   mudou (compare-and-swap interno) e adota os mapas do draft de forma
+   **síncrona**. Cada caso devolve o evento **e** os comandos inversos.
+   `skeleton/define` e `mesh/bind` devolvem inverso vazio — viram barreira.
+3. Adapte o orquestrador **sem** mexer no histórico ainda, mantendo o bloco
+   síncrono sem `await` entre o commit e o registro. Aceite o ator vindo da
+   borda confiável, nunca do payload.
+4. Cumpra o DoD completo para **cada** kind novo: validação, `COMMAND_KINDS`,
+   enum do SDL, schema JSON (o lint da E4 quebra se faltar), projeção no
+   adapter, reidratação, serialização. Comandos in-place não mudam o shape do
+   documento — o snapshot já captura o estado final.
+5. Testes: atomicidade de lote (falha no terceiro comando não aplica os dois
+   primeiros); conflito de CAS ao comitar plano velho; round-trip
+   apply → inverso por kind; rejeição de no-op.
+
+**Passos da E9.**
+
+6. Substitua o `CommandHistory` inteiro: entradas imutáveis com forward,
+   inverse, ator, id de transação e barreira; pilhas de passado e futuro;
+   preparar/asserir/comitar tanto o registro quanto o movimento, com CAS por
+   cursor; baseline para replay (avança a sequência e **zera** as pilhas);
+   identidade lógica do documento distinta do relógio de sequência; labels
+   humanas em pt-BR por kind.
+7. Complete o domínio: entrada de paleta, campo de paleta no nível, e os kinds
+   `level/patch` (com antes/depois por célula, exigindo transação, conflitando
+   quando o "antes" não bate) e `level/palette`. Mesmo DoD do passo 4.
+8. Reescreva o orquestrador para o commit em três fases (planejar → preparar
+   registro → asserir → comitar lote → comitar registro), **zero `await` no
+   meio**, com as consequências (projeção) depois. Acrescente undo e redo com
+   cursor esperado.
+9. O gerenciador de sessão carimba os eventos com transação, ator, entrada de
+   histórico, ação e identidade lógica; undo/redo/status entram na **mesma**
+   fila serial; o status de projeto ganha o cursor e os flags de pode-desfazer.
+10. Bump v4 com a migração que dá paleta padrão a todo nível sem paleta. **No
+    mesmo commit**, ajuste a impressão digital da migração 2→3 para ignorar a
+    paleta antes de calcular o hash.
+11. **Proto com renumeração**: o envelope MANTÉM os campos 1–9 intactos e os
+    campos de histórico entram a partir do 10. Nas demais mensagens a
+    referência não colide e pode ser copiada.
+12. SDL GraphQL com a superfície **completa** (o fallback não pode ser
+    parcial): enums, tipos de histórico, campos novos nos eventos e status,
+    mutations de undo/redo, query de status, kinds novos no enum.
+13. Gateways: serialização do envelope estendida, operações novas delegando à
+    `EditorSurface`, MCP expondo undo/redo com ator fixado pela borda.
+14. Frontend: propague pelos dois transports com o **mesmo** id de requisição
+    no failover (idempotência), mantendo o roteador puro.
+15. **Teste de compatibilidade binária do envelope**: congele o texto do
+    envelope antigo como fixture inline, carregue os dois descritores,
+    serialize com o proto novo e decodifique com o antigo — os campos de
+    projeção chegam intactos e os novos são ignorados como desconhecidos; no
+    sentido inverso, bytes antigos decodificados pelo proto novo dão campos de
+    histórico vazios sem erro. Este teste é o guarda-corpo permanente da
+    decisão da Onda 0.
+16. Testes de domínio e histórico: round-trip por kind; barreira; coalescing
+    por transação; CAS de cursor entre dois clientes; edição após undo descarta
+    o ramo futuro; replay não gera entradas desfazíveis; os quatro ramos de
+    migração agora até v4.
+17. Feche a documentação: entrada em [`COMPATIBILITY.md`](COMPATIBILITY.md) com
+    a regra "os campos 7–9 do envelope são imutáveis; histórico vive em 10+".
+
+**Armadilhas.**
+
+- **Nunca copie a numeração do envelope da referência**: lá os campos de
+  histórico ocupam exatamente os números que a `main` publicou para a projeção.
+  Não é conflito de texto — o proto3 decodificaria um campo como o outro em
+  silêncio.
+- O strip de paleta na impressão digital entra **junto** com a E9, nunca antes:
+  antes, a paleta não existe e o helper é código morto; depois, sem ele, o
+  fingerprint do template legado deixa de casar e a conversão de coordenadas
+  silenciosamente não dispara — corrompendo posições sem erro visível.
+- **A E9 é indivisível.** Undo sem CAS de cursor deixa dois clientes desfazerem
+  concorrentemente; envelope novo sem handlers quebra a paridade; o bump v4
+  precisa entrar com a paleta, senão o comando edita algo que o documento não
+  persiste; identidade lógica só faz sentido se TODAS as replies a carimbarem.
+- **Zero `await`** entre planejar/comitar o lote e comitar o registro: um
+  `await` no meio deixa o documento à frente do relógio lógico se a projeção
+  falhar. A projeção é consequência recuperável, nunca parte do commit.
+- A rejeição de no-op **muda o contrato de comandos existentes**. Testes atuais
+  que despacham no-ops vão quebrar: conserte o teste, não relaxe a regra — no-op
+  no histórico criaria entradas de undo vazias.
+- O inverso de remover nível restaura **também** o posicionamento no world map.
+- A sequência de comandos continua **monotônica** no undo: desfazer consome
+  sequências novas. Quem assumir "undo = sequência volta" quebra o journal.
+- O ator vem SEMPRE da borda confiável; e o replay de abertura usa baseline —
+  se o replay criar entradas desfazíveis, abrir um documento permite "desfazer"
+  o documento inteiro.
+
+**Aceite.** Tudo verde nas três suítes, `./scripts/verify-transports.sh`
+cobrindo undo/redo nos dois transports, `npm run docs:verify` com o lint da E4
+enxergando os kinds novos, e o teste binário do envelope passando nos dois
+sentidos. Manual: abrir projeto antigo migra até v4 com paleta e coordenadas
+corretas; desfazer e refazer no app refletem na engine pela projeção.
+
+### 9.5. Receita F1 — host gráfico MonoGame, tileset/atlas e telemetria
+
+> **Complexidade alta · exige ADR.** É a frente ortogonal: não depende de
+> nenhuma etapa da cadeia de domínio, e é a única que faz o produto parecer um
+> editor de jogos. Entregue em **duas ondas**.
+
+**Objetivo (onda A).** Que exista um processo que desenhe, em janela própria,
+os mesmos stores que os handlers JSON-RPC mutam — e que o que o usuário pinta
+no canvas do editor e o que a engine desenha venham da MESMA tabela de atlas.
+
+**Pré-requisitos.** Suíte da engine verde. Ler
+[`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §4 (frente F1) e a regra E4 dos testes
+de arquitetura da engine.
+
+**Passos.**
+
+1. **ADR primeiro.** Escreva o ADR que fixa: o host é **composição, nunca
+   domínio**; o `Runtime` continua sem referência a `Graphics`; a capability de
+   preview embutido só vira `enable` no perfil quando a onda B existir. Sem
+   esse ADR a etapa não começa — é decisão arquitetural, e a regra da casa
+   exige registro.
+2. Crie `engine/src/P7m.Engine.Host/` como projeto Exe referenciando Core, Ipc
+   e Graphics. Ele instancia `Game` + `GraphicsDeviceManager` e constrói o
+   renderer deferred com os efeitos que o pipeline de conteúdo já compila.
+3. O loop desenha os stores DOD **por referência**: eles já são propriedades
+   públicas do serviço de engine, então o loop de desenho e o plano de controle
+   compartilham estado sem cópia nova. Respeite o Zero-GC: nada de alocação por
+   frame no caminho de desenho.
+4. Acrescente a regra **E6** em
+   `engine/tests/P7m.Engine.Ipc.Tests/ArchitectureTests.cs`, no mesmo formato
+   das existentes: **só** o Host referencia Graphics + Ipc. As regras E1–E5
+   permanecem intactas — em particular, E4 continua exigindo que o Runtime NÃO
+   veja Graphics.
+5. **Contrato de conteúdo.** Acrescente `tileset/define` como comando canônico
+   (mapa de `tileId` → região de atlas) e o id de tileset em `LevelSpec`, com o
+   DoD completo: validação no store, `COMMAND_KINDS`, enum do SDL, campo no
+   proto, schema novo em `contracts/schemas/`, projeção no adapter,
+   reidratação, serialização.
+6. **A mesma tabela nos dois lados.** Crie `frontend/src/core/tilesetAtlas.ts`
+   como núcleo puro (tabela `tileId` → região) e troque o preenchimento de
+   retângulo chapado do canvas por desenho de imagem a partir dessa tabela. O
+   host consome a tabela equivalente pelo comando canônico.
+7. **Paridade verificada, não afirmada.** Crie
+   `scripts/verify-visual-parity.sh`: sobe o host, envia definição de tileset +
+   nível + entidade, e compara o checksum FNV-1a de uma região amostrada do
+   framebuffer com o mesmo trecho renderizado pelo editor a partir da MESMA
+   tabela, dentro de tolerância declarada no script. É o mesmo padrão de
+   checksum cruzado já usado no plano de dados.
+8. **Fio de volta.** Acrescente a notificação de telemetria de frame no
+   servidor de pipe da engine (estatísticas de frame, posição viva da câmera
+   após o amortecimento, contagem de luzes) e encaminhe ao `EventJournal` pelo
+   adapter, para virar evento observável pelos dois transports.
+9. Supervisione o processo do host no `main` do Electron com nome de exibição
+   honesto — hoje a barra de status chama de "Runtime MonoGame" um servidor
+   JSON-RPC que nunca carregou MonoGame.
+
+**Onda B.** Embutir a janela do host no painel do editor e só então habilitar a
+capability de preview embutido no perfil. A separação existe porque a onda A já
+entrega valor (o jogo roda e desenha) sem depender de composição de janela
+nativa, que é a parte frágil por plataforma.
+
+**Armadilhas.**
+
+- **CI não tem GPU.** O teste de paridade precisa rodar o host em modo
+  offscreen/headless. Planeje isso no passo 1, não no fim — é o risco que pode
+  transformar a etapa inteira em não-mergeável.
+- **Não mova o desenho para dentro do Runtime** "porque é mais simples". A
+  regra E4 quebra e ela existe por um motivo: o plano de controle precisa
+  continuar testável sem GPU.
+- Um `tileId` sem entrada no tileset deve virar projeção `skipped` com razão
+  acionável, não exceção — a regra de que falha de projeção não derruba o
+  documento vale aqui também.
+- O canvas do editor e o host devem falhar **juntos** quando a tabela diverge.
+  Se você fizer o editor cair para cor chapada em caso de atlas ausente, o
+  teste de paridade passa a comparar duas coisas diferentes e vira teatro.
+- A telemetria é notificação, não request/response: não a coloque no caminho
+  síncrono do dispatch.
+
+**Aceite.** `dotnet test` verde com E1–E5 intactas e E6 nova;
+`scripts/verify-visual-parity.sh` verde; a telemetria observável por consulta
+de eventos e por stream; e o teste de contrato quebrando se `tileset/define`
+existir em `COMMAND_KINDS` sem entrada no SDL, no proto e no schema.
+
+## 10. ADR-021 pendente — regime de curadoria
+
+A ideia avaliada (organizar os domínios por nível de determinismo, das
+possibilidades criativas na borda externa às tautologias e regras-base no
+centro, com o usuário caminhando entre as camadas para injetar senso crítico ou
+evidência observável) foi julgada **útil como vocabulário e como linha de DoD**,
+e **rejeitada como reorganização de código** — o repositório já tem uma
+estrutura de camadas imposta por teste, e sobrepor uma segunda taxonomia
+criaria duas verdades.
+
+O que o ADR deve fixar, quando for escrito:
+
+- **Termo.** Não usar "temperatura": colide com "caminho quente" dos
+  transports, que já é vocabulário estabelecido do projeto.
+- **A linha de DoD.** Todo vocabulário curado novo (paleta, regras de terreno,
+  presets, catálogos de erro, labels de governança) exige: **versão**,
+  **proveniência** (quem curou: humano, agente, pipeline), **`reason` quando
+  nega** algo ao usuário, e **teste de consistência** com quem o consome.
+- **O caminho de ida e volta.** O que hoje já materializa a ideia: a
+  proveniência do comando (E8), o `reason` obrigatório da governança e do
+  `skipped`/`deferred`, e o preview determinístico do AutoTiler — onde o
+  usuário vê a regra aplicada e pode discordar antes de publicar.
+- **O que NÃO fazer.** Renomear diretórios, mover módulos ou criar uma camada
+  intermediária "de curadoria". A dependência aponta para dentro; a curadoria é
+  um atributo dos dados, não um andar da arquitetura.
