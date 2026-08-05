@@ -29,17 +29,17 @@ Legenda: ✅ completo · 🔶 parcial · ❌ ausente · — não se aplica.
 | Rigging/FABRIK | ✅ | ✅ | 🔶 (skinning GPU; sem editor) | ❌ | ❌ | **Não entregue** |
 | Timeline/curvas | ✅ | — | 🔶 | ❌ | ❌ | **Não entregue** |
 | Máquina de estados | ✅ | — | ❌ | ❌ | ❌ | **Não entregue** |
-| Níveis IntGrid + auto-tiling | ✅ | ✅ (define/update) | ✅ | 🔶 (canvas + publicar/reabrir; faltam ferramentas e placement) | ❌ | **Em fechamento** (P0.4) |
+| Níveis IntGrid + auto-tiling | ✅ | ✅ (define/update) | ✅ | 🔶 (canvas, pincel/retângulo/linha/conta-gotas, preview de arte, placement de entidade; faltam edição de paleta e placement de câmera/luz) | ❌ | **Em fechamento** (P0.4) |
 | World map | ✅ | ✅ query | ❌ streaming | ❌ | ❌ | **Parcial** |
 | Entidades tipadas | ✅ | ✅ | ✅ spawn table (archetypeId → ator vivo; move ao vivo) | 🔶 placement/drag/remoção no canvas (falta inspector) | ❌ | **Em fechamento** (P0.6) |
 | Pipeline Aseprite/MGCB | ✅ | ✅ MCP | ✅ compilação | ❌ | ❌ | **Parcial** |
 | Câmera cinemática | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
 | Iluminação deferred | ✅ | ✅ | ✅ | ❌ | ❌ | **Sem fluxo visual** |
-| Save/load + criação de projeto | ✅ (Blueprint v2 com `projectId`; sessão temporária, replay e troca atômica testados) | ✅ (`project/create`, `project/openDocument`, `project/close`, `project/status` em JSON-RPC/GraphQL/gRPC/MCP) | ✅ reset antes de reidratar; `runtimeState` explícito | 🔶 (diálogos nativos + escrita `.p7m.json` no `main`; template "Plataforma 2D" ainda não conectado ao botão "Novo") | 🔶 (troca/rollback multi-cliente automatizados; falta jornada visual por usuário) | **Em fechamento** (P0.2) |
+| Save/load + criação de projeto | ✅ (Blueprint v2 com `projectId`; sessão temporária, replay e troca atômica testados) | ✅ (`project/create`, `project/openDocument`, `project/close`, `project/status` em JSON-RPC/GraphQL/gRPC/MCP) | ✅ reset antes de reidratar; `runtimeState` explícito | 🔶 (diálogos nativos, escrita durável com `.bak` e recovery de autosave no `main`, dois templates conectados ao botão "Novo"; falta o menu Recentes nativo) | 🔶 (troca/rollback multi-cliente automatizados; falta jornada visual por usuário) | **Em fechamento** (P0.2) |
 | Supervisão de processos | ✅ (máquina de estados testada) | — | — | 🔶 (wire real + chips de estado + restart; falta caminho empacotado) | ❌ | **Em fechamento** (P0.1↔P0.9) |
 | Preview embutido | 🔶 fundação | ❌ | 🔶 fundação | ❌ | ❌ | **Requisito P0.5** |
 | Undo/redo | ✅ IntGrid apenas | ❌ | — | ❌ | ❌ | **Incompleto** (P0.7) |
-| Diagnósticos (problems) | ✅ razões existem | 🔶 | 🔶 | ❌ | ❌ | **P0.8** |
+| Diagnósticos (problems) | ✅ razões existem | 🔶 | 🔶 | 🔶 (painel com `problem-card`, badge honesto e catálogo pt-BR de causa+ação; falta navegação ao objeto e fix automático) | ❌ | **P0.8** |
 | Empacotamento/instalador | ❌ | — | — | ❌ | ❌ | **P0.9** |
 | Operação por agentes (MCP) | ✅ | ✅ | ✅ | — | 🔶 | **Entregue para agentes** |
 
@@ -136,6 +136,6 @@ mindmap
 
 | Risco | Mitigação atual | Fechamento |
 |---|---|---|
-| Coerência MMF no Windows (WriteFile × view mapeada) | documentado no contrato; e2e roda em Linux | binding nativo de mmap no Electron (OPP-05) |
+| Coerência MMF no Windows (WriteFile × view mapeada) | documentado no contrato; e2e roda em Linux | binding nativo de mmap no Electron (OPP-12) |
 | Shaders sem compilação no CI | referências de CPU testadas + contrato espelhado | job de CI com Wine/mgcb (OPP-09) |
 | Baseline de performance depende do ambiente | harness real versionado + metadados completos | repetir antes de mudar o default ou o PreviewHost (ADR-019) |

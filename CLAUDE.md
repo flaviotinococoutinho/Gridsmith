@@ -5,6 +5,10 @@ Ecossistema EaaS local de 3 processos: **frontend** (Electron/TS), **middleware*
 verdade. Constituição de engenharia: `docs/ARCHITECTURE-SPEC.md`; regras
 executáveis e DoD: `docs/GOVERNANCE.md`; compatibilidade: `docs/COMPATIBILITY.md`.
 
+**Para continuar o desenvolvimento, comece por `docs/DEVELOPMENT-PLAN.md`**:
+invariantes com o teste que as impõe, decisões já tomadas (não redecidir), fila
+viva de pendências por gravidade e receitas executáveis das etapas complexas.
+
 ## Comandos
 
 ```bash

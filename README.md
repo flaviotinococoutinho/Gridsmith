@@ -261,6 +261,7 @@ processo, troca de projeto ou gap do journal exige snapshot e ressincronização
 | [`docs/PRODUCT.md`](docs/PRODUCT.md) | Visão de produto, personas, capacidades entregues e princípios invioláveis |
 | [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) | Requisitos funcionais, não funcionais e técnicos com status e verificação |
 | [`docs/ALPHA-0.1.md`](docs/ALPHA-0.1.md) | Milestone Alpha 0.1, jornada de aceite e backlog P0 (status por evidência) |
+| [`docs/DEVELOPMENT-PLAN.md`](docs/DEVELOPMENT-PLAN.md) | **Guia de continuação (comece por aqui para desenvolver):** invariantes, decisões já tomadas, protocolo operacional, fila viva de pendências por gravidade e receitas executáveis das etapas mais complexas |
 | [`docs/VIABILITY-PLAN.md`](docs/VIABILITY-PLAN.md) | **Diagnóstico verificado de viabilidade e experiência** (experiência, curadoria, padrões, semântica, integridade contextual) e plano em oito frentes do mais complexo ao menos, com a tese da relação interface ↔ MonoGame |
 | [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Matriz de versionamento e compatibilidade (protocolo, documentos, artefatos, perfis, shared memory) |
 | [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) | Governança arquitetural (23 regras executáveis), Definition of Done, quality gates e fontes de verdade |

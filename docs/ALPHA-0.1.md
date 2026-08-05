@@ -189,10 +189,23 @@ O editor começa pelo projeto, não pela conexão a um pipe.
   o `main` só traduz para `showMessageBox`. Cancelar não toca na sessão ativa;
   sem templates anunciados o fluxo cai no projeto em branco (fail-safe).
   `payload.templateId` pula o diálogo (automação/e2e do passo 2)
-- [ ] Recovery pós-crash: o autosave grava `.autosave`, mas a restauração na
-  inicialização (detectar `.autosave` mais novo que o save e oferecer restaurar) não existe
-- [ ] Menu "Recentes" nativo (recentes são rastreados e enviados ao renderer, mas não há
-  submenu nativo) e bloqueio contra duas instâncias no mesmo arquivo
+- [x] Escrita durável do projeto (etapa E1): temporário → `write` → `flush` →
+  `close` → `rename` atômico, cópia `.bak` do estado anterior e criação
+  exclusiva (sem clobber) no "Novo" — nos três pontos de escrita (salvar,
+  salvar como, autosave). `frontend/src/main/project/ProjectFileService.ts` +
+  `NodeProjectFileSystem.ts`
+- [x] Recovery pós-crash (etapa E2): `detectRecovery` compara o mtime do
+  sidecar com o do save e oferece quatro saídas — restaurar / abrir cópia /
+  descartar / cancelar. A DECISÃO é núcleo puro e testado
+  (`frontend/src/core/recoveryPlan.ts`); o `main` só traduz para o diálogo
+  nativo. **Invariante:** o `.autosave` só desaparece por save confirmado ou
+  descarte explícito
+- [x] Segunda instância e abertura por argumento (etapa E3):
+  `app.requestSingleInstanceLock` em `frontend/src/main/appConfig.ts` mata a
+  segunda instância e roteia o `argv` para a janela viva
+  (`ProjectLaunchRouting.projectPathFromArgs` + `focusExistingProjectWindow`)
+- [ ] Menu "Recentes" nativo — os recentes são rastreados e renderizados na
+  tela inicial, mas não há submenu nativo em Arquivo
 
 ```mermaid
 stateDiagram-v2
@@ -232,7 +245,12 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
 - [x] Menu nativo (Arquivo/Editar/Exibir) com atalhos: Ctrl+N/O/S/Shift+S/W
   no main; Ctrl+Z/Shift+Z roteados ao editor ativo via `p7m:menu-action`
 - [ ] Painéis redimensionáveis e layouts salvos
-- [ ] Razões da governança traduzidas (hoje passam do perfil em inglês)
+- [ ] Razões da governança traduzidas. **Atenção:** os perfis JÁ estão em
+  pt-BR (`middleware/src/runtime/profiles/monogame.ts`); o inglês que resta
+  vem das razões GERADAS pelo governor (`ExperienceGovernor.ts` — "capability
+  … absent from …", "no engine connected … (fail-safe: disabled)"), exibidas
+  em tooltip. O fecho é F4: razão como código estável + tradução por par
+  código+parâmetros no `vocabulary.ts`
 
 ### P0.4 — Vertical slice do editor de níveis 🔶
 - [x] Viewport do canvas — `core/canvasViewport.ts`: pan em pixels de tela,
@@ -294,11 +312,17 @@ Histórico no nível do comando canônico com inversos explícitos, agrupamento
 por gesto, coalescing de drag, histórico legível ("Moveu Player de (10,4)
 para (12,4)"), proveniência humano/agente. (Promovido de OPP-05.)
 
-### P0.8 — Diagnósticos como funcionalidade ⬜
+### P0.8 — Diagnósticos como funcionalidade 🔶
 Problems panel consolidando erros/warnings/compatibilidade/pipeline com as
 7 perguntas respondidas (o quê, objeto, por quê, impacto, correção, navegação,
 fix automático) — materializa a explicabilidade que já existe na camada
 canônica (reasons de skipped/deferred, AssetToolError, matriz do governor).
+
+O núcleo saiu com a frente F5: o resultado da projeção viaja no envelope do
+evento até o renderer, o painel mostra `problem-card` por item `skipped`/
+`deferred` com badge honesto, e o `core/errorCatalog.ts` traduz código
+JSON-RPC em causa+ação em pt-BR. **Falta:** navegação ao objeto, fix
+automático e a consolidação de compatibilidade/pipeline no mesmo painel.
 
 ### P0.9 — Empacotamento ⬜
 Electron Builder/Forge: executável por plataforma, bundling coordenado de

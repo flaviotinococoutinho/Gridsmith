@@ -1,4 +1,4 @@
-# Plano de viabilidade e experiência
+| MGT-9 | 🟡 parcial || MGT-4 | 🟢 resolvido || INT-12 | 🟡 parcial || INT-6 | 🟢 resolvido || INT-5 | 🟢 resolvido || SEM-8 | 🟢 resolvido || SEM-7 | 🟡 parcial || SEM-3 | 🟢 resolvido || CUR-12 | 🟡 parcial || CUR-11 | 🟡 parcial || CUR-4 | 🟢 resolvido || CUR-1 | 🟢 resolvido || EXP-12 | 🟢 resolvido || EXP-10 | 🟢 resolvido || EXP-6 | 🟢 resolvido || EXP-5 | 🟢 resolvido || EXP-3 | 🟡 parcial |# Plano de viabilidade e experiência
 
 > **O que é este documento.** Um diagnóstico verificado do que falta para o P7M
 > ser um editor utilizável — nas dimensões experiência, curadoria, padrões,
@@ -118,11 +118,20 @@ do que o editor humano**, e no aplicativo empacotado ninguém as enxerga.
 | Integridade contextual | 12 | 7 / 2 / 3 | sessão ganhou ciclo de vida e identidade; falta durabilidade e trilha da projeção |
 | Relação interface ↔ MonoGame | 12 | 11 / 1 / 0 | não há host gráfico; o fio de volta (runtime → editor) não existe |
 
-**O padrão da reverificação é nítido: o middleware e os contratos avançaram
+**O padrão da reverificação era nítido: o middleware e os contratos avançaram
 muito; o frontend não avançou.** `levelEditorView.ts`, `levelPresets.ts`,
-`experienceGate.ts` e `workbenchModel.ts` têm zero linha de diff no período —
-por isso a experiência do usuário está exatamente onde estava, apesar do
+`experienceGate.ts` e `workbenchModel.ts` tinham zero linha de diff no período
+— por isso a experiência do usuário estava exatamente onde estava, apesar do
 progresso real na camada de baixo.
+
+> **Superado (F5, F8 e Onda 1).** O frontend saiu da inércia: `welcomeView.ts`
+> nasceu, `workbenchModel.ts` ganhou o segundo eixo de gating (projeto aberto,
+> com precedência da razão de governança), `levelEditorView.ts` passou a
+> hidratar de QUALQUER projeto pela projeção (`pickLevel`/`pickEntityDef`) e
+> `renderer.ts` ganhou catálogo de erros e status de projeção no log. Os
+> números da tabela acima são do diagnóstico original e não foram
+> recontados — a fila viva está em
+> [`DEVELOPMENT-PLAN.md`](DEVELOPMENT-PLAN.md) §7.
 
 Distribuição por natureza do gap — a forma do problema:
 
@@ -237,6 +246,13 @@ uma coisa: **a sessão de projeto como unidade transacional com identidade**.
 Isso fechou cinco achados e deixou quatro com a metade do middleware pronta.
 O efeito por frente:
 
+> **Leia esta tabela como registro histórico.** Ela é o retrato do momento da
+> reverificação e NÃO foi reescrita a cada entrega — as frentes F5, F8, F3a e
+> a Onda 1 (E1–E3) mudaram o código depois dela. O correções estão no
+> blockquote logo abaixo da tabela e, com mais detalhe, nos blockquotes de
+> cada frente na §4. **Ordem de confiança: o código > os blockquotes > esta
+> tabela.**
+
 | Frente | Situação | Ajuste de escopo |
 |---|---|---|
 | F1 | **intacta** — nenhum achado mudou | Nenhum dos 5 achados (MGT-1, MGT-5, MGT-12, CUR-2, PAD-7) mudou. Confirmado agora: grep por ': Game' e 'GraphicsDeviceManager' em engine/src (fora de obj/) retorna vazio; engine/src/P7m.Engine.Runtime/P7m.Engine.Runtime.csproj referencia apenas Core e Ipc — o Description do próprio csproj ainda diz 'O host gráfico MonoGame acopla aqui na Fase 3'; grep por tileset\|atlas em middleware/src, frontend/src e contracts/ retorna ZERO. Único ajuste real de escopo: o ciclo de vida da sessão de runtime já existe e o host gráfico nasce dentro dele — contracts/schemas/engine.reset_session.schema.json + a época de sessão validada em MonoGameAdapter.rehydrateFrom definem quando a janela deve zerar e reidratar, o que antes teria de ser inventado junto. A telemetria de volta continua inexistente: EnginePipeServer registra só engine/handshake, engine/ping e engine/log; reset_session é middleware→engine e não abre canal de retorno. |
@@ -247,6 +263,31 @@ O efeito por frente:
 | F6 | **intacta** — nenhum achado mudou | Nenhum achado mudou e um PIOROU. CommandHistory.ts é novo mas explicitamente NÃO fecha o gap — o cabeçalho (linhas 2-6) diz 'Nesta fase ele não implementa undo/redo: é exclusivamente o relógio lógico', e a classe expõe só lastSequence/length/list/append. Undo/redo segue local ao IntGridDocument (levelEditorView.ts:128-133) e todos os dispatches canônicos ficam fora de qualquer histórico. Pintar continua não sujando o documento (lifecycle.commandApplied só dispara em onBlueprintEvent, main.ts:565-572). AGRAVANTE CONFIRMADO: renderer.ts:250 agora chama renderView() dentro do handler de projection-resync, somando-se a :227 e :231 — ou seja, além de trocar de painel e clicar em aba do rodapé, agora um resync remoto também remonta o editor e destrói grid não publicado, pilha de undo, zoom/pan e seleção, sem nenhuma ação do usuário. Ajuste de escopo: acrescentar à frente a remoção desse gatilho e a reconciliação incremental da view; e registrar que o commandSequence de CommandHistory é o pré-requisito já entregue para o undo canônico (a numeração lógica por sessão existe, falta a operação inversa). |
 | F7 | **intacta** — nenhum achado mudou | Nenhum dos achados (PAD-8, PAD-9, PAD-10, CUR-6, CUR-8, CUR-9, INT-10, PAD-6, SEM-6, SEM-9, MGT-8) mudou. Verificado agora: commandShape.ts:9-24 continua com exatamente os mesmos 14 kinds — entitydef/define sem update/remove, entity sem edição de campos, nenhum comando de camada, LUT, FSM, IK ou curva; LevelSpec segue com um único intGrid e um único conjunto de rules, e EntityInstance sem levelId/layerId enquanto o EngineDescriptor declara intgrid-layer/auto-layer/entity-layer; o pipeline de assets continua acessível só por MCP e o app sobe o middleware com '--no-mcp' (main.ts:174). Ajuste de escopo, favorável: o Blueprint v2 provou o trilho de migração de documento — BLUEPRINT_DOCUMENT_VERSION=2, migrateBlueprintDocument() e middleware/test/blueprint-migration.test.ts existem e funcionam. Acrescentar camadas e CRUD simétrico agora é um v3 sobre trilho testado, não uma quebra de formato. Continua a frente mais cara depois de F1 porque cada kind novo arrasta o DoD inteiro de GOVERNANCE.md (validação + COMMAND_KINDS + enum GraphQL + projeção + reidratação + serialização) e agora também o proto. |
 | F8 | **reduzida** — parte nasceu no meio do caminho | Nenhum achado RESOLVIDO, mas o escopo encolheu muito de um lado e continua intacto do outro. Encolheu: toda a cadeia de template está pronta até o processo main — ProjectTemplates.ts (platformer-2d), sessions.createFromTemplate, EditorSurface.listTemplates:310 e newProjectFromTemplate:318, SDL templates:185 e projectCreate(templateId):199, EditorClient.listProjectTemplates/newProjectFromTemplate. Falta literalmente o último elo, e confirmei que ele não existe: grep -in template em frontend/src/main/preload.ts e frontend/src/renderer/*.ts retorna VAZIO, e main.ts:386 é 'await client.createProject()' sem argumento. Igual para recentes: são calculados, persistidos e trafegam no payload, mas grep -rn recents em frontend/src/renderer/ retorna VAZIO. Intacto e ainda caro: o vocabulário divergente (levelEditorView.ts LEVEL_ID='nivel-1' e entityDefId='jogador' vs ProjectTemplates 'level-1'/'player', grid 48x27 vs 16x9, paleta de 3 significados vs SOLID=1) — arquivo com 0 linhas de diff, então um projeto do template AINDA abre com canvas vazio; e o conteúdo de exemplo continua inexistente (nenhum .p7m.json rastreado, nenhum .aseprite na árvore). Reclassificar como 'ligar o template já pronto + alinhar vocabulário', dropando a parte de backend. |
+
+> **Correções à tabela acima (o que mudou depois dela).**
+>
+> - **F2, item (b):** o `.autosave` TEM leitor desde a etapa E2 —
+>   `detectRecovery`/`readAutosave`/`discardAutosave` no `ProjectFileService`
+>   com diálogo de quatro saídas. Seguem válidos os itens **(a)** store só em
+>   memória, **(c)** `new`/`open` sem `requestClose()`, **(d)** reconciliação
+>   descartando o retorno, e a METADE do laço de reescrita do autosave (falta
+>   `lifecycle.autosaved()`).
+> - **F3:** a leitura de "custo subiu" na §5.1 foi refutada pelo próprio
+>   documento mais adiante (§4, F3): as superfícies novas são escopadas à
+>   sessão de projeto e não precisam carregar conceitos. F3a entregou o merge
+>   de limites reais em `constraints` com namespace e a correlação
+>   `lightId`↔slot; resta a rota de `editorConcepts` pelas bordas do app e o
+>   CONSUMO de `constraints` pela UI.
+> - **F5:** os cinco itens do "último fio" foram todos ligados — `log.record`
+>   recebe a projeção, `ProjectStatusPayload` carrega `runtimeState`, os
+>   despachos têm `.catch(showError)` e o `core/errorCatalog.ts` traduz
+>   código em causa+ação pt-BR. Resta o residual descrito no blockquote da
+>   frente (status `failed`, sumário de reidratação por item, fila única).
+> - **F8:** o template está ligado ao botão "Novo" (diálogo de escolha com
+>   decisão pura), os recentes aparecem na tela inicial e o editor hidrata de
+>   QUALQUER projeto via `pickLevel`/`pickEntityDef`. A inversão de
+>   diagnóstico está registrada: era o TEMPLATE que violava a unidade em
+>   pixels, não o editor. Resta o diretório `examples/` versionado.
 
 ### F1 — Host gráfico MonoGame acoplável + contrato de conteúdo visual (tileset/atlas) + telemetria de frame
 
@@ -598,7 +639,7 @@ Após a reverificação, a ordem **por complexidade** mudou nas duas pontas:
 |---|---|---|
 | 1 | **F1** host gráfico + tileset/atlas + telemetria | inalterada no topo — única frente que atravessa os três processos e cria um conceito canônico inexistente em qualquer camada |
 | 2 | **F7** modelo canônico editável completo | mantém — cada kind novo arrasta o DoD inteiro; ficou um pouco mais barata porque o Blueprint v2 provou o trilho de migração |
-| 3 | **F3** manifesto vivo atravessa as bordas | custo **subiu**: as bordas foram reescritas em peso sem levar `editorConcepts` junto, então há mais superfície para manter em paridade |
+| 3 | **F3** manifesto vivo atravessa as bordas | custo **estável** (a leitura de "custo subiu" foi refutada na §4, F3: as superfícies novas são escopadas à sessão de projeto e não precisam carregar conceitos). F3a saiu: limites reais em `constraints` com namespace + correlação `lightId`↔slot; falta a rota de `editorConcepts` e o consumo pela UI |
 | 4 | **F4** superfícies geradas pelo manifesto | sem alteração; segue bloqueada por F3 |
 | 5 | **F6** estado que sobrevive + undo/redo canônico | sem alteração, com agravante novo (mais um gatilho de remontagem destrutiva) |
 | 6 | **F8** primeira sessão curada | **desceu** — o backend do template ficou pronto até o `EditorClient`; sobra o último elo de UI |
@@ -806,6 +847,30 @@ Estado: 🔴 aberto · 🟡 parcial (uma camada resolvida, outra não) · 🟢 r
 | MGT-11 | 🔴 aberto | **PANEL_REQUIREMENTS é uma lista hardcoded no frontend que diverge dos painéis que a engine publica**<br/>*(incoerente)* | `frontend/src/core/experienceGate.ts:31-38` `frontend/src/core/workbenchModel.ts:56-68` `experienceGate.ts:84-88` `engine/src/P7m.Engine.Runtime/EngineDescriptor.cs:52` | A promessa arquitetural do repositório — "a UI materializa painéis a partir do manifesto em vez de hardcodar o que a engine sabe fazer" (comentário em CapabilityRegistry.ts:6-9) — está invertida na prática: a UI hardcoda uma lista que nem i… | baixa |
 | MGT-12 | 🔴 aberto | **O canal engine→editor só transporta ping e log; não há telemetria de runtime para nenhum overlay ou inspetor**<br/>*(inexistente)* | `middleware/src/ipc/EnginePipeServer.ts` `middleware/src/index.ts:199-201` `middleware/src/runtime/profiles/monogame.ts:59,87` | Nada do que acontece dentro da engine é observável no editor: posição viva dos atores, posição da câmera após o spring-damper, frame pacing, custo de luzes. | alta |
 
+### 6.1. Reconciliação do catálogo com o código entregue
+
+As linhas abaixo mudaram de estado depois do diagnóstico. A descrição do gap
+em cada linha continua sendo o texto ORIGINAL (é o registro do que se
+observou); esta tabela é a evidência de por que o estado mudou. As descrições
+não foram reescritas de propósito: reescrevê-las apagaria o histórico do
+diagnóstico e tornaria impossível auditar o que foi de fato fechado.
+
+| Achado | Novo estado | Evidência do fechamento | O que ainda resta |
+|---|---|---|---|
+| EXP-3 | 🟡 parcial | `pickLevel(result.levels)` escolhe o nível existente da projeção e o canvas adota `levelId`/dimensões/`intGrid` dele; `pickEntityDef` idem | `nivel-1`/`jogador` sobrevivem só como default de projeto VAZIO |
+| EXP-5 | 🟢 resolvido | os despachos de projeto tratam rejeição com `.catch(showError)`; `showError` passa por `presentError` do `core/errorCatalog.ts` | — |
+| EXP-6, SEM-3, INT-6, MGT-4 | 🟢 resolvido | `onBlueprintEvent` entrega `(event, projection)` e `log.record` recebe `narrowProjection(projection)`; a aba filtra `skipped`/`deferred` e o badge usa `problemCount` real (frente F5) | navegação ao objeto e fix automático seguem em F4/P0.8 |
+| EXP-10, CUR-1 | 🟢 resolvido | `projectCommand("new")` busca `availableTemplates()`, monta o prompt, resolve com `resolveNewProjectChoice` (núcleo puro) e chama `createProject(templateId)` | — |
+| EXP-12 | 🟢 resolvido | tela inicial real (`describeWelcome` + `welcomeView.ts`) com recentes renderizados; `workbenchModel` desabilita painéis quando não há projeto, com precedência da razão de governança | — |
+| CUR-4 | 🟢 resolvido | a metade que restava (erro engolido) foi fechada junto com EXP-5 | — |
+| CUR-11 | 🟡 parcial | dois templates canônicos registrados (`platformer-2d`, `top-down-2d`) | regras/paleta seguem não editáveis (F7/E9) |
+| CUR-12 | 🟡 parcial | `core/errorCatalog.ts` traduz código JSON-RPC em causa+ação pt-BR nas bordas do renderer | razões GERADAS pelo governor ainda saem em inglês (F4) |
+| SEM-7, MGT-9 (metade "limites") | 🟡 parcial | `ExperienceGovernor` mescla `spec.limits` em `constraints` com namespace por subsistema (`lighting.maxLights`…), com precedência do perfil (F3a) | nenhuma view do editor CONSOME `constraints` — a UI ainda não antecipa teto |
+| SEM-8 | 🟢 resolvido | o slot deixou de morrer no mapa privado do adapter: a projeção publica `detail: { lightId, engineLightId }` para correlação (F3a) | — |
+| INT-5 | 🟢 resolvido | mesmo `pickLevel` de EXP-3: abrir projeto com qualquer `levelId` hidrata o canvas | — |
+| INT-12 | 🟡 parcial | a metade da restauração caducou com a etapa E2 (`detectRecovery`/`readAutosave`/`discardAutosave` + diálogo de 4 saídas) | o LAÇO segue vivo: não existe `lifecycle.autosaved()`, então o `autosaveTick` fica devido para sempre após o intervalo |
+| MGT-10 | 🟡 parcial | `ProjectStatusPayload` passou a incluir `runtimeState` e o renderer o exibe na barra de status | o "resta" verdadeiro virou o residual de F5: status `failed` e sumário de reidratação por item |
+
 ## 8. Integração do PR de lifecycle/workbench/assets: fatiamento em etapas
 
 O PR aberto que consolida lifecycle, histórico, workbench e pipeline de assets
@@ -979,6 +1044,11 @@ atacada.
 
 ## 7. Como este plano se relaciona com o resto da documentação
 
+- [`DEVELOPMENT-PLAN.md`](DEVELOPMENT-PLAN.md) é o **guia de continuação**: este
+  documento é o diagnóstico com evidência (por que cada gap existe); aquele é o
+  estado atual, a fila viva de pendências por gravidade e as receitas
+  executáveis. Quem vai codar começa por lá e volta aqui para entender o
+  porquê.
 - [`ALPHA-0.1.md`](ALPHA-0.1.md) descreve a milestone e a jornada de aceite; este
   plano explica **por que** a jornada ainda não fecha e em que ordem atacar.
 - [`REQUIREMENTS.md`](REQUIREMENTS.md) mede cada funcionalidade em cinco
