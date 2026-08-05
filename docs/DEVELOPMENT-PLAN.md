@@ -203,9 +203,9 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 
 | # | Pendência | Evidência | Onde no plano |
 |---|---|---|---|
-| T1 | E4 pendente: lint de contratos no `docs:verify` (sintaxe/refs/`required` dos schemas + paridade `COMMAND_KINDS` ≡ enum do SDL) | o verificador só checa que arquivos referenciados existem | E4 (receita §9.1) |
-| T2 | F3b: os comandos canônicos não têm schema em `contracts/`; projeções consultáveis viajam como string livre | `contracts/schemas/` só descreve métodos middleware→engine | F3b, junto de E4 |
-| T3 | `GOVERNANCE.md` declara schemas como fonte de verdade dos comandos, e eles não existem | mesma evidência de T2 | E4/F3b (corrigir o texto OU criar os schemas) |
+| ~~T1~~ | ✅ **Entregue (E4).** Lint de contratos no `docs:verify`: sintaxe, `$ref` pendurado e `required` órfão em todo `contracts/schemas/*.json`, mais paridade do conjunto de kinds entre `COMMAND_KINDS`, o enum do SDL e os `$defs` do schema de comandos | — | — |
+| ~~T2~~ (parte) | ✅ **Entregue (E4).** Os comandos canônicos ganharam schema em `contracts/schemas/blueprint.commands.schema.json`. **Resta** de F3b: projeções consultáveis ainda viajam como string livre, sem enum | as consultas de projeção não têm enum no SDL nem no proto | F3b |
+| ~~T3~~ | ✅ **Entregue (E4).** A contradição fechou pela criação dos schemas, não pela edição do texto | — | — |
 | T4 | F2 residual: laço de reescrita do autosave (não existe `lifecycle.autosaved()`) | o tick compara com o instante do último save explícito, que o autosave não atualiza | F2 residual |
 | T5 | F8/F2 borda: a reconciliação de status ignora o retorno de `requestClose()` e fecha o projeto em silêncio | chamada bare, descartando a decisão | F2 residual |
 | T6 | F4: `featureLabel` exportado e sem consumidor | só a definição aparece na busca | F4 |
@@ -246,9 +246,12 @@ flowchart TD
 
 *Mostra as duas trilhas do plano: a cadeia de domínio E4→E10 com a cauda, e a trilha ortogonal do host gráfico F1 que desemboca no empacotamento.*
 
-**Próximo passo natural: E4.** É pequena, não depende de ninguém e é a rede que
-torna todas as etapas de domínio revisáveis — sem ela, cada kind novo pode
-entrar pela metade sem que o CI perceba.
+**E4 entregue.** A rede está no lugar: cada kind novo agora precisa do schema e
+do membro do enum, ou o CI quebra com o nome do kind órfão.
+
+**Próximo passo natural: E7 ou E8** (ambas destravadas pela E4, e independentes
+entre si). E7 é a menor das duas e precisa vir antes da E9 de qualquer forma.
+Em paralelo, E5 também está liberada — e F1 nunca esteve bloqueada.
 
 ## 9. Receitas executáveis
 
@@ -257,6 +260,15 @@ critério de aceite. As armadilhas não são decoração — várias vieram de e
 reais cometidos durante as extrações da Onda 1.
 
 ### 9.1. Receita E4 — lint de contratos no `docs:verify`
+
+> ✅ **Etapa entregue.** A receita fica como registro do que foi feito e do
+> porquê. O que mudou em relação ao plano original: os schemas dos comandos
+> vivem em **um** arquivo com `$defs` por kind (mais a chave `shared` para os
+> fragmentos reutilizados, que o lint de paridade ignora por ser fragmento e
+> não kind), e o lint valida `$ref` e `required` em **todos** os schemas de
+> `contracts/`, não só nos de comando. As quatro modalidades de falha foram
+> verificadas manualmente quebrando o repositório de propósito e restaurando —
+> um lint que nunca falhou não é um lint.
 
 **Objetivo.** Que seja impossível acrescentar um comando canônico pela metade:
 o CI passa a exigir que `COMMAND_KINDS`, o enum `CommandKind` do SDL e os

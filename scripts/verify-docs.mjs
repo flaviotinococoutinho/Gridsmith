@@ -8,6 +8,11 @@
  *    verify-transports.sh, docs/COMPATIBILITY.md, ADRs e os contratos
  *    GraphQL/gRPC do app);
  *  - referências a schemas `contracts/schemas/*.json` existem;
+ *  - os JSON Schemas de `contracts/` são sintaticamente válidos, sem `$ref`
+ *    pendurado e sem `required` citando propriedade não declarada;
+ *  - o conjunto de comandos canônicos é IDÊNTICO nas três fontes
+ *    declarativas: `COMMAND_KINDS`, o enum `CommandKind` do SDL e os `$defs`
+ *    de `contracts/schemas/blueprint.commands.schema.json`;
  *  - NÃO há referências transitórias a branches/sessões de geração;
  *  - todo comando `npm run <x>` documentado existe em algum package.json;
  *  - o workflow de CI executa os gates de transports e de documentação;
@@ -51,6 +56,7 @@ const REQUIRED = [
   "contracts/shared-memory-layout.md",
   "contracts/schemas/error-codes.md",
   "contracts/schemas/engine.reset_session.schema.json",
+  "contracts/schemas/blueprint.commands.schema.json",
   "contracts/graphql/editor.schema.graphql",
   "contracts/grpc/p7m_editor.proto",
   ".github/workflows/ci.yml",
@@ -158,6 +164,170 @@ if (fs.existsSync(ciPath)) {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Lint de contratos (etapa E4 do docs/DEVELOPMENT-PLAN.md)
+//
+// Um comando canônico só existe de verdade quando TODAS as pernas do DoD estão
+// no lugar. Duas delas são declarativas e podem ser conferidas sem executar
+// nada: o schema do payload em contracts/schemas/ e o membro do enum no SDL.
+// Antes disto, acrescentar um kind e esquecer o enum passava no CI em silêncio
+// — e o buraco só aparecia no cliente, em runtime.
+//
+// Os três conjuntos são lidos como TEXTO. O script roda na raiz e não pode
+// depender do build do middleware: importar do dist/ o tornaria refém da ordem
+// dos gates do CI.
+// ---------------------------------------------------------------------------
+
+/** Valida sintaxe, refs locais e coerência required ⊆ properties. */
+function lintJsonSchemas() {
+  const dir = path.join(root, "contracts", "schemas");
+  if (!fs.existsSync(dir)) return;
+
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith(".json")) continue;
+    const rel = `contracts/schemas/${name}`;
+    let doc;
+    try {
+      doc = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
+    } catch (error) {
+      errors.push(`${rel}: JSON inválido -> ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+
+    // Percorre o documento inteiro: as regras valem em qualquer profundidade,
+    // porque os schemas do projeto aninham params/result/payload em $defs.
+    const visit = (node, pointer) => {
+      if (Array.isArray(node)) {
+        node.forEach((item, index) => visit(item, `${pointer}/${index}`));
+        return;
+      }
+      if (node === null || typeof node !== "object") return;
+
+      const ref = node["$ref"];
+      if (typeof ref === "string" && ref.startsWith("#")) {
+        if (resolveJsonPointer(doc, ref.slice(1)) === undefined) {
+          errors.push(`${rel}: $ref pendurado em ${pointer || "/"} -> ${ref}`);
+        }
+      }
+
+      // `required` sem a propriedade declarada é sempre um erro de digitação:
+      // o campo passa a ser exigido e impossível de satisfazer.
+      if (Array.isArray(node["required"]) && node["properties"] && node["additionalProperties"] !== true) {
+        for (const key of node["required"]) {
+          if (!Object.prototype.hasOwnProperty.call(node["properties"], key)) {
+            errors.push(`${rel}: "required" cita propriedade não declarada em ${pointer || "/"} -> ${key}`);
+          }
+        }
+      }
+
+      for (const [key, value] of Object.entries(node)) {
+        visit(value, `${pointer}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`);
+      }
+    };
+    visit(doc, "");
+  }
+}
+
+function resolveJsonPointer(doc, pointer) {
+  if (pointer === "" || pointer === "/") return doc;
+  let node = doc;
+  for (const rawSegment of pointer.replace(/^\//, "").split("/")) {
+    const segment = rawSegment.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (node === null || typeof node !== "object") return undefined;
+    node = node[segment];
+    if (node === undefined) return undefined;
+  }
+  return node;
+}
+
+/**
+ * Paridade do conjunto de kinds entre as três fontes declarativas.
+ *
+ * A convenção do enum GraphQL é o kind com `/` trocado por `_` (nomes de
+ * membro de enum não aceitam barra). Um kind que não a siga é reportado
+ * explicitamente em vez de aceito em silêncio.
+ */
+function lintCommandKindParity() {
+  const shapePath = path.join(root, "middleware/src/canonical/commandShape.ts");
+  const sdlPath = path.join(root, "contracts/graphql/editor.schema.graphql");
+  const schemaPath = path.join(root, "contracts/schemas/blueprint.commands.schema.json");
+  for (const [label, target] of [
+    ["middleware/src/canonical/commandShape.ts", shapePath],
+    ["contracts/graphql/editor.schema.graphql", sdlPath],
+    ["contracts/schemas/blueprint.commands.schema.json", schemaPath],
+  ]) {
+    if (!fs.existsSync(target)) {
+      errors.push(`lint de contratos: fonte de kinds ausente -> ${label}`);
+      return;
+    }
+  }
+
+  const shapeSource = fs.readFileSync(shapePath, "utf8");
+  const kindsBlock = shapeSource.match(/export const COMMAND_KINDS = \[([\s\S]*?)\] as const/);
+  if (!kindsBlock) {
+    errors.push("lint de contratos: COMMAND_KINDS não encontrado em middleware/src/canonical/commandShape.ts");
+    return;
+  }
+  const codeKinds = new Set([...kindsBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+
+  const sdlSource = fs.readFileSync(sdlPath, "utf8");
+  const enumBlock = sdlSource.match(/enum CommandKind \{([\s\S]*?)\}/);
+  if (!enumBlock) {
+    errors.push("lint de contratos: enum CommandKind não encontrado em contracts/graphql/editor.schema.graphql");
+    return;
+  }
+  const enumMembers = new Set(
+    enumBlock[1]
+      .split("\n")
+      .map((line) => line.replace(/#.*$/, "").trim())
+      .filter((line) => line.length > 0),
+  );
+
+  let schemaDoc;
+  try {
+    schemaDoc = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
+  } catch {
+    return; // o lint de sintaxe acima já reportou
+  }
+  // `shared` hospeda fragmentos reutilizados, não é um kind.
+  const schemaKinds = new Set(Object.keys(schemaDoc["$defs"] ?? {}).filter((key) => key !== "shared"));
+
+  const enumNameOf = (kind) => kind.replace(/\//g, "_");
+  const difference = (a, b) => [...a].filter((item) => !b.has(item)).sort();
+
+  for (const kind of difference(codeKinds, schemaKinds)) {
+    errors.push(`lint de contratos: kind "${kind}" em COMMAND_KINDS sem entrada em contracts/schemas/blueprint.commands.schema.json`);
+  }
+  for (const kind of difference(schemaKinds, codeKinds)) {
+    errors.push(`lint de contratos: kind "${kind}" no schema de comandos sem entrada em COMMAND_KINDS`);
+  }
+
+  const expectedEnum = new Set([...codeKinds].map(enumNameOf));
+  for (const member of difference(expectedEnum, enumMembers)) {
+    errors.push(`lint de contratos: kind sem membro no enum CommandKind do SDL -> ${member}`);
+  }
+  for (const member of difference(enumMembers, expectedEnum)) {
+    errors.push(`lint de contratos: membro do enum CommandKind do SDL sem kind correspondente -> ${member}`);
+  }
+
+  for (const kind of codeKinds) {
+    if (!/^[a-z0-9]+\/[a-z0-9_]+$/.test(kind)) {
+      errors.push(`lint de contratos: kind fora da convenção "dominio/verbo" -> ${kind}`);
+    }
+  }
+
+  // Um $def de kind sem payload descreve nada: o lint existiria só para
+  // conferir a existência da chave, e a chave vazia passaria.
+  for (const kind of schemaKinds) {
+    if (!schemaDoc["$defs"][kind] || typeof schemaDoc["$defs"][kind]["payload"] !== "object") {
+      errors.push(`lint de contratos: kind "${kind}" sem "payload" no schema de comandos`);
+    }
+  }
+}
+
+lintJsonSchemas();
+lintCommandKindParity();
 
 // O baseline versionado é uma evidência executável, não uma tabela copiada à
 // mão: exige a matriz 3 transports × 2 payloads × 4 operações, percentis

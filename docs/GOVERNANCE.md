@@ -211,7 +211,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 |---|---|
 | **Método JSON-RPC novo** | Schema em `contracts/schemas/` + handler + teste RPC + linha na tabela do `contracts/README.md` |
 | **Operação de sessão de projeto** | Paridade JSON-RPC/GraphQL/gRPC/MCP; `expectedProjectSessionId` em create/open/close para compare-and-swap; status com `runtimeState: synchronized\|deferred\|failed`; teste de rollback sem evento parcial |
-| **Comando canônico novo** | Validação no `BlueprintStore` + `COMMAND_KINDS` + projeção no(s) adapter(s) (ou skip com razão) + reidratação + serialização (`BlueprintSerializer`) + broadcast — R8 pega o esquecimento da borda |
+| **Comando canônico novo** | Validação no `BlueprintStore` + `COMMAND_KINDS` + `$def` com `payload` em `contracts/schemas/blueprint.commands.schema.json` + membro no enum `CommandKind` do SDL (mesmo nome com `/` → `_`) + projeção no(s) adapter(s) (ou skip com razão) + reidratação + serialização (`BlueprintSerializer`) + broadcast — R8 pega o esquecimento da borda e o **lint de contratos** do `npm run docs:verify` pega o esquecimento do schema ou do enum |
 | **Subsistema de engine novo** | Manifesto (`engine/describe`) com limites reais + editor hints; perfil de runtime atualizado se governa recurso de UI |
 | **Perfil de runtime** | Nova VERSÃO (imutabilidade) + regras com `reason` legível |
 | **Shader** | Referência de CPU espelhada + teste; comentário de contrato nos dois arquivos |
@@ -267,7 +267,7 @@ documento derivado é corrigido (nunca o contrário).
 | Quantidade de testes | execução das suítes / CI (**nunca** fixada em prosa) |
 | Regras arquiteturais | testes arquiteturais (`*/test/architecture.test.ts`, `.../ArchitectureTests.cs`) |
 | Métodos JSON-RPC | `contracts/schemas/*.json` + handlers (`EngineService`, `EditorGateway`) |
-| Comandos canônicos | tipos (`BlueprintCommand`), registry (`commandShape.COMMAND_KINDS`) e schemas |
+| Comandos canônicos | tipos (`BlueprintCommand`), registry (`commandShape.COMMAND_KINDS`) e `contracts/schemas/blueprint.commands.schema.json` — as três fontes, mais o enum `CommandKind` do SDL, são mantidas idênticas pelo lint de contratos do `npm run docs:verify` |
 | Compatibilidade / versionamento | [`COMPATIBILITY.md`](COMPATIBILITY.md) |
 | Requisitos (funcionais/não funcionais/técnicos) | [`REQUIREMENTS.md`](REQUIREMENTS.md) |
 | Constituição arquitetural (regras normativas) | [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md) |
