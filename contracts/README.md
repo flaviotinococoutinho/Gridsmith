@@ -69,8 +69,14 @@ graph LR
 
 | Contrato | Esquema |
 |---|---|
+| Payload dos comandos canônicos (o que as bordas recebem) | [`schemas/blueprint.commands.schema.json`](schemas/blueprint.commands.schema.json) |
 | Envelope de artefato versionável | [`schemas/artifact.envelope.schema.json`](schemas/artifact.envelope.schema.json) |
 | Perfil versionado de runtime | [`schemas/runtime.profile.schema.json`](schemas/runtime.profile.schema.json) |
+
+O schema de comandos é uma das **três fontes declarativas** do conjunto de
+kinds, junto de `COMMAND_KINDS` (middleware) e do enum `CommandKind` do SDL.
+O lint de contratos do `npm run docs:verify` exige que as três cubram
+exatamente o mesmo conjunto — acrescentar um comando pela metade quebra o CI.
 
 O desenho completo (comandos, eventos, hooks, filters, pipelines, adapters e
 governança da experiência) está em [`../docs/CANONICAL-MODEL.md`](../docs/CANONICAL-MODEL.md).
