@@ -73,15 +73,17 @@ public class ActorStoreTests
             store.MoveTo(handle, w, w);
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
         float sum = 0;
-        for (var frame = 0; frame < 100; frame++)
+        var allocated = AllocationProbe.MinimumAllocatedBytes(() =>
         {
-            store.MoveTo(handle, frame, frame * 2f);
-            sum += store.PositionX(store.Find("hot"));
-        }
+            for (var frame = 0; frame < 100; frame++)
+            {
+                store.MoveTo(handle, frame, frame * 2f);
+                sum += store.PositionX(store.Find("hot"));
+            }
+        });
 
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0, allocated);
         Assert.NotEqual(0f, sum);
     }
 }

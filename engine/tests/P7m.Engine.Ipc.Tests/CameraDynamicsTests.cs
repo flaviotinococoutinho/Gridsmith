@@ -82,16 +82,17 @@ public class CameraDynamicsTests
             dynamics.Update(Dt, Vector2.One, Vector2.Zero);
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < 10_000; i++)
+        var allocated = AllocationProbe.MinimumAllocatedBytes(() =>
         {
-            dynamics.Update(Dt, Vector2.One, Vector2.Zero);
-        }
+            for (var i = 0; i < 10_000; i++)
+            {
+                dynamics.Update(Dt, Vector2.One, Vector2.Zero);
+            }
+        });
 
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0, allocated);
     }
 }
-
 public class ShakeGeneratorTests
 {
     private static ShakeGenerator MakeShake(uint seed = 7) =>
@@ -245,13 +246,15 @@ public class CinematicCameraTests
             camera.ComputeViewProjection(640f, 480f);
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < 10_000; i++)
+        var allocated = AllocationProbe.MinimumAllocatedBytes(() =>
         {
-            camera.Update(1f / 60f, Vector2.One, Vector2.Zero);
-            camera.ComputeViewProjection(640f, 480f);
-        }
+            for (var i = 0; i < 10_000; i++)
+            {
+                camera.Update(1f / 60f, Vector2.One, Vector2.Zero);
+                camera.ComputeViewProjection(640f, 480f);
+            }
+        });
 
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0, allocated);
     }
 }

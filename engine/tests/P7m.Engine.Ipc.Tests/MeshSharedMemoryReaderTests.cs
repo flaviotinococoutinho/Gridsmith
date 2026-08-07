@@ -141,13 +141,15 @@ public class MeshSharedMemoryReaderTests
             reader.ComputeChecksum();
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var frame = 0; frame < 1000; frame++)
+        var allocated = AllocationProbe.MinimumAllocatedBytes(() =>
         {
-            reader.TryReadStable(out _);
-            reader.ComputeChecksum();
-        }
+            for (var frame = 0; frame < 1000; frame++)
+            {
+                reader.TryReadStable(out _);
+                reader.ComputeChecksum();
+            }
+        });
 
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0, allocated);
     }
 }

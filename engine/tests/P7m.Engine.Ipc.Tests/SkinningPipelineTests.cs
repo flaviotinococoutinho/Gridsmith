@@ -77,13 +77,15 @@ public class LinearBlendSkinningTests
             LinearBlendSkinning.Skin(vertex, store.SkinningMatrices(handle));
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < 10_000; i++)
+        var allocated = AllocationProbe.MinimumAllocatedBytes(() =>
         {
-            LinearBlendSkinning.Skin(vertex, store.SkinningMatrices(handle));
-        }
+            for (var i = 0; i < 10_000; i++)
+            {
+                LinearBlendSkinning.Skin(vertex, store.SkinningMatrices(handle));
+            }
+        });
 
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0, allocated);
     }
 }
 

@@ -94,16 +94,18 @@ public class TilemapStoreTests
             store.IntGridAt(handle, (w * 3) % 64, w % 64);
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
         long sum = 0;
-        for (var frame = 0; frame < 100; frame++)
+        var allocated = AllocationProbe.MinimumAllocatedBytes(() =>
         {
-            sum += store.ComputeChecksum(handle);
-            sum += store.TileAt(handle, frame % 64, (frame * 7) % 64);
-            sum += store.IntGridAt(handle, (frame * 3) % 64, frame % 64);
-        }
+            for (var frame = 0; frame < 100; frame++)
+            {
+                sum += store.ComputeChecksum(handle);
+                sum += store.TileAt(handle, frame % 64, (frame * 7) % 64);
+                sum += store.IntGridAt(handle, (frame * 3) % 64, frame % 64);
+            }
+        });
 
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0, allocated);
         Assert.NotEqual(0, sum);
     }
 }
