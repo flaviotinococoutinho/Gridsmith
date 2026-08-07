@@ -170,13 +170,15 @@ public class LightStoreTests
             store.Accumulate(Vector2.Zero, new Vector3(0f, 0f, 1f));
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var frame = 0; frame < 1000; frame++)
+        var allocated = AllocationProbe.MinimumAllocatedBytes(() =>
         {
-            store.Accumulate(new Vector2(frame % 100, 0f), new Vector3(0f, 0f, 1f));
-        }
+            for (var frame = 0; frame < 1000; frame++)
+            {
+                store.Accumulate(new Vector2(frame % 100, 0f), new Vector3(0f, 0f, 1f));
+            }
+        });
 
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0, allocated);
     }
 }
 

@@ -93,13 +93,14 @@ public class SkeletonStoreTests
             store.ComputeWorldPoses(handle);
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var frame = 0; frame < 1000; frame++)
+        var allocated = AllocationProbe.MinimumAllocatedBytes(() =>
         {
-            store.ComputeWorldPoses(handle);
-        }
+            for (var frame = 0; frame < 1000; frame++)
+            {
+                store.ComputeWorldPoses(handle);
+            }
+        });
 
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Assert.Equal(0, allocated);
     }
 }

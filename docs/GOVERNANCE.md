@@ -107,26 +107,43 @@ graph TD
 
 | Regra | Imposição |
 |---|---|
-| **Zero-GC nos hot loops** (nenhuma alocação em `ComputeWorldPoses`, `TryReadStable`, câmera, luzes, skinning, tilemap) | testes `*_is_allocation_free` (`GC.GetAllocatedBytesForCurrentThread`) — exigem **tiered compilation desligada** no projeto de teste, ver nota abaixo |
+| **Zero-GC nos hot loops** (nenhuma alocação em `ComputeWorldPoses`, `TryReadStable`, câmera, luzes, skinning, tilemap) | testes `*_is_allocation_free` medindo por `AllocationProbe` — ver a nota sobre a medição abaixo da tabela |
 | **Determinismo por seed** (AutoTiler, shake, simulação de câmera) | testes de igualdade bit a bit com mesmo seed |
 | **Contratos binários nunca divergem** (struct C# ↔ escritor Node) | offsets por reflexão + checksum FNV-1a cruzado nos e2e |
 | **Shaders ≡ referências de CPU** | `Lighting2D`/`ColorLut`/`LinearBlendSkinning`/`BonePacker` testados; e2e valida por reimplementação TS independente |
 | **Toda mutação passa pelo orquestrador** (filters → AST → actions → projeção) | R7 + testes do gateway/adapter; `EngineBridge` é diagnóstico |
-
-> **Por que a suíte da engine roda com tiered compilation desligada.** Os testes
-> `*_is_allocation_free` exigem **zero** byte alocado. Com tiered compilation, o
-> runtime pode promover um método a tier1 **dentro da janela de medição**, e a
-> alocação dessa recompilação entra na conta — o teste falha sem que o código de
-> produção tenha alocado nada. Isso já ocorreu no CI com dois testes distintos,
-> em commits que não tocavam a engine. O aquecimento explícito de cada teste não
-> resolve sozinho: em runner lento a promoção acontece depois dele. Por isso
-> `P7m.Engine.Ipc.Tests.csproj` fixa `<TieredCompilation>false</TieredCompilation>`.
-> Isso **não afrouxa a garantia** — o assert continua exigindo zero; apenas
-> remove o artefato de medição. Não reverter sem substituir por outro mecanismo
-> determinístico.
 | **Troca de projeto é atômica e compartilhada por todas as bordas** | R13 + testes de `ProjectSessionManager`, gateways e dois clientes |
 | **Perfis publicados são imutáveis** | `RuntimeProfileRegistry.register` rejeita re-registro (testado) |
 | **Fail-safe de experiência** (sem prova de suporte → recurso desabilitado com razão) | testes do `ExperienceGovernor`/`ExperienceGate` |
+
+> **Como a garantia Zero-GC é medida — e por que a asserção nunca foi
+> afrouxada.** Os testes `*_is_allocation_free` exigem **zero** byte alocado.
+> `GC.GetAllocatedBytesForCurrentThread` é por thread, mas o xUnit roda
+> coleções em paralelo: quando outra coleção dispara um GC, o contexto de
+> alocação da thread que mede é reajustado no meio da janela e o resto do
+> quantum entra no delta. Isso produziu falhas esporádicas no CI em commits
+> que **não tocavam a engine**.
+>
+> Duas defesas, uma insuficiente e outra decisiva:
+>
+> 1. `P7m.Engine.Ipc.Tests.csproj` fixa
+>    `<TieredCompilation>false</TieredCompilation>`, para que a promoção de um
+>    método a tier1 não aconteça dentro da janela. **Necessário, mas não
+>    suficiente** — o flake voltou com a tiered compilation já desligada.
+> 2. `AllocationProbe.MinimumAllocatedBytes` mede a mesma janela algumas vezes
+>    e toma o **menor** delta, encerrando na primeira rodada limpa.
+>
+> A troca é de ESTIMADOR, não de critério: o assert continua exigindo zero.
+> Uma regressão real aloca em toda iteração, então o mínimo continua acusando
+> (medido: uma alocação por chamada num laço de dez mil iterações produz
+> centenas de milhares de bytes em todas as rodadas). Um artefato é
+> esporádico e some no mínimo. A hipótese foi confirmada por experimento: os
+> testes isolados nunca falham; a suíte paralela sob carga falha; a mesma
+> suíte sob a mesma carga, com o paralelismo do xUnit desligado, não falha.
+> Serializar a suíte inteira resolveria também, e foi descartado por cobrar o
+> tempo de CI de toda a engine para consertar oito testes.
+>
+> Não reverter nenhuma das duas defesas sem substituto determinístico.
 
 Vista de conjunto: as fitness functions se dividem em estruturais e
 semânticas, todas convergindo nos quality gates e na suíte completa (contagem calculada no CI):

@@ -49,7 +49,7 @@ algo violando uma destas linhas está errando, não melhorando.
 | `BlueprintStore` só importa validadores puros: a guarda estática de células é deliberada, e o limite REAL da engine chega à UI por `constraints`, não por import | R3; a norma é **mover a dependência, não relaxar a regra** |
 | Contratos vivem em `contracts/` e as cópias em `dist/` devem ser byte-idênticas (rode `npm run build` no middleware após editar SDL/proto) | teste de paridade em `middleware/test/transport-gateways.test.ts` |
 | Posição no mundo é em **pixels** (célula → pixel pelo centro da célula); o middleware repassa cru e a engine consome cru | `contracts/schemas/actors.methods.schema.json` + teste de unidade em `middleware/test/project-templates.test.ts` |
-| Zero-GC nos hot loops da engine (0 bytes por frame), medido com tiered compilation **desligada** no projeto de teste — não reverter sem substituto determinístico | testes `*_is_allocation_free` + nota em [`GOVERNANCE.md`](GOVERNANCE.md) |
+| Zero-GC nos hot loops da engine (0 bytes por frame), medido com tiered compilation **desligada** e pelo estimador melhor-de-N do `AllocationProbe` — nenhuma das duas defesas se reverte sem substituto determinístico | testes `*_is_allocation_free` + nota em [`GOVERNANCE.md`](GOVERNANCE.md) |
 | O sidecar `.autosave` só é removido após save confirmado ou descarte explícito do usuário | `frontend/test/recovery-plan.test.ts` |
 | Um bump de `BLUEPRINT_DOCUMENT_VERSION` por PR, sempre com migração encadeada e fixtures; documento editado à mão **nunca** é convertido às cegas | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.4 + `middleware/test/blueprint-migration.test.ts` |
 | Falha de DOMÍNIO nunca troca o transporte; o fallback gRPC→GraphQL é só para falha DE TRANSPORTE, com eventos contínuos por `seq` | `frontend/test/transport-router.test.ts` |
@@ -95,7 +95,13 @@ algo violando uma destas linhas está errando, não melhorando.
    [`ALPHA-0.1.md`](ALPHA-0.1.md)).
 5. **Contratos**: mudou SDL/proto → mude os DOIS lados do fio + `npm run build`
    no middleware (paridade `dist/`) + gateways + cliente.
-6. **Ordem de confiança quando as fontes divergem**: o código > os blockquotes
+6. **CI**: não existe mais flake conhecido nas suítes. Se um teste
+   `*_is_allocation_free` falhar, leia o número: valor grande e proporcional à
+   contagem de iterações é **regressão real**; blip abaixo de alguns KiB seria
+   artefato de medição — mas o `AllocationProbe` já o filtra, então a
+   recorrência de um blip significa que a defesa quebrou e merece investigação,
+   não re-run.
+7. **Ordem de confiança quando as fontes divergem**: o código > os blockquotes
    das frentes no `VIABILITY-PLAN` > as tabelas de diagnóstico daquele
    documento. As tabelas são registro histórico e estão explicitamente
    marcadas como tal.
