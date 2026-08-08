@@ -150,8 +150,8 @@ test("recovery só é oferecido quando o autosave real é estritamente mais rece
 });
 
 /**
- * Documento válido de HOJE (v2). O factory da main não recebe opções — a
- * parametrização de template chega com a etapa do documento v3 —, então a
+ * Documento válido de HOJE (v3, já com `metadata`). O factory não recebe
+ * opções — a parametrização de template é da cauda do wizard —, então a
  * identidade é sobrescrita aqui.
  */
 function projectDocument(projectId: string) {

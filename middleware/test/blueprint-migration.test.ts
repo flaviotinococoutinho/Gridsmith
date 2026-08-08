@@ -188,6 +188,35 @@ test("os shapes congelados ainda reconhecem as fixtures do corpus", () => {
   assert.equal(recognizeLegacyV2Document(fixture("v2-editado-a-mao")), undefined);
 });
 
+test("os fingerprints da forma CRUA do factory também estão vivos", () => {
+  // Cada origem rende dois documentos: o factory devolve a entidade com
+  // `fields: {}` e o replay materializa os defaults antes de gravar. O corpus
+  // em disco só tem a forma materializada — é a que o fluxo "Novo projeto"
+  // produz —, então sem este teste as três entradas da forma crua seriam
+  // código morto que ninguém notaria parar de casar.
+  const semFields = (nome: string): Record<string, unknown> => {
+    const doc = fixture(nome);
+    const entities = (doc["entities"] as Record<string, unknown>[]).map((e) => ({
+      ...e,
+      fields: {},
+    }));
+    return { ...doc, entities };
+  };
+
+  assert.deepEqual(recognizeLegacyV2Document(semFields("v2-platformer-base")), {
+    projectName: "Plataforma 2D",
+    positionsInCells: true,
+  });
+  assert.deepEqual(recognizeLegacyV2Document(semFields("v2-platformer-main")), {
+    projectName: "Plataforma 2D",
+    positionsInCells: false,
+  });
+  assert.deepEqual(recognizeLegacyV2Document(semFields("v2-topdown-main")), {
+    projectName: "Aventura top-down",
+    positionsInCells: false,
+  });
+});
+
 test("documento v3 sem metadata é recusado", () => {
   const semMetadata: Record<string, unknown> = { ...createPlatformer2DDocument() };
   delete semMetadata["metadata"];
