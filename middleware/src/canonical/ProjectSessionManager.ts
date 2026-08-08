@@ -19,9 +19,12 @@ import type { ProjectionResult, RuntimeAdapter } from "../runtime/RuntimeAdapter
 import type { RuntimeSessionResetResult } from "../runtime/RuntimeAdapter.js";
 import {
   BlueprintDocumentError,
+  DEFAULT_PROJECT_METADATA,
+  cloneProjectMetadata,
   migrateBlueprintDocument,
   parseBlueprintDocument,
   replayDocument,
+  type ProjectMetadata,
   type ReplaySummary,
 } from "./BlueprintSerializer.js";
 import { CanonicalOrchestrator } from "./CanonicalOrchestrator.js";
@@ -32,6 +35,13 @@ import { getProjectTemplate } from "./ProjectTemplates.js";
 export interface ProjectSession {
   readonly sessionId: string;
   readonly projectId: string;
+  /**
+   * Metadata de produto do projeto (v3). Vive na SESSÃO, não só no arquivo:
+   * sem isto, salvar reexportaria a metadata default e o nome escolhido pelo
+   * usuário se perderia no primeiro save — um round-trip que apaga dado é
+   * pior do que não ter o campo.
+   */
+  readonly metadata: ProjectMetadata;
   readonly store: BlueprintStoreType;
   readonly orchestrator: CanonicalOrchestrator;
   readonly history: CommandHistory;
@@ -149,7 +159,7 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
 
   createEmptySession(projectId = this.createId()): PreparedProjectSession {
     validateId(projectId, "projectId");
-    return this.prepareSession(projectId, 0);
+    return this.prepareSession(projectId, DEFAULT_PROJECT_METADATA, 0);
   }
 
   async createFromTemplate(
@@ -166,7 +176,7 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
     const parsed = parseBlueprintDocument(raw);
     const document = migrateBlueprintDocument(parsed);
     validateId(document.projectId, "projectId");
-    const prepared = this.prepareSession(document.projectId, 0);
+    const prepared = this.prepareSession(document.projectId, document.metadata, 0);
 
     // criar sessão temporária → replay completo → validações semânticas
     const summary = await replayDocument(
@@ -292,12 +302,18 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
     }));
   }
 
-  private prepareSession(projectId: string, applied: number): PreparedProjectSession {
+  private prepareSession(
+    projectId: string,
+    metadata: ProjectMetadata,
+    applied: number,
+  ): PreparedProjectSession {
     const store = new BlueprintStore();
     const history = new CommandHistory(this.now);
     const session: ProjectSession = Object.freeze({
       sessionId: this.createId(),
       projectId,
+      // clone validado: a sessão nunca aliasa o objeto que veio do arquivo
+      metadata: cloneProjectMetadata(metadata),
       store,
       history,
       orchestrator: new CanonicalOrchestrator(store, this.options.hooks, this.options.adapter, history),

@@ -205,7 +205,9 @@ export class EditorSurface {
         };
       }
       case "document":
-        return { document: exportBlueprint(store, session.projectId) };
+        // metadata da SESSÃO, não a default: é o que faz o nome do projeto
+        // sobreviver ao ciclo abrir → editar → salvar
+        return { document: exportBlueprint(store, session.projectId, session.metadata) };
       default:
         throw new JsonRpcError(
           RpcErrorCode.InvalidParams,

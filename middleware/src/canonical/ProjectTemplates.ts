@@ -14,7 +14,13 @@ import type {
   LightSpec,
   WorldPlacement,
 } from "../domain/BlueprintStore.js";
-import { BLUEPRINT_DOCUMENT_VERSION, type BlueprintDocument } from "./BlueprintSerializer.js";
+import { cellToWorldCenter } from "../leveldesign/GridCoordinates.js";
+import {
+  BLUEPRINT_DOCUMENT_VERSION,
+  DEFAULT_PROJECT_METADATA,
+  type BlueprintDocument,
+  type ProjectMetadata,
+} from "./BlueprintSerializer.js";
 
 export interface ProjectTemplate {
   readonly id: string;
@@ -30,23 +36,27 @@ const SOLID = 1;
 const EMPTY = 0;
 
 /**
- * Célula → posição no mundo em PIXELS, ancorada no centro da célula.
+ * Centro do nível como o template historicamente o escreveu, em pixels.
  *
- * O contrato canônico mede o mundo em pixels (`contracts/schemas/
- * actors.methods.schema.json`: "Posição no mundo em pixels [x, y]"), e o
- * retângulo do nível é `width × tileSize` por `height × tileSize`. A engine
- * consome a posição crua — nenhuma camada converte unidade. Escrever célula
- * onde o contrato pede pixel coloca o objeto dentro da célula (0,0).
+ * NÃO é `cellToWorldCenter`: o ponto cai em MEIA célula (`16/2, 9/2`), e a
+ * função canônica recusa fração de propósito. Também não é o centro
+ * geométrico do nível, que seria `[128, 72]` — a expressão original aplica a
+ * fórmula de centro de célula a um índice fracionário e erra 8 px.
  *
- * Mesma convenção do editor (`frontend/src/core/levelEditorTools.ts`,
- * `cellCenter`), para o que o template cria coincidir com o que o editor
- * grava ao arrastar o mesmo objeto.
+ * O valor é preservado deliberadamente: mudá-lo moveria a luz de todo projeto
+ * novo, e a migração 2 → 3 reproduz exatamente estes números para que abrir um
+ * projeto antigo e criar um novo dêem o mesmo documento. Corrigir o desvio é
+ * mudança de template, não de migração, e está registrada como pendência.
  */
-function cellCenterPx(cellX: number, cellY: number): [number, number] {
-  return [
-    cellX * PLATFORMER_TILE_SIZE + PLATFORMER_TILE_SIZE / 2,
-    cellY * PLATFORMER_TILE_SIZE + PLATFORMER_TILE_SIZE / 2,
-  ];
+function legacyLevelCenterPx(widthInCells: number, heightInCells: number): [number, number] {
+  const axis = (cells: number): number =>
+    (cells / 2) * PLATFORMER_TILE_SIZE + PLATFORMER_TILE_SIZE / 2;
+  return [axis(widthInCells), axis(heightInCells)];
+}
+
+/** Metadata comum aos templates: só o nome varia. */
+function templateMetadata(name: string): ProjectMetadata {
+  return { ...DEFAULT_PROJECT_METADATA, name };
 }
 
 /** IntGrid de partida: chão na base + paredes nas laterais, resto vazio. */
@@ -94,7 +104,7 @@ export function createPlatformer2DDocument(): BlueprintDocument {
     entityId: "player-1",
     entityDefId: "player",
     // em pé sobre o chão (a última linha é sólida), dentro da parede esquerda
-    position: cellCenterPx(2, PLATFORMER_HEIGHT - 2),
+    position: [...cellToWorldCenter({ x: 2, y: PLATFORMER_HEIGHT - 2 }, PLATFORMER_TILE_SIZE)],
     fields: {},
   };
 
@@ -102,7 +112,7 @@ export function createPlatformer2DDocument(): BlueprintDocument {
     lightId: "key-light",
     type: "point",
     // centro do nível em pixels — o mesmo espaço do `radius` abaixo
-    position: cellCenterPx(PLATFORMER_WIDTH / 2, PLATFORMER_HEIGHT / 2),
+    position: legacyLevelCenterPx(PLATFORMER_WIDTH, PLATFORMER_HEIGHT),
     height: 1,
     color: [1, 1, 1],
     intensity: 1.2,
@@ -114,6 +124,7 @@ export function createPlatformer2DDocument(): BlueprintDocument {
   return {
     schemaVersion: BLUEPRINT_DOCUMENT_VERSION,
     projectId: "template-platformer-2d",
+    metadata: templateMetadata("Plataforma 2D"),
     skeletons: [],
     meshes: [],
     camera: { frequency: 2, damping: 1, response: 2, anticipationSeconds: 0.15 },
@@ -160,7 +171,7 @@ function topDownIntGrid(): number[] {
  * firme (sem antecipação de salto) e um Herói no centro.
  *
  * Segue a MESMA convenção de unidade do platformer: posição em pixels do
- * mundo via `cellCenterPx`. Ver o comentário de `cellCenterPx` para o porquê.
+ * mundo via `cellToWorldCenter`, a conversão canônica.
  */
 export function createTopDown2DDocument(): BlueprintDocument {
   const level: LevelSpec = {
@@ -187,14 +198,14 @@ export function createTopDown2DDocument(): BlueprintDocument {
   const hero: EntityInstance = {
     entityId: "heroi-1",
     entityDefId: "heroi",
-    position: cellCenterPx(3, 3),
+    position: [...cellToWorldCenter({ x: 3, y: 3 }, PLATFORMER_TILE_SIZE)],
     fields: {},
   };
 
   const light: LightSpec = {
     lightId: "tocha",
     type: "point",
-    position: cellCenterPx(TOPDOWN_WIDTH / 2, TOPDOWN_HEIGHT / 2),
+    position: legacyLevelCenterPx(TOPDOWN_WIDTH, TOPDOWN_HEIGHT),
     height: 1,
     color: [1, 0.92, 0.75],
     intensity: 1.4,
@@ -206,6 +217,7 @@ export function createTopDown2DDocument(): BlueprintDocument {
   return {
     schemaVersion: BLUEPRINT_DOCUMENT_VERSION,
     projectId: "template-top-down-2d",
+    metadata: templateMetadata("Aventura top-down"),
     skeletons: [],
     meshes: [],
     // top-down não antecipa salto: resposta menor e sem anticipation

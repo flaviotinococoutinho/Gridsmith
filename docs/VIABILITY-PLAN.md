@@ -928,6 +928,17 @@ Depois delas vem a cauda: o Asset Browser com inspector Aseprite (inseparável
 de E6 e E10), o `spriteRenderer` com o bump v5 (inseparável de E8, porque
 depende de `entitydef/update` — hoje só existe `entitydef/define`, que rejeita
 duplicata) e os campos do wizard reexpressos sobre o núcleo puro da `main`.
+> **Ondas 2 e 4 entregues (E4, E7).** A E4 fechou a rede de contratos: o
+> conjunto de comandos canônicos passou a ser idêntico por lint entre
+> `COMMAND_KINDS`, o enum do SDL e um schema JSON novo — acrescentar um comando
+> pela metade quebra o CI. A E7 subiu o documento para v3: a convenção espacial
+> deixou de ser acordo tácito entre camadas e passou a ser declarada no próprio
+> arquivo, com `metadata` de produto, `GridCoordinates` canônico e a migração
+> 2 → 3 nos quatro ramos do §8.4 — cada ramo com teste nomeado sobre um corpus
+> de documentos v2 REAIS, congelados antes do bump. O critério que decidiu a
+> conversão da luz em meia-célula: migrar um projeto antigo e criar um projeto
+> novo têm de produzir o mesmo documento.
+>
 > **Onda 1 entregue (E1, E2, E3).** A escrita do projeto passou a ser durável
 > (temporário, `flush`, `rename` atômico, `.bak`, publicação no-clobber no
 > "Novo"); o autosave ganhou leitor e ciclo de vida — antes era gravado e nunca
