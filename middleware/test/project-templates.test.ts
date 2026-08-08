@@ -147,7 +147,12 @@ test("o template reproduz pelo caminho canônico num projeto vazio", async () =>
   assert.equal(store.listEntityDefs().length, 1);
 });
 
-test("persistência do template é sem perdas (export → replay → export idêntico)", async () => {
+test("o DOMÍNIO do template atravessa export → replay → export sem perdas", async () => {
+  // Escopo honesto: isto prova o round-trip do que o STORE guarda. A metadata
+  // NÃO é estado do store — ela vive na sessão —, então os dois lados passam a
+  // default explicitamente e este teste não diz nada sobre preservação de
+  // nome. Quem prova isso é "o nome do projeto sobrevive ao ciclo criar →
+  // salvar → reabrir", que percorre sessão e superfície.
   const doc = createPlatformer2DDocument();
 
   const store1 = new BlueprintStore();
