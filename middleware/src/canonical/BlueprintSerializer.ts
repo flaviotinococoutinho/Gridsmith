@@ -10,6 +10,14 @@
 
 import { createHash } from "node:crypto";
 
+import {
+  CELL_ORIGIN,
+  ENTITY_ANCHOR,
+  WORLD_POSITION_UNIT,
+  WORLD_Y_AXIS,
+  cellToWorldCenter,
+} from "../leveldesign/GridCoordinates.js";
+import { recognizeLegacyV2Document } from "./legacyBlueprintShapes.js";
 import type {
   BlueprintCommand,
   BlueprintStore,
@@ -24,11 +32,50 @@ import type {
 } from "../domain/BlueprintStore.js";
 import type { CanonicalOrchestrator, DispatchResult } from "./CanonicalOrchestrator.js";
 
-export const BLUEPRINT_DOCUMENT_VERSION = 2;
+export const BLUEPRINT_DOCUMENT_VERSION = 3;
+
+/**
+ * Convenção espacial DECLARADA pelo documento (v3).
+ *
+ * Antes da v3 a unidade era um acordo tácito entre camadas — e um acordo
+ * tácito foi exatamente o que permitiu ao template gravar célula onde o
+ * contrato pedia pixel. Escrevendo a convenção no arquivo, qualquer leitor
+ * (build futura, ferramenta externa, agente) sabe o que os números significam
+ * sem precisar adivinhar pela magnitude.
+ */
+export interface ProjectSpatialConvention {
+  readonly positionUnit: typeof WORLD_POSITION_UNIT;
+  readonly cellOrigin: typeof CELL_ORIGIN;
+  readonly yAxis: typeof WORLD_Y_AXIS;
+  readonly entityAnchor: typeof ENTITY_ANCHOR;
+}
+
+/** Metadata de produto do projeto (v3). */
+export interface ProjectMetadata {
+  /** Nome exibível — o que a UI mostra em vez do `projectId`. */
+  readonly name: string;
+  /** Resolução de referência do projeto, em pixels. */
+  readonly referenceResolution: { readonly width: number; readonly height: number };
+  readonly spatial: ProjectSpatialConvention;
+}
+
+export const DEFAULT_PROJECT_SPATIAL: ProjectSpatialConvention = Object.freeze({
+  positionUnit: WORLD_POSITION_UNIT,
+  cellOrigin: CELL_ORIGIN,
+  yAxis: WORLD_Y_AXIS,
+  entityAnchor: ENTITY_ANCHOR,
+});
+
+export const DEFAULT_PROJECT_METADATA: ProjectMetadata = Object.freeze({
+  name: "Projeto sem título",
+  referenceResolution: Object.freeze({ width: 1280, height: 720 }),
+  spatial: DEFAULT_PROJECT_SPATIAL,
+});
 
 export interface BlueprintDocument {
   readonly schemaVersion: number;
   readonly projectId: string;
+  readonly metadata: ProjectMetadata;
   readonly skeletons: readonly SkeletonBlueprint[];
   readonly meshes: readonly MeshBinding[];
   readonly camera: CameraSettings;
@@ -46,10 +93,27 @@ export class BlueprintDocumentError extends Error {
   }
 }
 
-/** Snapshot declarativo completo do estado corrente do Blueprint. */
-export function exportBlueprint(store: BlueprintStore, projectId?: string): BlueprintDocument {
+/**
+ * Snapshot declarativo completo do estado corrente do Blueprint.
+ *
+ * `metadata` é OBRIGATÓRIA de propósito, sem default. A metadata real vive na
+ * sessão de projeto, e um default aqui seria uma armadilha silenciosa: uma
+ * borda futura que exportasse documento sem passar `session.metadata`
+ * compilaria, passaria nos testes e apagaria o nome escolhido pelo usuário no
+ * primeiro save — perda de dado sem nenhum erro. Quem não tem sessão passa
+ * `DEFAULT_PROJECT_METADATA` explicitamente, e essa explicitação é o ponto.
+ *
+ * `projectId` continua aceitando `undefined` (identidade legada derivada do
+ * conteúdo), mas em posição obrigatória para que a escolha seja visível.
+ */
+export function exportBlueprint(
+  store: BlueprintStore,
+  projectId: string | undefined,
+  metadata: ProjectMetadata,
+): BlueprintDocument {
   const content = {
     schemaVersion: BLUEPRINT_DOCUMENT_VERSION,
+    metadata: cloneProjectMetadata(metadata),
     skeletons: store.listSkeletons(),
     meshes: store.listMeshes(),
     camera: store.cameraSettings,
@@ -104,7 +168,128 @@ const MIGRATIONS = new Map<number, BlueprintMigration>([
       schemaVersion: 2,
     }),
   ],
+  // 2 → 3: declara a convenção espacial e a metadata de produto no próprio
+  // arquivo e, SOMENTE para os documentos de origem reconhecida que estavam
+  // em células, converte as posições para pixels do mundo. Ver a explicação
+  // dos quatro ramos em `migrateToV3`.
+  [2, migrateToV3],
 ]);
+
+/**
+ * Os QUATRO ramos da 2 → 3.
+ *
+ * (a) template de plataforma PRÉ-correção → converte posições e nomeia;
+ * (b) template de plataforma PÓS-correção → só nomeia;
+ * (c) template top-down → só nomeia;
+ * (d) qualquer outro documento → NUNCA converte nada; recebe metadata
+ *     genérica.
+ *
+ * O ramo (d) é o mais importante e o mais fácil de errar. É tentador
+ * "detectar" coordenadas de célula pela magnitude — todo número menor que o
+ * tileSize seria célula. Essa heurística destrói projeto de usuário: uma
+ * entidade legitimamente em [3, 7] pixels viraria [56, 120]. Documento de
+ * origem desconhecida sai da migração com as posições BIT A BIT idênticas.
+ */
+function migrateToV3(document: Record<string, unknown>): Record<string, unknown> {
+  const declared = normalizeLegacyMetadata(document["metadata"]);
+  if (declared) {
+    // Documento que já traz metadata válida atravessa intacto: nada a inferir.
+    return { ...document, metadata: declared, schemaVersion: 3 };
+  }
+
+  const origin = recognizeLegacyV2Document(document);
+  if (!origin) {
+    return {
+      ...document,
+      metadata: { ...DEFAULT_PROJECT_METADATA, name: "Projeto importado" },
+      schemaVersion: 3,
+    };
+  }
+
+  const converted = origin.positionsInCells ? withWorldPixelPositions(document) : document;
+  return {
+    ...converted,
+    metadata: { ...DEFAULT_PROJECT_METADATA, name: origin.projectName },
+    schemaVersion: 3,
+  };
+}
+
+/**
+ * Converte as posições de célula para pixels do mundo. Só é chamada para
+ * documento de origem RECONHECIDA — nunca especula.
+ */
+function withWorldPixelPositions(document: Record<string, unknown>): Record<string, unknown> {
+  const tileSize = soleLevelTileSize(document);
+
+  const entities = asArray(document["entities"]).map((raw) => {
+    const entity = raw as Record<string, unknown>;
+    const cell = asPair(entity["position"]);
+    if (!cell) return entity;
+    // Entidade vive em célula INTEIRA: cellToWorldCenter recusa fração, e essa
+    // recusa é a guarda de que o documento reconhecido é mesmo o esperado.
+    return { ...entity, position: [...cellToWorldCenter({ x: cell[0], y: cell[1] }, tileSize)] };
+  });
+
+  const lights = asArray(document["lights"]).map((raw) => {
+    const light = raw as Record<string, unknown>;
+    const cell = asPair(light["position"]);
+    if (!cell) return light;
+    return {
+      ...light,
+      position: [legacyAxisToWorld(cell[0], tileSize), legacyAxisToWorld(cell[1], tileSize)],
+    };
+  });
+
+  return { ...document, entities, lights };
+}
+
+/**
+ * Mesma fórmula escalar que o template corrigido usa hoje.
+ *
+ * ESCOLHA REGISTRADA, e ela não é óbvia: a luz do template legado foi escrita
+ * em MEIA célula — `[16 / 2, 9 / 2]` = `[8, 4.5]`. `cellToWorldCenter` recusa
+ * fração de propósito, então havia dois candidatos:
+ *
+ *   • arredondar a célula para baixo → `[136, 72]`;
+ *   • aplicar a fórmula escalar do template corrigido → `[136, 80]`.
+ *
+ * Vale `[136, 80]`, porque é o que o template EMITE hoje: assim, abrir um
+ * projeto antigo e criar um projeto novo produzem o mesmo documento, e a
+ * migração não move nada de lugar. Arredondar deslocaria a luz 8 px e faria
+ * projeto migrado divergir de projeto novo — uma diferença invisível no
+ * código e visível na tela.
+ *
+ * (Nota separada: `[136, 80]` também não é o centro geométrico do nível, que
+ * seria `[128, 72]`. Isso é um desvio do próprio template, anterior a esta
+ * etapa e fora do escopo dela; corrigi-lo aqui moveria a luz de todo projeto
+ * novo dentro de um PR de migração. Está registrado como pendência.)
+ */
+function legacyAxisToWorld(cellAxis: number, tileSize: number): number {
+  return cellAxis * tileSize + tileSize / 2;
+}
+
+function soleLevelTileSize(document: Record<string, unknown>): number {
+  const levels = asArray(document["levels"]);
+  const tileSize = (levels[0] as Record<string, unknown> | undefined)?.["tileSize"];
+  if (levels.length !== 1 || !Number.isInteger(tileSize) || (tileSize as number) < 1) {
+    // Inalcançável pelos documentos reconhecidos (todos têm exatamente um
+    // nível). Falhar alto aqui é melhor do que converter com tileSize errado.
+    throw new BlueprintDocumentError(
+      "Legacy coordinate migration expects exactly one level with a valid tileSize",
+    );
+  }
+  return tileSize as number;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asPair(value: unknown): [number, number] | undefined {
+  return Array.isArray(value) && value.length === 2 && value.every((v) => typeof v === "number")
+    ? [value[0] as number, value[1] as number]
+    : undefined;
+}
 
 /** Etapa explícita de parse; objetos já desserializados atravessam sem cópia. */
 export function parseBlueprintDocument(raw: unknown): unknown {
@@ -176,6 +361,62 @@ export function validateBlueprintDocumentShape(document: Record<string, unknown>
   if (camera === null || typeof camera !== "object" || Array.isArray(camera)) {
     throw new BlueprintDocumentError('Blueprint document field "camera" must be an object');
   }
+  if (!normalizeLegacyMetadata(document["metadata"])) {
+    throw new BlueprintDocumentError(
+      'Blueprint document requires a valid "metadata" (name, referenceResolution, spatial)',
+    );
+  }
+}
+
+/**
+ * Aceita a metadata se ela for íntegra; devolve `undefined` para qualquer
+ * coisa ausente ou malformada, para o chamador decidir (a migração deriva, a
+ * validação recusa). Não CORRIGE metadata pela metade: um documento com
+ * `spatial` inconsistente afirma uma convenção que talvez não seja a dos seus
+ * números, e adivinhar aí é o mesmo erro que a v3 existe para eliminar.
+ */
+function normalizeLegacyMetadata(value: unknown): ProjectMetadata | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const metadata = value as Record<string, unknown>;
+
+  const name = metadata["name"];
+  if (typeof name !== "string" || name.trim().length === 0) return undefined;
+
+  const resolution = metadata["referenceResolution"] as Record<string, unknown> | undefined;
+  const width = resolution?.["width"];
+  const height = resolution?.["height"];
+  if (!isPositiveInteger(width) || !isPositiveInteger(height)) return undefined;
+
+  const spatial = metadata["spatial"] as Record<string, unknown> | undefined;
+  if (
+    spatial?.["positionUnit"] !== WORLD_POSITION_UNIT ||
+    spatial["cellOrigin"] !== CELL_ORIGIN ||
+    spatial["yAxis"] !== WORLD_Y_AXIS ||
+    spatial["entityAnchor"] !== ENTITY_ANCHOR
+  ) {
+    return undefined;
+  }
+
+  return Object.freeze({
+    name,
+    referenceResolution: Object.freeze({ width, height }),
+    spatial: DEFAULT_PROJECT_SPATIAL,
+  });
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+/** Cópia congelada — a metadata da sessão nunca é aliasada pelo documento. */
+export function cloneProjectMetadata(metadata: ProjectMetadata): ProjectMetadata {
+  const normalized = normalizeLegacyMetadata(metadata);
+  if (!normalized) {
+    throw new BlueprintDocumentError(
+      'Invalid project metadata (name, referenceResolution, spatial)',
+    );
+  }
+  return normalized;
 }
 
 /**

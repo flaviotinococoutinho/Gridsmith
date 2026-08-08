@@ -196,7 +196,8 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 | D11 | F6: undo/redo continua local ao IntGrid | o histórico do middleware ainda é só o relógio lógico | E9 |
 | D12 | E5 pendente: publicação de artefato em duas fases, tombstones e rollback | o `ArtifactStore` só tem `publish` monofásico | E5 (receita §9.2) |
 | D13 | E6 pendente: camada de aplicação de assets + superfície fria GraphQL | `middleware/src/application/` não existe | E6 |
-| D14 | E7 pendente: Blueprint v3 (metadata, `GridCoordinates`, migração de quatro ramos) | a versão do documento ainda é 2; não existe `GridCoordinates.ts` | E7 (receita §9.3) |
+| ~~D14~~ | ✅ **Entregue (E7).** Blueprint v3: `metadata` (nome, resolução de referência, convenção espacial declarada), `GridCoordinates` canônico e migração 2 → 3 com os quatro ramos por impressão digital | — | — |
+| D22 | A luz dos templates fica 8 px fora do centro geométrico do nível (`[136, 80]` onde o centro é `[128, 72]`) — a expressão original aplica a fórmula de centro de célula a um índice fracionário | `legacyLevelCenterPx` em `ProjectTemplates.ts`, com o desvio documentado | **órfã** — revelada pela E7 e deixada fora dela de propósito: corrigi-la move a luz de todo projeto novo, o que não pertence a um PR de migração |
 | D15 | E8 pendente: domínio transacional (`planBatch`/`commitBatch`/`fork`, `applyWithInverse`, comandos in-place, proveniência) | nenhum desses símbolos existe no `BlueprintStore` | E8 (receita §9.4) |
 | D16 | E9 pendente: histórico global transacional com `level/patch`, paleta e bump v4 | idem D11 + campos de histórico ausentes do proto | E9 (receita §9.4) |
 | D17 | E10 pendente: casca do workbench por contribuições (nenhum dos módulos de framework existe) | `frontend/src/core/` e `frontend/src/renderer/` não têm nenhum deles | E10 |
@@ -255,9 +256,13 @@ flowchart TD
 **E4 entregue.** A rede está no lugar: cada kind novo agora precisa do schema e
 do membro do enum, ou o CI quebra com o nome do kind órfão.
 
-**Próximo passo natural: E7 ou E8** (ambas destravadas pela E4, e independentes
-entre si). E7 é a menor das duas e precisa vir antes da E9 de qualquer forma.
-Em paralelo, E5 também está liberada — e F1 nunca esteve bloqueada.
+**E7 entregue.** O documento está em v3, com a unidade espacial declarada no
+arquivo em vez de combinada entre camadas, e todo documento v2 do mundo abre
+correto — provado por um corpus de documentos reais congelados, um teste
+nomeado por ramo da migração.
+
+**Próximo passo natural: E8** (domínio transacional), que a E4 destravou e que
+a E9 exige. Em paralelo, E5 continua liberada — e F1 nunca esteve bloqueada.
 
 ## 9. Receitas executáveis
 
@@ -376,6 +381,23 @@ graça.
 chamador existente de `publish()` alterado.
 
 ### 9.3. Receita E7 — Blueprint v3
+
+> ✅ **Etapa entregue.** A receita fica como registro. Três ajustes em relação
+> ao plano original, todos por confronto com o código real:
+>
+> 1. **A luz em meia-célula foi resolvida por `[136, 80]`**, não pelo
+>    arredondamento da referência (`[136, 72]`). O critério que decidiu: abrir
+>    um projeto antigo e criar um projeto novo têm de produzir o mesmo
+>    documento. Há um teste que trava exatamente essa igualdade.
+> 2. **Os shapes legados ganharam módulo próprio**
+>    (`legacyBlueprintShapes.ts`), duplicando de propósito o que os templates
+>    fazem: a impressão digital descreve arquivos que já existem em disco e não
+>    pode acompanhar a evolução dos templates, senão deixa de reconhecê-los
+>    justamente quando é necessária. Um teste prova que os shapes ainda casam
+>    com o corpus.
+> 3. **A guarda do frontend é condicional à versão** (`>= 3`), porque um
+>    `.autosave` gravado por build anterior ainda é v2 — recusá-lo transformaria
+>    recuperação de crash em perda de trabalho.
 
 **Objetivo.** Que todo documento v2 já gravado em disco — template
 pré-correção em células, template pós-correção em pixels, top-down, ou editado

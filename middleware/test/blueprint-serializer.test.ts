@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   BLUEPRINT_DOCUMENT_VERSION,
+  DEFAULT_PROJECT_METADATA,
   BlueprintDocumentError,
   documentToCommands,
   exportBlueprint,
@@ -57,7 +58,7 @@ async function buildFullProject(): Promise<{ store: BlueprintStore; orchestrator
 
 test("roundtrip: export → replay em projeto vazio → export idêntico", async () => {
   const original = await buildFullProject();
-  const document = exportBlueprint(original.store);
+  const document = exportBlueprint(original.store, undefined, DEFAULT_PROJECT_METADATA);
   assert.equal(document.schemaVersion, BLUEPRINT_DOCUMENT_VERSION);
 
   const fresh = new BlueprintStore();
@@ -69,12 +70,12 @@ test("roundtrip: export → replay em projeto vazio → export idêntico", async
   assert.equal(summary.projected, 0);
 
   // o documento reexportado é IDÊNTICO — persistência sem perdas
-  assert.deepEqual(exportBlueprint(fresh), document);
+  assert.deepEqual(exportBlueprint(fresh, undefined, DEFAULT_PROJECT_METADATA), document);
 });
 
 test("comandos são ordenados por dependência (malha após esqueleto, colocação após nível)", async () => {
   const { store } = await buildFullProject();
-  const kinds = documentToCommands(exportBlueprint(store)).map((c) => c.kind);
+  const kinds = documentToCommands(exportBlueprint(store, undefined, DEFAULT_PROJECT_METADATA)).map((c) => c.kind);
   assert.ok(kinds.indexOf("skeleton/define") < kinds.indexOf("mesh/bind"));
   assert.ok(kinds.indexOf("entitydef/define") < kinds.indexOf("entity/place"));
   assert.ok(kinds.indexOf("level/define") < kinds.indexOf("world/place"));
@@ -82,7 +83,7 @@ test("comandos são ordenados por dependência (malha após esqueleto, colocaç�
 
 test("replay valida na borda: documento corrompido falha com o erro do domínio", async () => {
   const { store } = await buildFullProject();
-  const document = exportBlueprint(store);
+  const document = exportBlueprint(store, undefined, DEFAULT_PROJECT_METADATA);
   const corrupted = {
     ...document,
     // malha órfã: referencia esqueleto que não existe no documento
@@ -98,7 +99,7 @@ test("replay valida na borda: documento corrompido falha com o erro do domínio"
 
 test("versão desconhecida é rejeitada sem depender de Blueprint vazio", async () => {
   const { store } = await buildFullProject();
-  const document = exportBlueprint(store);
+  const document = exportBlueprint(store, undefined, DEFAULT_PROJECT_METADATA);
 
   assert.throws(
     () => documentToCommands({ ...document, schemaVersion: 99 }),
@@ -108,7 +109,7 @@ test("versão desconhecida é rejeitada sem depender de Blueprint vazio", async 
 
 test("câmera default ({}) não gera comando no replay", async () => {
   const store = new BlueprintStore();
-  const commands = documentToCommands(exportBlueprint(store));
+  const commands = documentToCommands(exportBlueprint(store, undefined, DEFAULT_PROJECT_METADATA));
   assert.deepEqual(commands, []);
   assert.equal(store.isEmpty, true);
 });

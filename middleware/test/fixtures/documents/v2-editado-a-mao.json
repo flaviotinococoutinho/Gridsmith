@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 2,
+  "skeletons": [],
+  "meshes": [],
+  "camera": {
+    "frequency": 2,
+    "damping": 1,
+    "response": 2,
+    "anticipationSeconds": 0.15
+  },
+  "lights": [
+    {
+      "lightId": "key-light",
+      "type": "point",
+      "position": [
+        136,
+        80
+      ],
+      "height": 1,
+      "color": [
+        1,
+        1,
+        1
+      ],
+      "intensity": 1.2,
+      "radius": 240
+    },
+    {
+      "lightId": "fill-light",
+      "type": "point",
+      "position": [
+        200,
+        60
+      ],
+      "height": 1,
+      "color": [
+        0.4,
+        0.5,
+        1
+      ],
+      "intensity": 0.8,
+      "radius": 120
+    }
+  ],
+  "entityDefs": [
+    {
+      "entityDefId": "player",
+      "archetypeId": "player",
+      "tags": [
+        "player"
+      ],
+      "editor": {
+        "color": "#3aa0ff"
+      },
+      "fields": [
+        {
+          "name": "speed",
+          "type": "float",
+          "default": 90
+        },
+        {
+          "name": "jumpVelocity",
+          "type": "float",
+          "default": 320
+        }
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entityId": "player-1",
+      "entityDefId": "player",
+      "position": [
+        3,
+        7
+      ],
+      "fields": {
+        "speed": 90,
+        "jumpVelocity": 320
+      }
+    }
+  ],
+  "levels": [
+    {
+      "levelId": "level-1",
+      "width": 16,
+      "height": 9,
+      "tileSize": 16,
+      "seed": 1,
+      "intGrid": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "rules": [
+        {
+          "patternSize": 1,
+          "pattern": [
+            1
+          ],
+          "tileIds": [
+            1
+          ]
+        }
+      ]
+    }
+  ],
+  "placements": [
+    {
+      "levelId": "level-1",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "projectId": "fixture-editado-a-mao"
+}

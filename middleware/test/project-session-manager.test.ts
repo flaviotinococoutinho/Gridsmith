@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import {
   BLUEPRINT_DOCUMENT_VERSION,
+  DEFAULT_PROJECT_METADATA,
   exportBlueprint,
   type BlueprintDocument,
 } from "../src/canonical/BlueprintSerializer.js";
@@ -135,6 +136,7 @@ function document(projectId: string, lights: readonly LightSpec[] = []): Bluepri
   return {
     schemaVersion: BLUEPRINT_DOCUMENT_VERSION,
     projectId,
+    metadata: DEFAULT_PROJECT_METADATA,
     skeletons: [],
     meshes: [],
     camera: {},
@@ -180,7 +182,7 @@ test("documento inválido mantém sessão A, dirty-equivalent sequence e runtime
     await sessions.prepareFromDocument(document("A", [light(1)])),
   );
   const before = sessions.current!;
-  const beforeDocument = exportBlueprint(before.store, before.projectId);
+  const beforeDocument = exportBlueprint(before.store, before.projectId, before.metadata);
   const beforeSequence = before.history.lastSequence;
   const resetCount = runtime.resetCount;
   let changes = 0;
@@ -190,6 +192,7 @@ test("documento inválido mantém sessão A, dirty-equivalent sequence e runtime
     sessions.prepareFromDocument({
       schemaVersion: BLUEPRINT_DOCUMENT_VERSION,
       projectId: "B",
+      metadata: DEFAULT_PROJECT_METADATA,
       skeletons: "not-an-array",
       meshes: [], camera: {}, lights: [], entityDefs: [], entities: [], levels: [], placements: [],
     }),
@@ -197,7 +200,7 @@ test("documento inválido mantém sessão A, dirty-equivalent sequence e runtime
   );
 
   assert.equal(sessions.current, before);
-  assert.deepEqual(exportBlueprint(before.store, before.projectId), beforeDocument);
+  assert.deepEqual(exportBlueprint(before.store, before.projectId, before.metadata), beforeDocument);
   assert.equal(before.history.lastSequence, beforeSequence);
   assert.equal(runtime.resetCount, resetCount, "invalid input never touched runtime");
   assert.equal(changes, 0, "invalid input published no session event");

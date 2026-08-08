@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
+import { HookBus } from "../src/canonical/HookBus.js";
+import { ProjectSessionManager } from "../src/canonical/ProjectSessionManager.js";
 import {
   BLUEPRINT_DOCUMENT_VERSION,
+  DEFAULT_PROJECT_METADATA,
   exportBlueprint,
   replayDocument,
 } from "../src/canonical/BlueprintSerializer.js";
@@ -147,11 +152,11 @@ test("persistência do template é sem perdas (export → replay → export idê
 
   const store1 = new BlueprintStore();
   await replayDocument(doc, store1, new CanonicalOrchestrator(store1, new HookBus()));
-  const exported1 = exportBlueprint(store1);
+  const exported1 = exportBlueprint(store1, undefined, DEFAULT_PROJECT_METADATA);
 
   const store2 = new BlueprintStore();
   await replayDocument(exported1, store2, new CanonicalOrchestrator(store2, new HookBus()));
-  const exported2 = exportBlueprint(store2);
+  const exported2 = exportBlueprint(store2, undefined, DEFAULT_PROJECT_METADATA);
 
   assert.deepEqual(exported2, exported1);
 });
@@ -174,4 +179,42 @@ test("platformer: o Player nasce apoiado sobre o chão sólido", () => {
   // a última linha é sólida: o player fica na penúltima, nem flutuando nem enterrado
   assert.equal(cellY, level.height - 2, "player não está apoiado no chão");
   assert.equal(level.intGrid[(level.height - 1) * level.width + cellX], 1, "sem chão abaixo");
+});
+
+test("o nome do projeto sobrevive ao ciclo criar → salvar → reabrir", async () => {
+  // Este é o invariante que justifica `metadata` viver na SESSÃO e não só no
+  // arquivo. Sem ele, exportar reexportaria a metadata default e o primeiro
+  // save apagaria o nome — um round-trip que perde dado é pior do que não ter
+  // o campo. O teste percorre o caminho real: sessão → documento → sessão.
+  const sessions = new ProjectSessionManager({ hooks: new HookBus() });
+
+  const criado = (await sessions.createFromTemplate("top-down-2d", "meu-projeto")).session;
+  const documento = exportBlueprint(criado.store, criado.projectId, criado.metadata);
+  assert.equal(documento.metadata.name, "Aventura top-down");
+
+  // o que iria para o disco, e volta dele
+  const reaberto = (
+    await sessions.prepareFromDocument(JSON.parse(JSON.stringify(documento)) as unknown)
+  ).session;
+
+  assert.equal(reaberto.metadata.name, documento.metadata.name);
+  assert.deepEqual(
+    exportBlueprint(reaberto.store, reaberto.projectId, reaberto.metadata),
+    documento,
+  );
+});
+
+test("abrir um projeto v2 legado entra na sessão já com nome e coordenadas corretos", async () => {
+  const sessions = new ProjectSessionManager({ hooks: new HookBus() });
+  const legado = JSON.parse(
+    readFileSync(
+      path.join(import.meta.dirname, "fixtures", "documents", "v2-platformer-base.json"),
+      "utf8",
+    ),
+  ) as unknown;
+
+  const sessao = (await sessions.prepareFromDocument(legado)).session;
+
+  assert.equal(sessao.metadata.name, "Plataforma 2D");
+  assert.deepEqual(sessao.store.listEntities()[0]?.position, [40, 120]);
 });

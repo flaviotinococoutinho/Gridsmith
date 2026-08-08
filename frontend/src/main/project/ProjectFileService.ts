@@ -189,9 +189,7 @@ function serializeProjectDocument(document: unknown): string {
   }
   const record = document as Record<string, unknown>;
   // Guarda mínima contra gravar lixo por cima do projeto do usuário: identidade,
-  // versão e câmera. NÃO exige `metadata` — é campo do documento v3, que chega
-  // com a etapa do bump; exigi-lo aqui recusaria salvar todo documento válido
-  // de hoje.
+  // versão e câmera.
   if (
     !Number.isInteger(record["schemaVersion"]) ||
     typeof record["projectId"] !== "string" ||
@@ -201,6 +199,15 @@ function serializeProjectDocument(document: unknown): string {
     Array.isArray(record["camera"])
   ) {
     throw new Error("O documento de projeto não contém identidade, versão ou câmera válidas");
+  }
+  // `metadata` é campo do documento v3. A exigência é CONDICIONAL à versão de
+  // propósito: um `.autosave` gravado por uma build anterior ainda é v2 e
+  // precisa continuar legível — recusá-lo aqui transformaria uma recuperação
+  // de crash em perda de trabalho, que é o oposto do que este arquivo faz.
+  const version = record["schemaVersion"] as number;
+  const metadata = record["metadata"];
+  if (version >= 3 && (!metadata || typeof metadata !== "object" || Array.isArray(metadata))) {
+    throw new Error("O documento de projeto v3 não contém a metadata do projeto");
   }
   for (const field of [
     "skeletons",

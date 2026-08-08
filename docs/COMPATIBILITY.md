@@ -87,13 +87,41 @@ graph TD
 | Campo | Conteúdo |
 |---|---|
 | Componente | Documento declarativo do projeto (`exportBlueprint` / load por replay) |
-| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 2`; documento sem `schemaVersion` é tratado como versão `0` |
+| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 3`; documento sem `schemaVersion` é tratado como versão `0` |
 | Fonte de verdade | `middleware/src/canonical/BlueprintSerializer.ts` |
 | Regra de compatibilidade | Versão exata é carregada direto; versões anteriores são **migradas em cadeia** `v(n) → v(n+1)` antes do replay |
 | Breaking change | Qualquer mudança estrutural do documento exige nova versão **+** entrada correspondente no registro `MIGRATIONS` |
-| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2`); v2 introduz `projectId`, derivado deterministicamente para v1; `project/openDocument` prepara e valida antes da troca; `expectedProjectSessionId` protege o commit contra candidato obsoleto |
+| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3`); v2 introduz `projectId`, derivado deterministicamente para v1; v3 introduz `metadata` (nome, resolução de referência e convenção espacial declarada) e converte coordenadas **apenas** nos quatro ramos descritos abaixo; `project/openDocument` prepara e valida antes da troca; `expectedProjectSessionId` protege o commit contra candidato obsoleto |
 | Fallback | Versão acima da suportada é **rejeitada** com `BlueprintDocumentError` (mensagem clara); versão sem migrador registrado é rejeitada |
-| Teste | `middleware/test/blueprint-migration.test.ts` + `project-session-manager.test.ts` (projectId v1 determinístico, replay isolado, rollback, CAS e troca A→B) |
+| Teste | `middleware/test/blueprint-migration.test.ts` (um teste nomeado por ramo da 2 → 3 + round-trip do corpus) + `grid-coordinates.test.ts` + `project-session-manager.test.ts` (projectId v1 determinístico, replay isolado, rollback, CAS e troca A→B) |
+
+#### Os quatro ramos da migração 2 → 3
+
+A v3 declara no arquivo o que antes era acordo tácito entre camadas: a unidade
+de posição é o **pixel do mundo**, com origem da célula no canto superior
+esquerdo, eixo Y para baixo e entidade ancorada no centro. Declarar isso
+obrigou a resolver uma ambiguidade herdada — existem DOIS documentos v2 no
+mundo, um com posições em célula (o template de plataforma antes da correção
+de unidade) e outro em pixels.
+
+Nenhuma heurística de magnitude resolve o caso: `3` é uma célula plausível e um
+pixel plausível. A migração portanto **reconhece origens conhecidas por
+impressão digital** do documento e não especula sobre o resto:
+
+| Ramo | Documento | Coordenadas | `metadata.name` |
+|---|---|---|---|
+| (a) | template de plataforma **pré**-correção | convertidas para pixel | `Plataforma 2D` |
+| (b) | template de plataforma **pós**-correção | intactas | `Plataforma 2D` |
+| (c) | template top-down | intactas | `Aventura top-down` |
+| (d) | **qualquer outro** documento | **intactas, bit a bit** | `Projeto importado` |
+
+O ramo (d) cobre todo projeto real de usuário, edição manual e documento gerado
+por agente — converter um deles às cegas destruiria o projeto. Os shapes
+reconhecidos são congelados em
+`middleware/src/canonical/legacyBlueprintShapes.ts`, e o corpus de documentos
+v2 reais vive em `middleware/test/fixtures/documents/`. **O corpus só cresce:**
+cada bump acrescenta arquivos, nenhum arquivo existente é regenerado — eles são
+a única prova de que documentos antigos ainda abrem.
 
 ### Artefato versionável
 
