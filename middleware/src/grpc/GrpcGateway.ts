@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
-import type { EditorSurface } from "../canonical/EditorSurface.js";
+import type { EditorSurface, HistoryStatus } from "../canonical/EditorSurface.js";
 import type { EventJournal, EventEnvelope } from "../transport/EventJournal.js";
 import {
   normalizeEndpointListenError,
@@ -79,6 +79,10 @@ interface ProjectStatusLike {
   readonly commandSequence: string | number | bigint;
   readonly createdAt?: number;
   readonly runtimeState: "synchronized" | "deferred" | "failed";
+  readonly documentStateId: string;
+  readonly historyCursor: string;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
 }
 
 function serializeProjectStatus(status: ProjectStatusLike): Record<string, unknown> {
@@ -89,6 +93,10 @@ function serializeProjectStatus(status: ProjectStatusLike): Record<string, unkno
     command_sequence: status.commandSequence.toString(),
     created_at_unix_ms: status.createdAt?.toString() ?? "0",
     runtime_state: status.runtimeState,
+    document_state_id: status.documentStateId,
+    history_cursor: status.historyCursor,
+    can_undo: status.canUndo,
+    can_redo: status.canRedo,
   };
 }
 
@@ -112,6 +120,12 @@ function serializeEvent(event: EventEnvelope): {
   has_projection: boolean;
   projection_status: string;
   projection_reason: string;
+  transaction_id: string;
+  document_state_id: string;
+  history_entry_id: string;
+  actor: string;
+  history_action: string;
+  history_cursor: string;
 } {
   return {
     seq: event.seq.toString(),
@@ -125,6 +139,42 @@ function serializeEvent(event: EventEnvelope): {
     has_projection: event.projection !== undefined,
     projection_status: event.projection?.status ?? "",
     projection_reason: event.projection?.reason ?? "",
+    // Campos 10+ do envelope: os 7/8/9 pertencem à projeção e são imutáveis.
+    transaction_id: event.history?.transactionId ?? "",
+    document_state_id: event.history?.documentStateId ?? "",
+    history_entry_id: event.history?.historyEntryId ?? "",
+    actor: event.history?.actor ?? "",
+    history_action: event.history?.action ?? "",
+    history_cursor: event.history?.historyCursor ?? "",
+  };
+}
+
+interface HistoryMutationRequest {
+  readonly expected_history_cursor?: string;
+  readonly expected_project_session_id?: string;
+}
+
+/** proto3 não distingue ausente de vazio: "" significa "não informado". */
+function emptyToUndefined(value: string | undefined): string | undefined {
+  return value === undefined || value.length === 0 ? undefined : value;
+}
+
+function serializeHistoryStatus(status: HistoryStatus): Record<string, unknown> {
+  return {
+    document_state_id: status.documentStateId,
+    history_cursor: status.historyCursor,
+    can_undo: status.canUndo,
+    can_redo: status.canRedo,
+    undo_label: status.undoLabel ?? "",
+    redo_label: status.redoLabel ?? "",
+    entries: status.entries.map((entry) => ({
+      id: entry.id,
+      label: entry.label,
+      actor: entry.actor,
+      timestamp_unix_ms: entry.timestamp.toString(),
+      barrier: entry.barrier,
+      undone: entry.undone,
+    })),
   };
 }
 
@@ -170,6 +220,9 @@ export class GrpcGateway {
       ProjectStatus: this.projectStatus,
       StreamEvents: this.streamEvents,
       StreamEventsV2: this.streamEventsV2,
+      Undo: this.undo,
+      Redo: this.redo,
+      HistoryStatus: this.historyStatus,
     });
   }
 
@@ -365,6 +418,51 @@ export class GrpcGateway {
       callback(toGrpcError(error));
     }
   };
+
+  private undo: grpc.handleUnaryCall<HistoryMutationRequest, unknown> = (call, callback) => {
+    void this.moveHistory("undo", call, callback);
+  };
+
+  private redo: grpc.handleUnaryCall<HistoryMutationRequest, unknown> = (call, callback) => {
+    void this.moveHistory("redo", call, callback);
+  };
+
+  private historyStatus: grpc.handleUnaryCall<{ limit?: number }, unknown> = (call, callback) => {
+    if (!this.authenticated(call)) return callback(authenticationError());
+    void this.options.surface
+      .historyStatus(call.request?.limit ? Number(call.request.limit) : undefined)
+      .then((status) => callback(null, serializeHistoryStatus(status)))
+      .catch((error: unknown) => callback(toGrpcError(error)));
+  };
+
+  private async moveHistory(
+    action: "undo" | "redo",
+    call: grpc.ServerUnaryCall<HistoryMutationRequest, unknown>,
+    callback: grpc.sendUnaryData<unknown>,
+  ): Promise<void> {
+    if (!this.authenticated(call)) return callback(authenticationError());
+    try {
+      // O gesto rende N eventos; capturar o cursor ANTES é o que permite
+      // devolvê-los todos na resposta, na ordem em que entraram no journal.
+      const before = this.options.journal.position.lastEventSeq;
+      const cursor = emptyToUndefined(call.request?.expected_history_cursor);
+      const session = emptyToUndefined(call.request?.expected_project_session_id);
+      const result =
+        action === "undo"
+          ? await this.options.surface.undo(cursor, session)
+          : await this.options.surface.redo(cursor, session);
+      callback(null, {
+        action: result.action,
+        history_entry_id: result.entry.id,
+        label: result.entry.label,
+        events: this.options.journal.since(before).map(serializeEvent),
+        document_state_id: result.documentStateId,
+        history_cursor: result.historyCursor,
+      });
+    } catch (error) {
+      callback(toGrpcError(error));
+    }
+  }
 
   private streamEvents: grpc.handleServerStreamingCall<
     { after_seq?: string | number },

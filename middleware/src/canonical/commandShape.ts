@@ -22,6 +22,8 @@ export const COMMAND_KINDS = [
   "entity/remove",
   "level/define",
   "level/update",
+  "level/patch",
+  "level/palette",
   "level/remove",
   "world/place",
   "world/unplace",
@@ -92,6 +94,20 @@ export function reshapeCommand(
       return { kind, level: payload as never, ...context };
     case "level/update":
       return { kind, level: payload as never, ...context };
+    case "level/patch":
+      return {
+        kind,
+        levelId: payload["levelId"] as string,
+        changes: payload["changes"] as never,
+        ...context,
+      };
+    case "level/palette":
+      return {
+        kind,
+        levelId: payload["levelId"] as string,
+        changes: payload["changes"] as never,
+        ...context,
+      };
     case "level/remove":
       return { kind, levelId: payload["levelId"] as string, ...context };
     case "world/place":

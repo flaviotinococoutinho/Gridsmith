@@ -674,6 +674,17 @@ void app.whenReady().then(async () => {
   while (pendingOpenPaths.length > 0) routeOpenPath(pendingOpenPaths.shift()!);
   // a tela inicial oferece os templates como cards; sem este handler ela só
   // conseguiria reabrir o diálogo nativo que o menu já usa
+  // Histórico global: a capacidade fica exposta ao renderer aqui. Trocar o
+  // Ctrl+Z do editor local por este caminho canônico é da frente F6/E10 — a
+  // vista ainda guarda estado no closure, e mover o atalho antes disso faria
+  // o desfazer global brigar com o desfazer local do IntGrid.
+  ipcMain.handle("p7m:history-status", (_event, limit?: number) => client.historyStatus(limit));
+  ipcMain.handle("p7m:history-undo", (_event, historyCursor?: string) =>
+    client.undo(historyCursor),
+  );
+  ipcMain.handle("p7m:history-redo", (_event, historyCursor?: string) =>
+    client.redo(historyCursor),
+  );
   ipcMain.handle("p7m:project-templates", async () => ({
     templates: await availableTemplates(),
   }));

@@ -24,6 +24,7 @@ import type {
   CameraSettings,
   EntityDefinition,
   EntityInstance,
+  LevelPaletteEntry,
   LevelSpec,
   LightSpec,
   MeshBinding,
@@ -32,7 +33,7 @@ import type {
 } from "../domain/BlueprintStore.js";
 import type { CanonicalOrchestrator, DispatchResult } from "./CanonicalOrchestrator.js";
 
-export const BLUEPRINT_DOCUMENT_VERSION = 3;
+export const BLUEPRINT_DOCUMENT_VERSION = 4;
 
 /**
  * Convenção espacial DECLARADA pelo documento (v3).
@@ -173,7 +174,54 @@ const MIGRATIONS = new Map<number, BlueprintMigration>([
   // em células, converte as posições para pixels do mundo. Ver a explicação
   // dos quatro ramos em `migrateToV3`.
   [2, migrateToV3],
+  // 3 → 4: a paleta de significados deixa de ser constante de build do editor
+  // e passa a ser dado do projeto.
+  [3, migrateLevelPalette],
 ]);
+
+/**
+ * Paleta default: o mesmo vocabulário que o editor trazia hardcoded, agora
+ * gravado no documento. Sem isto, abrir um projeto v3 no build v4 mostraria
+ * um nível pintado com significados sem nome nem cor.
+ */
+const DEFAULT_PALETTE: readonly LevelPaletteEntry[] = Object.freeze([
+  Object.freeze({ value: 1, name: "Chão", color: "#7a5230" }),
+  Object.freeze({ value: 2, name: "Parede", color: "#5a6a7a" }),
+  Object.freeze({ value: 3, name: "Perigo", color: "#b8433a" }),
+]);
+
+function migrateLevelPalette(document: Record<string, unknown>): Record<string, unknown> {
+  const levels = (Array.isArray(document["levels"]) ? document["levels"] : []).map((raw) => {
+    const level = raw as Record<string, unknown>;
+    if (Array.isArray(level["palette"])) return level;
+
+    const byValue = new Map<number, LevelPaletteEntry>(
+      DEFAULT_PALETTE.map((entry) => [entry.value, entry]),
+    );
+    // Um projeto pode ter sido pintado por agente ou por edição manual com
+    // valores fora da paleta do editor. Deixá-los sem entrada os tornaria
+    // invisíveis na UI, então cada um ganha nome e cor DETERMINÍSTICOS.
+    for (const value of Array.isArray(level["intGrid"]) ? level["intGrid"] : []) {
+      if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) continue;
+      if (byValue.has(value)) continue;
+      byValue.set(value, {
+        value,
+        name: `Significado ${value}`,
+        color: deterministicPaletteColor(value),
+      });
+    }
+    const palette = [...byValue.values()].sort((a, b) => a.value - b.value);
+    return { ...level, palette };
+  });
+
+  return { ...document, levels, schemaVersion: 4 };
+}
+
+/** Cor estável por valor: o mesmo projeto sempre migra para as mesmas cores. */
+function deterministicPaletteColor(value: number): string {
+  const hash = Math.imul(value, 2_654_435_761) >>> 8;
+  return `#${(hash & 0xffffff).toString(16).padStart(6, "0")}`;
+}
 
 /**
  * Os QUATRO ramos da 2 → 3.
@@ -197,7 +245,14 @@ function migrateToV3(document: Record<string, unknown>): Record<string, unknown>
     return { ...document, metadata: declared, schemaVersion: 3 };
   }
 
-  const origin = recognizeLegacyV2Document(document);
+  // A impressão digital compara o documento v2 INTEIRO. A partir da v4 os
+  // factories e fixtures de teste que simulam v2 podem carregar `palette` —
+  // um campo que não existia na v2 —, e o hash deixaria de casar: a conversão
+  // de coordenadas do template pré-correção pararia de disparar EM SILÊNCIO,
+  // corrompendo posições de projetos legados sem nenhum erro visível. Por
+  // isso o strip entra JUNTO com a v4, não antes: antes dela seria código
+  // morto impossível de testar.
+  const origin = recognizeLegacyV2Document(withoutLevelPalettes(document));
   if (!origin) {
     return {
       ...document,
@@ -218,6 +273,21 @@ function migrateToV3(document: Record<string, unknown>): Record<string, unknown>
  * Converte as posições de célula para pixels do mundo. Só é chamada para
  * documento de origem RECONHECIDA — nunca especula.
  */
+/** Remove `palette` de cada nível — só para efeito de impressão digital. */
+function withoutLevelPalettes(document: Record<string, unknown>): Record<string, unknown> {
+  const levels = Array.isArray(document["levels"]) ? document["levels"] : undefined;
+  if (!levels?.some((raw) => (raw as Record<string, unknown>)["palette"] !== undefined)) {
+    return document;
+  }
+  return {
+    ...document,
+    levels: levels.map((raw) => {
+      const { palette: _ignored, ...rest } = raw as Record<string, unknown>;
+      return rest;
+    }),
+  };
+}
+
 function withWorldPixelPositions(document: Record<string, unknown>): Record<string, unknown> {
   const tileSize = soleLevelTileSize(document);
 

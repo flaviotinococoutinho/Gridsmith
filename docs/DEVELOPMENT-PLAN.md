@@ -193,13 +193,13 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 | D8 | F3a residual: nenhuma view consome `constraints` — a UI não antecipa teto de luzes/células/atores | o merge existe no governor; nenhuma vista lê o registro | F3a (parte "consumo") |
 | D9 | F4: a governança é resolvida UMA vez no boot — o rail congela se a engine subir ou cair depois | só há uma chamada de `experience()`, dentro do boot | F4 |
 | D10 | F5 residual: status `failed` na projeção, reidratação abortando no primeiro erro sem trilha por item, fila única na fronteira do adapter | registrado no blockquote da frente F5 | F5 residual |
-| D11 | F6: undo/redo continua local ao IntGrid | o histórico do middleware ainda é só o relógio lógico | E9 |
+| D11 | F6: o Ctrl+Z da UI ainda vai ao IntGrid local | o histórico canônico existe e está exposto por IPC/GraphQL/gRPC/MCP; trocar o atalho exige antes tirar o estado da vista do closure | F6/E10 |
 | D12 | E5 pendente: publicação de artefato em duas fases, tombstones e rollback | o `ArtifactStore` só tem `publish` monofásico | E5 (receita §9.2) |
 | D13 | E6 pendente: camada de aplicação de assets + superfície fria GraphQL | `middleware/src/application/` não existe | E6 |
 | ~~D14~~ | ✅ **Entregue (E7).** Blueprint v3: `metadata` (nome, resolução de referência, convenção espacial declarada), `GridCoordinates` canônico e migração 2 → 3 com os quatro ramos por impressão digital | — | — |
 | D22 | A luz dos templates fica 8 px fora do centro geométrico do nível (`[136, 80]` onde o centro é `[128, 72]`) — a expressão original aplica a fórmula de centro de célula a um índice fracionário | `legacyLevelCenterPx` em `ProjectTemplates.ts`, com o desvio documentado | **órfã** — revelada pela E7 e deixada fora dela de propósito: corrigi-la move a luz de todo projeto novo, o que não pertence a um PR de migração |
 | ~~D15~~ | ✅ **Entregue (E8).** Domínio transacional (`planBatch`/`commitBatch`/`fork` com `mutationVersion` como CAS interno, `applyWithInverse`, inverso por kind, barreiras, rejeição de no-op), quatro kinds in-place e proveniência carimbada pela borda | — | — |
-| D16 | E9 pendente: histórico global transacional com `level/patch`, paleta e bump v4 | idem D11 + campos de histórico ausentes do proto | E9 (receita §9.4) |
+| ~~D16~~ | ✅ **Entregue (E9).** Histórico global transacional: pilhas past/future, undo/redo canônico com CAS por `historyCursor`, coalescing por gesto, barreiras, `level/patch`, paleta no documento (v4) e proto renumerado a partir do campo 10 | — | — |
 | D17 | E10 pendente: casca do workbench por contribuições (nenhum dos módulos de framework existe) | `frontend/src/core/` e `frontend/src/renderer/` não têm nenhum deles | E10 |
 | D18 | Cauda: asset browser com inspector, `spriteRenderer` com bump v5, campos do wizard sobre o núcleo puro da `main` | o "Novo" hoje só escolhe template por diálogo de botões | cauda pós-E10 |
 | D19 | DoD ainda não exige "todo domínio editável expõe create/update/delete" | o modelo segue assimétrico e o DoD não menciona simetria | F7 + E8 |
@@ -263,10 +263,15 @@ e adotado de uma vez, cada comando devolve o próprio inverso, e a proveniência
 é carimbada pela borda confiável — as três peças que o histórico global da E9
 consome.
 
-**Próximo passo natural: E9** (histórico global transacional: undo/redo
-canônico, `level/patch`, paleta e bump v4). Ela exige E7 **e** E8, ambas
-agora na `main`, e é **indivisível** — ver as armadilhas na §9.4. Em paralelo,
-E5 continua liberada — e F1 nunca esteve bloqueada.
+**E9 entregue.** Desfazer virou operação canônica: os inversos são despachados
+como comandos pelo mesmo caminho, então a engine vê a reversão como qualquer
+edição, e agente e humano compartilham o mesmo histórico.
+
+**Próximo passo natural: E10** (casca do workbench por contribuições), que a E9
+destravou e que absorve a frente F4. Ela é também o que permite o Ctrl+Z da UI
+migrar do IntGrid local para o histórico canônico — hoje a vista guarda estado
+no closure, e trocar o atalho antes disso faria os dois desfazeres brigarem.
+Em paralelo, E5 e E6 continuam liberadas — e F1 nunca esteve bloqueada.
 
 ## 9. Receitas executáveis
 
@@ -490,7 +495,24 @@ do platformer pré-correção move o player para o pixel esperado.
 
 ### 9.4. Receita E8 + E9 — domínio transacional e histórico global
 
-> ✅ **E8 entregue; E9 pendente.** Ajustes da E8 em relação ao plano original:
+> ✅ **E8 e E9 entregues.** Ajustes da E9 em relação ao plano original:
+>
+> 1. **`undo`/`redo` não usam `requestId`** para idempotência no failover: usam
+>    o `historyCursor`. É mais forte — um retry manda o mesmo cursor, que já
+>    não é o corrente, e é recusado como conflito; e o mesmo mecanismo protege
+>    contra dois clientes concorrentes, o que a dedupe por id não faria.
+> 2. **`documentStateId` é o id da entrada no topo da pilha**, não um hash de
+>    conteúdo. Volta ao valor anterior no undo, que é o que o contrato promete,
+>    sem custo de re-hashear o documento a cada comando.
+> 3. **A trilha do histórico viaja no ENVELOPE**, como a projeção — não dentro
+>    do evento canônico. O domínio não sabe que existe um histórico.
+> 4. **`historyStatus` é caminho FRIO** (só GraphQL no cliente): é leitura de
+>    UI, e duplicá-la no gRPC só somaria superfície a manter em paridade.
+> 5. O Ctrl+Z da UI **não** foi religado ao histórico canônico: a vista ainda
+>    guarda estado no closure (F6), e trocar o atalho antes disso faria o
+>    desfazer global brigar com o local. A capacidade está exposta e testada.
+>
+> Ajustes da E8 em relação ao plano original:
 >
 > 1. **`light/update` e `entitydef/update` substituem INTEGRALMENTE**, como
 >    `level/update` já fazia, em vez de aplicarem patch parcial. Um patch

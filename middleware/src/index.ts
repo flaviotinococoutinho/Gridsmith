@@ -115,6 +115,14 @@ async function main(): Promise<void> {
         status: projection.status,
         ...(projection.reason !== undefined ? { reason: projection.reason } : {}),
       },
+      {
+        actor: event.actor,
+        action: event.historyAction,
+        documentStateId: event.documentStateId,
+        historyCursor: event.historyCursor,
+        ...(event.transactionId !== undefined ? { transactionId: event.transactionId } : {}),
+        ...(event.historyEntryId !== undefined ? { historyEntryId: event.historyEntryId } : {}),
+      },
     );
   });
   sessions.on("sessionChanged", (event: ProjectSessionChangedEvent) => {

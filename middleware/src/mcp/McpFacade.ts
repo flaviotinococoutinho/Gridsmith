@@ -260,6 +260,44 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
   );
 
   server.registerTool(
+    "blueprint_undo",
+    {
+      description:
+        "Desfaz o último gesto do histórico pelo MESMO caminho canônico (os inversos são despachados como comandos). Informe historyCursor para recusar o desfazer caso alguém tenha editado desde a sua leitura.",
+      inputSchema: { historyCursor: z.string().optional() },
+    },
+    async ({ historyCursor }) => {
+      const result = await canonical.surface.undo(historyCursor);
+      return { content: [{ type: "text", text: jsonText(result) }] };
+    },
+  );
+
+  server.registerTool(
+    "blueprint_redo",
+    {
+      description: "Refaz o gesto desfeito mais recente, com o mesmo compare-and-swap por historyCursor.",
+      inputSchema: { historyCursor: z.string().optional() },
+    },
+    async ({ historyCursor }) => {
+      const result = await canonical.surface.redo(historyCursor);
+      return { content: [{ type: "text", text: jsonText(result) }] };
+    },
+  );
+
+  server.registerTool(
+    "blueprint_history",
+    {
+      description:
+        "Estado do histórico: identidade lógica do documento, cursor, se há o que desfazer/refazer e os gestos recentes com rótulo e proveniência.",
+      inputSchema: { limit: z.number().int().min(0).max(500).optional() },
+    },
+    async ({ limit }) => {
+      const status = await canonical.surface.historyStatus(limit);
+      return { content: [{ type: "text", text: jsonText(status) }] };
+    },
+  );
+
+  server.registerTool(
     "project_status",
     {
       description: "Retorna a identidade, sequência e estado de runtime da sessão de projeto ativa.",

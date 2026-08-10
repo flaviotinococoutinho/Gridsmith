@@ -206,6 +206,7 @@ export class MonoGameAdapter implements RuntimeAdapter {
         return { event: event.kind, status: "projected", detail };
       }
 
+      case "levelPatched":
       case "levelUpdated": {
         // Edição incremental: a engine não faz diff de tilemaps — remove e
         // redefine com os tiles re-resolvidos (mesma semântica do define).
@@ -223,6 +224,17 @@ export class MonoGameAdapter implements RuntimeAdapter {
         );
         return { event: event.kind, status: "projected", detail };
       }
+
+      case "levelPaletteChanged":
+        // A paleta nomeia e colore SIGNIFICADO para o editor; a engine recebe
+        // tiles já resolvidos e não conhece nomes. Renomear "Parede" não muda
+        // um pixel do jogo — dizer isso é mais honesto do que reenviar o
+        // tilemap inteiro fingindo que mudou algo.
+        return {
+          event: event.kind,
+          status: "skipped",
+          reason: `palette of "${event.level.levelId}" is editor vocabulary; the runtime consumes resolved tiles`,
+        };
 
       case "levelRemoved":
         await this.requestAtEpoch(

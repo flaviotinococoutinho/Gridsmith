@@ -64,6 +64,41 @@ export interface ProjectStatus {
   readonly createdAt?: string;
   readonly commandSequence: string;
   readonly runtimeState: "synchronized" | "deferred" | "failed";
+  /** Identidade lógica do conteúdo; volta ao valor anterior no undo. */
+  readonly documentStateId: string;
+  readonly historyCursor: string;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+}
+
+export type HistoryActor = "human" | "agent" | "pipeline";
+export type HistoryAction = "apply" | "undo" | "redo";
+
+export interface HistoryEntrySummary {
+  readonly id: string;
+  readonly label: string;
+  readonly actor: HistoryActor;
+  readonly timestamp: string;
+  readonly barrier: boolean;
+  readonly undone: boolean;
+}
+
+export interface HistoryStatus {
+  readonly documentStateId: string;
+  readonly historyCursor: string;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+  readonly undoLabel?: string | null;
+  readonly redoLabel?: string | null;
+  readonly entries: readonly HistoryEntrySummary[];
+}
+
+export interface HistoryOperationResult {
+  readonly action: HistoryAction;
+  readonly historyEntryId: string;
+  readonly label: string;
+  readonly documentStateId: string;
+  readonly historyCursor: string;
 }
 
 export interface ProjectOperationSummary {
@@ -149,6 +184,12 @@ const EVENT_BATCH_QUERY = `query EventBatch($instance: String!, $projectSessionI
 
 const PROJECT_STATUS_FIELDS = `
   active projectSessionId projectId createdAt commandSequence runtimeState
+  documentStateId historyCursor canUndo canRedo
+`;
+
+const HISTORY_STATUS_FIELDS = `
+  documentStateId historyCursor canUndo canRedo undoLabel redoLabel
+  entries { id label actor timestamp barrier undone }
 `;
 
 export interface EditorClientOptions {
@@ -449,6 +490,60 @@ export class EditorClient {
         { expectedProjectSessionId: expectedProjectSessionId ?? null },
       );
       return validateProjectStatus(data.projectClose);
+    });
+  }
+
+  /**
+   * Estado do histórico para a aba Histórico e os botões de desfazer.
+   *
+   * Caminho FRIO de propósito: é leitura de UI, não caminho quente de
+   * edição — mandá-la pelo gRPC só somaria superfície a manter em paridade.
+   */
+  historyStatus(limit?: number): Promise<HistoryStatus> {
+    return this.coldCall(async () => {
+      const data = await this.graphql.execute<{ historyStatus: HistoryStatus }>(
+        `query HistoryStatus($limit: Int) { historyStatus(limit: $limit) { ${HISTORY_STATUS_FIELDS} } }`,
+        { limit: limit ?? null },
+      );
+      return data.historyStatus;
+    });
+  }
+
+  /**
+   * Desfaz o último gesto.
+   *
+   * A idempotência no failover vem do `historyCursor`, não de um `requestId`:
+   * se o pedido chegou e o transporte caiu antes da resposta, o retry manda o
+   * MESMO cursor — que já não é o corrente — e é recusado como conflito em vez
+   * de desfazer duas ações. O compare-and-swap é mais forte que a dedupe por
+   * id, porque protege também contra dois clientes concorrentes.
+   */
+  undo(historyCursor?: string): Promise<HistoryOperationResult> {
+    return this.historyMutation("undo", historyCursor);
+  }
+
+  redo(historyCursor?: string): Promise<HistoryOperationResult> {
+    return this.historyMutation("redo", historyCursor);
+  }
+
+  private historyMutation(
+    operation: "undo" | "redo",
+    historyCursor?: string,
+  ): Promise<HistoryOperationResult> {
+    return this.coldCall(async () => {
+      const name = operation === "undo" ? "Undo" : "Redo";
+      const data = await this.graphql.execute<Record<string, HistoryOperationResult>>(
+        `mutation ${name}($historyCursor: String, $expectedProjectSessionId: String) {
+          ${operation}(historyCursor: $historyCursor, expectedProjectSessionId: $expectedProjectSessionId) {
+            action historyEntryId label documentStateId historyCursor
+          }
+        }`,
+        {
+          historyCursor: historyCursor ?? null,
+          expectedProjectSessionId: this.projectionState?.status.projectSessionId ?? null,
+        },
+      );
+      return data[operation]!;
     });
   }
 
@@ -1019,6 +1114,13 @@ function validateProjectStatus(status: ProjectStatus): ProjectStatus {
     active: status.active,
     commandSequence: status.commandSequence,
     runtimeState: status.runtimeState,
+    // Defaults tolerantes: um middleware anterior à v4 não publica estes
+    // campos, e recusar o status inteiro por causa deles transformaria uma
+    // incompatibilidade menor em "não consigo abrir projeto".
+    documentStateId: status.documentStateId ?? "baseline",
+    historyCursor: status.historyCursor ?? "0",
+    canUndo: status.canUndo ?? false,
+    canRedo: status.canRedo ?? false,
     ...(typeof status.projectSessionId === "string" && status.projectSessionId.length > 0
       ? { projectSessionId: status.projectSessionId }
       : {}),

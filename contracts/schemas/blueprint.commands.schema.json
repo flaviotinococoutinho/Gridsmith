@@ -156,6 +156,59 @@
         "$ref": "#/$defs/shared/level"
       }
     },
+    "level/patch": {
+      "description": "Edita células do IntGrid em lote. Exige `transactionId`: um patch é um GESTO (uma pincelada), e é o transactionId que permite ao histórico coalescer centenas de células num único item desfazível. Cada mudança carrega o valor ANTERIOR; divergência é conflito.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "levelId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "transactionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "changes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/shared/levelCellChange"
+            }
+          }
+        },
+        "required": [
+          "levelId",
+          "transactionId",
+          "changes"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "level/palette": {
+      "description": "Cria, edita ou apaga entradas da paleta do nível. Cada mudança carrega a entrada ANTERIOR (ou null); divergência é conflito.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "levelId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "changes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/shared/levelPaletteChange"
+            }
+          }
+        },
+        "required": [
+          "levelId",
+          "changes"
+        ],
+        "additionalProperties": false
+      }
+    },
     "level/remove": {
       "description": "Remove o nível e o posicionamento correspondente no world map.",
       "payload": {
@@ -576,6 +629,13 @@
             "items": {
               "$ref": "#/$defs/shared/autoTileRule"
             }
+          },
+          "palette": {
+            "type": "array",
+            "description": "Ordenada por value; ausente em documentos anteriores à v4",
+            "items": {
+              "$ref": "#/$defs/shared/levelPaletteEntry"
+            }
           }
         },
         "required": [
@@ -667,6 +727,94 @@
             "description": "Substitui em vez de mesclar"
           }
         },
+        "additionalProperties": false
+      },
+      "levelCellChange": {
+        "type": "object",
+        "description": "Mudança de UMA célula do IntGrid, índice linha-maior (y*width+x).",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "before": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 32767
+          },
+          "after": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 32767
+          }
+        },
+        "required": [
+          "index",
+          "before",
+          "after"
+        ],
+        "additionalProperties": false
+      },
+      "levelPaletteEntry": {
+        "type": "object",
+        "description": "Significado pintável: valor do IntGrid + nome e cor de exibição.",
+        "properties": {
+          "value": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32767
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          }
+        },
+        "required": [
+          "value",
+          "name",
+          "color"
+        ],
+        "additionalProperties": false
+      },
+      "levelPaletteChange": {
+        "type": "object",
+        "description": "Mudança de UMA entrada da paleta; null significa ausência (criar ou apagar).",
+        "properties": {
+          "value": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32767
+          },
+          "before": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/shared/levelPaletteEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "after": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/shared/levelPaletteEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "before",
+          "after"
+        ],
         "additionalProperties": false
       }
     }
