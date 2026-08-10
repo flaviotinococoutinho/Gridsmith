@@ -32,6 +32,8 @@ enum CommandKind {
   entity_remove
   level_define
   level_update
+  level_patch
+  level_palette
   level_remove
   world_place
   world_unplace
@@ -82,6 +84,64 @@ type CursorEventEnvelope {
   na resposta do dispatch.
   """
   projection: Projection
+  """
+  Trilha do histórico (documento v4): agrupa o gesto, identifica a entrada
+  desfazível e diz se o evento veio de uma edição, de um desfazer ou de um
+  refazer. `documentStateId` volta ao valor anterior no undo; `commandSequence`
+  NUNCA volta.
+  """
+  transactionId: String
+  documentStateId: String!
+  historyEntryId: String
+  actor: HistoryActor!
+  historyAction: HistoryAction!
+  historyCursor: String!
+}
+
+"Quem originou o comando; definido pela borda confiável, nunca pelo payload."
+enum HistoryActor {
+  human
+  agent
+  pipeline
+}
+
+enum HistoryAction {
+  apply
+  undo
+  redo
+}
+
+"Um item DESFAZÍVEL do histórico — o gesto do usuário, não o comando avulso."
+type HistoryEntrySummary {
+  id: String!
+  "Rótulo humano em pt-BR; nenhum id interno aparece aqui."
+  label: String!
+  actor: HistoryActor!
+  timestamp: String!
+  "Entrada sem inverso: desfazer PARA nela."
+  barrier: Boolean!
+  "true para as entradas já desfeitas (o ramo do redo)."
+  undone: Boolean!
+}
+
+type HistoryStatus {
+  documentStateId: String!
+  historyCursor: String!
+  canUndo: Boolean!
+  canRedo: Boolean!
+  undoLabel: String
+  redoLabel: String
+  entries: [HistoryEntrySummary!]!
+}
+
+"Resultado de um desfazer/refazer: um gesto pode render N eventos."
+type HistoryOperationResult {
+  action: HistoryAction!
+  historyEntryId: String!
+  label: String!
+  events: [CursorEventEnvelope!]!
+  documentStateId: String!
+  historyCursor: String!
 }
 
 "Janela incremental do EventJournal; events é vazio quando resyncRequired."
@@ -160,6 +220,11 @@ type ProjectStatus {
   createdAt: String
   "synchronized|deferred|failed"
   runtimeState: String!
+  "Identidade lógica do conteúdo; volta ao valor anterior no undo."
+  documentStateId: String!
+  historyCursor: String!
+  canUndo: Boolean!
+  canRedo: Boolean!
 }
 
 "Resultado uniforme das operações transacionais de projeto."
@@ -200,6 +265,8 @@ type Query {
   "Compatibilidade nominal; falha explicitamente porque não identifica processo nem sessão."
   eventsSince(afterSeq: Int!): [BlueprintEventEnvelope!]!
     @deprecated(reason: "Use eventBatch com middlewareInstanceId, projectSessionId e resyncRequired")
+  "Estado do histórico para a aba Histórico e os botões de desfazer."
+  historyStatus(limit: Int): HistoryStatus!
 }
 
 type Mutation {
@@ -213,6 +280,14 @@ type Mutation {
   projectClose(expectedProjectSessionId: String): ProjectStatus!
   "Alias legado transacional de projectOpenDocument."
   loadDocument(document: JSON!, expectedProjectSessionId: String): ReplaySummary!
+  """
+  Desfaz o último gesto pelo MESMO caminho canônico (os inversos são
+  despachados como comandos). `historyCursor` é o compare-and-swap: informe o
+  cursor que você viu e o pedido é recusado se outro cliente editou nesse
+  meio-tempo.
+  """
+  undo(historyCursor: String, expectedProjectSessionId: String): HistoryOperationResult!
+  redo(historyCursor: String, expectedProjectSessionId: String): HistoryOperationResult!
   "Alias legado transacional de projectCreate(templateId: ...)."
   newProjectFromTemplate(templateId: String!, expectedProjectSessionId: String): NewProjectResult!
 }

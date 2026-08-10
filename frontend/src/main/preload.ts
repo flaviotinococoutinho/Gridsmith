@@ -69,6 +69,14 @@ export interface P7mEditorApi {
     payload?: { filePath?: string; templateId?: string },
   ): Promise<ProjectStatusPayload>;
   projectStatus(): Promise<ProjectStatusPayload>;
+  /**
+   * Histórico global (documento v4). O `historyCursor` é o compare-and-swap:
+   * mandar o cursor que a UI viu recusa o desfazer se outra borda (um agente
+   * via MCP, por exemplo) editou nesse meio-tempo.
+   */
+  historyStatus(limit?: number): Promise<unknown>;
+  undo(historyCursor?: string): Promise<unknown>;
+  redo(historyCursor?: string): Promise<unknown>;
   /** Templates de projeto para a tela inicial (cards de "Novo projeto"). */
   projectTemplates(): Promise<{
     templates: Array<{ id: string; label: string; description: string }>;
@@ -100,6 +108,9 @@ const api: P7mEditorApi = {
   },
   projectCommand: (command, payload) => ipcRenderer.invoke("p7m:project-command", command, payload),
   projectStatus: () => ipcRenderer.invoke("p7m:project-status"),
+  historyStatus: (limit?: number) => ipcRenderer.invoke("p7m:history-status", limit),
+  undo: (historyCursor?: string) => ipcRenderer.invoke("p7m:history-undo", historyCursor),
+  redo: (historyCursor?: string) => ipcRenderer.invoke("p7m:history-redo", historyCursor),
   projectTemplates: () => ipcRenderer.invoke("p7m:project-templates"),
   onProjectStatus: (listener) => {
     ipcRenderer.on("p7m:project-status", (_event, status) => listener(status));

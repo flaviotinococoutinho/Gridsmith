@@ -15,7 +15,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSchema, graphql, type GraphQLSchema } from "graphql";
-import type { EditorSurface } from "../canonical/EditorSurface.js";
+import type { EditorSurface, HistoryDispatchResult } from "../canonical/EditorSurface.js";
 import type {
   EventEnvelope,
   EnvelopeProjection,
@@ -80,6 +80,12 @@ function serializeEvent(event: EventEnvelope): {
   kind: string;
   payload: unknown;
   projection?: EnvelopeProjection;
+  transactionId: string | null;
+  documentStateId: string;
+  historyEntryId: string | null;
+  actor: string;
+  historyAction: string;
+  historyCursor: string;
 } {
   return {
     seq: event.seq.toString(),
@@ -89,6 +95,29 @@ function serializeEvent(event: EventEnvelope): {
     kind: event.kind,
     payload: event.payload,
     ...(event.projection ? { projection: event.projection } : {}),
+    // Eventos de controle (troca de sessão) não têm trilha: publicam o
+    // baseline em vez de mentir um cursor.
+    transactionId: event.history?.transactionId ?? null,
+    documentStateId: event.history?.documentStateId ?? "baseline",
+    historyEntryId: event.history?.historyEntryId ?? null,
+    actor: event.history?.actor ?? "human",
+    historyAction: event.history?.action ?? "apply",
+    historyCursor: event.history?.historyCursor ?? "0",
+  };
+}
+
+/** Um gesto desfeito rende N eventos; o resultado os publica em ordem. */
+function serializeHistoryOperation(
+  result: HistoryDispatchResult,
+  events: readonly EventEnvelope[],
+): Record<string, unknown> {
+  return {
+    action: result.action,
+    historyEntryId: result.entry.id,
+    label: result.entry.label,
+    events: events.map(serializeEvent),
+    documentStateId: result.documentStateId,
+    historyCursor: result.historyCursor,
   };
 }
 
@@ -244,6 +273,7 @@ export class GraphQlGateway {
         surface.resolveExperience(args.family, args.version),
       templates: () => surface.listTemplates(),
       projectStatus: () => surface.projectStatus(),
+      historyStatus: (args: { limit?: number }) => surface.historyStatus(args.limit),
       eventBatch: (args: {
         middlewareInstanceId: string;
         projectSessionId?: string;
@@ -258,6 +288,16 @@ export class GraphQlGateway {
           RpcErrorCode.InvalidParams,
           `eventsSince is unsafe without projectSessionId; use eventBatch`,
         );
+      },
+      undo: async (args: { historyCursor?: string; expectedProjectSessionId?: string }) => {
+        const before = journal.position.lastEventSeq;
+        const result = await surface.undo(args.historyCursor, args.expectedProjectSessionId);
+        return serializeHistoryOperation(result, journal.since(before));
+      },
+      redo: async (args: { historyCursor?: string; expectedProjectSessionId?: string }) => {
+        const before = journal.position.lastEventSeq;
+        const result = await surface.redo(args.historyCursor, args.expectedProjectSessionId);
+        return serializeHistoryOperation(result, journal.since(before));
       },
       dispatch: async (args: { kind: string; payload: unknown; requestId?: string }) => {
         const result = await surface.dispatchByKind(

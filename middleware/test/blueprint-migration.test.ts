@@ -91,7 +91,7 @@ const positionsOf = (doc: BlueprintDocument): unknown[] => [
 test("ramo (a): template de plataforma PRÉ-correção tem as posições convertidas para pixels", () => {
   const migrated = migrateBlueprintDocument(fixture("v2-platformer-base"));
 
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, BLUEPRINT_DOCUMENT_VERSION);
   assert.equal(migrated.metadata.name, "Plataforma 2D");
   // [2, 7] em células → centro da célula em pixels
   assert.deepEqual(migrated.entities[0]?.position, [40, 120]);
@@ -113,7 +113,7 @@ test("ramo (b): template de plataforma PÓS-correção não tem nenhuma posiçã
   const original = fixture("v2-platformer-main");
   const migrated = migrateBlueprintDocument(structuredClone(original));
 
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, BLUEPRINT_DOCUMENT_VERSION);
   assert.equal(migrated.metadata.name, "Plataforma 2D");
   assert.deepEqual(
     positionsOf(migrated),
@@ -125,7 +125,7 @@ test("ramo (c): template top-down é reconhecido e não tem posição alterada",
   const original = fixture("v2-topdown-main");
   const migrated = migrateBlueprintDocument(structuredClone(original));
 
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, BLUEPRINT_DOCUMENT_VERSION);
   assert.equal(migrated.metadata.name, "Aventura top-down");
   assert.deepEqual(
     positionsOf(migrated),
@@ -139,7 +139,7 @@ test("ramo (d): documento editado à mão NUNCA tem coordenada convertida", () =
   const original = fixture("v2-editado-a-mao");
   const migrated = migrateBlueprintDocument(structuredClone(original));
 
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, BLUEPRINT_DOCUMENT_VERSION);
   assert.equal(migrated.metadata.name, "Projeto importado");
   assert.deepEqual(
     positionsOf(migrated),
@@ -236,4 +236,60 @@ test("documento que já traz metadata válida atravessa a 2 → 3 intacto", () =
   assert.equal(migrated.metadata.name, "Nome escolhido pelo usuário");
   // e, por trazer metadata, NÃO é tratado como template legado: sem conversão
   assert.deepEqual(migrated.entities[0]?.position, [2, 7]);
+});
+
+// ---------------------------------------------------------------------------
+// Migração 3 → 4: a paleta deixa de ser constante de build do editor
+// ---------------------------------------------------------------------------
+
+test("v3 → v4 dá a paleta default a todo nível que não tinha", () => {
+  const migrated = migrateBlueprintDocument(fixture("v3-platformer"));
+
+  assert.equal(migrated.schemaVersion, BLUEPRINT_DOCUMENT_VERSION);
+  assert.deepEqual(
+    migrated.levels[0]?.palette,
+    [
+      { value: 1, name: "Chão", color: "#7a5230" },
+      { value: 2, name: "Parede", color: "#5a6a7a" },
+      { value: 3, name: "Perigo", color: "#b8433a" },
+    ],
+    "o vocabulário que o editor trazia hardcoded passa a viver no documento",
+  );
+  assert.deepEqual(migrated.entities[0]?.position, [40, 120], "nada mais foi tocado");
+});
+
+test("v3 → v4 nomeia também os significados pintados fora da paleta do editor", () => {
+  // Um agente (ou uma edição manual) pode ter pintado 7. Sem entrada, esse
+  // significado ficaria invisível na UI depois da migração.
+  const doc = fixture("v3-platformer");
+  const levels = doc["levels"] as Record<string, unknown>[];
+  const grid = [...(levels[0]!["intGrid"] as number[])];
+  grid[5] = 7;
+  levels[0] = { ...levels[0], intGrid: grid };
+
+  const migrated = migrateBlueprintDocument(doc);
+  const sete = migrated.levels[0]?.palette?.find((entry) => entry.value === 7);
+
+  assert.ok(sete, "o valor 7 ganhou entrada");
+  assert.match(sete.color, /^#[0-9a-f]{6}$/);
+  assert.equal(
+    migrateBlueprintDocument(fixture("v3-platformer")).levels[0]?.palette?.length,
+    3,
+    "e um nível sem valores extras continua com as três entradas default",
+  );
+});
+
+test("a paleta NÃO entra na impressão digital da 2 → 3", () => {
+  // Armadilha que a receita marca como SILENCIOSA: a partir da v4, fixtures e
+  // factories que simulam v2 podem carregar `palette`. Sem o strip, o
+  // fingerprint do template pré-correção deixaria de casar e a conversão de
+  // coordenadas simplesmente não dispararia — sem erro nenhum.
+  const comPaleta = fixture("v2-platformer-base");
+  const levels = comPaleta["levels"] as Record<string, unknown>[];
+  levels[0] = { ...levels[0], palette: [{ value: 1, name: "Chão", color: "#7a5230" }] };
+
+  const migrated = migrateBlueprintDocument(comPaleta);
+
+  assert.equal(migrated.metadata.name, "Plataforma 2D", "a origem continua reconhecida");
+  assert.deepEqual(migrated.entities[0]?.position, [40, 120], "a conversão disparou");
 });

@@ -17,7 +17,13 @@ import {
   type ReplaySummary,
 } from "./BlueprintSerializer.js";
 import { getProjectTemplate, PROJECT_TEMPLATES } from "./ProjectTemplates.js";
-import type { DispatchResult } from "./CanonicalOrchestrator.js";
+import type { DispatchResult, HistoryDispatchResult } from "./CanonicalOrchestrator.js";
+
+// As bordas de transporte só podem importar a SUPERFÍCIE (regra R12), então os
+// tipos que elas serializam são reexportados por aqui em vez de obrigá-las a
+// alcançar o orquestrador.
+export type { DispatchResult, HistoryDispatchResult } from "./CanonicalOrchestrator.js";
+export type { HistoryStatus, HistoryEntrySummary } from "./CommandHistory.js";
 import {
   ProjectNotOpenError,
   ProjectSessionConflictError,
@@ -27,6 +33,12 @@ import {
   type SessionDispatchResult,
 } from "./ProjectSessionManager.js";
 import { COMMAND_KINDS, reshapeCommand } from "./commandShape.js";
+import {
+  HistoryBarrierError,
+  HistoryConflictError,
+  HistoryUnavailableError,
+  type HistoryStatus,
+} from "./CommandHistory.js";
 import type { BlueprintCommand, CommandActor } from "../domain/BlueprintStore.js";
 import type { ExperienceGovernor, ResolvedExperience } from "../runtime/ExperienceGovernor.js";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
@@ -248,6 +260,46 @@ export class EditorSurface {
     return this.options.sessions.status;
   }
 
+  /** Estado do histórico para a aba Histórico e para os botões de desfazer. */
+  historyStatus(limit?: unknown): Promise<HistoryStatus> {
+    const normalized = limit === undefined ? 50 : limit;
+    if (typeof normalized !== "number" || !Number.isInteger(normalized) || normalized < 0) {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `"limit" must be a non-negative integer`);
+    }
+    return this.runHistory(() => this.options.sessions.historyStatus(normalized));
+  }
+
+  /**
+   * `historyCursor` é o compare-and-swap do desfazer: o cliente manda o cursor
+   * que viu, e se outro cliente editou nesse meio-tempo o pedido é recusado em
+   * vez de desfazer uma ação que o usuário nem sabe que existe.
+   */
+  undo(expectedHistoryCursor?: unknown, expectedProjectSessionId?: unknown): Promise<HistoryDispatchResult> {
+    return this.runHistory(() =>
+      this.options.sessions.historyUndo(
+        optionalId(expectedHistoryCursor, "historyCursor"),
+        optionalId(expectedProjectSessionId, "expectedProjectSessionId"),
+      ),
+    );
+  }
+
+  redo(expectedHistoryCursor?: unknown, expectedProjectSessionId?: unknown): Promise<HistoryDispatchResult> {
+    return this.runHistory(() =>
+      this.options.sessions.historyRedo(
+        optionalId(expectedHistoryCursor, "historyCursor"),
+        optionalId(expectedProjectSessionId, "expectedProjectSessionId"),
+      ),
+    );
+  }
+
+  private async runHistory<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      throw this.toApplicationError(error);
+    }
+  }
+
   async projectCreate(
     projectId?: unknown,
     templateId?: unknown,
@@ -391,6 +443,15 @@ export class EditorSurface {
     if (error instanceof ProjectSessionConflictError) {
       return new JsonRpcError(RpcErrorCode.ProjectSessionConflict, error.message);
     }
+    // Conflito e barreira de histórico são estados de negócio previstos, não
+    // falhas internas: cada um vira um código estável que a UI sabe traduzir
+    // ("outra pessoa editou" × "não há mais o que desfazer").
+    if (error instanceof HistoryConflictError) {
+      return new JsonRpcError(RpcErrorCode.ProjectSessionConflict, error.message);
+    }
+    if (error instanceof HistoryBarrierError || error instanceof HistoryUnavailableError) {
+      return new JsonRpcError(RpcErrorCode.InvalidParams, error.message);
+    }
     return error;
   }
 
@@ -454,6 +515,15 @@ function emptyProjectionSnapshot(): CompleteProjectionSnapshot {
 }
 
 /** JSON canônico suficiente para detectar reutilização indevida de requestId. */
+/** Id opcional vindo do fio: string não vazia, ou ausente. */
+function optionalId(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || value.length === 0) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"${field}" must be a non-empty string`);
+  }
+  return value;
+}
+
 function stableJson(value: unknown, seen = new Set<object>()): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
     return JSON.stringify(value);

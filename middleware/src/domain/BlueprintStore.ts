@@ -99,6 +99,21 @@ export interface EntityInstance {
 }
 
 /**
+ * Significado pintável do nível: o vocabulário CURADO do projeto.
+ *
+ * Antes da v4 a paleta era constante de build no frontend — o usuário podia
+ * pintar três significados fixos e nada mais. Trazendo-a para o documento, a
+ * paleta passa a ser dado do projeto: versionada, diffável e editável.
+ */
+export interface LevelPaletteEntry {
+  /** Valor do IntGrid que esta entrada nomeia (1..32767; 0 é sempre "vazio"). */
+  readonly value: number;
+  readonly name: string;
+  /** Cor de exibição no editor, "#rrggbb". */
+  readonly color: string;
+}
+
+/**
  * Nível no modelo canônico (LDtk-like): o designer edita o IntGrid de
  * SIGNIFICADO + regras; a resolução em tiles é responsabilidade do adapter
  * de runtime na projeção (função pura com seed — determinística).
@@ -112,7 +127,13 @@ export interface LevelSpec {
   /** width*height valores linha-maior; 0 = vazio. */
   readonly intGrid: readonly number[];
   readonly rules: readonly AutoTileRule[];
+  /** Ordenada por `value`; ausente em documentos anteriores à v4. */
+  readonly palette?: readonly LevelPaletteEntry[];
 }
+
+/** Faixa de valores pintáveis do IntGrid (0 é o vazio implícito). */
+export const MIN_PALETTE_VALUE = 1;
+export const MAX_PALETTE_VALUE = 32767;
 
 /** Limite alinhado ao TilemapStore da engine (256×256). */
 export const MAX_LEVEL_CELLS = 256 * 256;
@@ -139,6 +160,21 @@ export interface CommandMetadata {
 export interface CommandContext {
   readonly transactionId?: string;
   readonly metadata?: CommandMetadata;
+}
+
+/** Mudança de UMA célula do IntGrid, com o valor anterior explícito. */
+export interface LevelCellChange {
+  /** Índice linha-maior na grade (`y * width + x`). */
+  readonly index: number;
+  readonly before: number;
+  readonly after: number;
+}
+
+/** Mudança de UMA entrada da paleta; `null` significa ausência. */
+export interface LevelPaletteChange {
+  readonly value: number;
+  readonly before: LevelPaletteEntry | null;
+  readonly after: LevelPaletteEntry | null;
 }
 
 /** Mudança de um campo tipado de instância, com o valor anterior explícito. */
@@ -173,6 +209,16 @@ type Command =
   | { readonly kind: "entity/remove"; readonly entityId: string }
   | { readonly kind: "level/define"; readonly level: LevelSpec }
   | { readonly kind: "level/update"; readonly level: LevelSpec }
+  | {
+      readonly kind: "level/patch";
+      readonly levelId: string;
+      readonly changes: readonly LevelCellChange[];
+    }
+  | {
+      readonly kind: "level/palette";
+      readonly levelId: string;
+      readonly changes: readonly LevelPaletteChange[];
+    }
   | { readonly kind: "level/remove"; readonly levelId: string }
   | { readonly kind: "world/place"; readonly placement: WorldPlacement }
   | { readonly kind: "world/unplace"; readonly levelId: string };
@@ -218,6 +264,16 @@ export type BlueprintEvent =
   | { readonly kind: "entityRemoved"; readonly entityId: string }
   | { readonly kind: "levelDefined"; readonly level: LevelSpec }
   | { readonly kind: "levelUpdated"; readonly level: LevelSpec }
+  | {
+      readonly kind: "levelPatched";
+      readonly level: LevelSpec;
+      readonly changes: readonly LevelCellChange[];
+    }
+  | {
+      readonly kind: "levelPaletteChanged";
+      readonly level: LevelSpec;
+      readonly changes: readonly LevelPaletteChange[];
+    }
   | { readonly kind: "levelRemoved"; readonly levelId: string }
   | { readonly kind: "worldLevelPlaced"; readonly placement: WorldPlacement }
   | { readonly kind: "worldLevelUnplaced"; readonly levelId: string };
@@ -622,8 +678,8 @@ export class BlueprintStore {
         if (this.levels.has(level.levelId)) {
           throw new JsonRpcError(RpcErrorCode.DuplicateId, `Level "${level.levelId}" is already defined`);
         }
-        this.levels.set(level.levelId, Object.freeze({ ...level }));
-        return applied({ kind: "levelDefined", level }, [
+        this.levels.set(level.levelId, normalizeLevel(level));
+        return applied({ kind: "levelDefined", level: this.levels.get(level.levelId)! }, [
           { kind: "level/remove", levelId: level.levelId },
         ]);
       }
@@ -637,10 +693,114 @@ export class BlueprintStore {
             `Level "${level.levelId}" does not exist — use level/define to create it`,
           );
         }
-        rejectNoop(valuesEqual(previous, level), `level/update would not change "${level.levelId}"`);
-        this.levels.set(level.levelId, Object.freeze({ ...level }));
-        return applied({ kind: "levelUpdated", level }, [
+        rejectNoop(
+          valuesEqual(previous, normalizeLevel(level)),
+          `level/update would not change "${level.levelId}"`,
+        );
+        this.levels.set(level.levelId, normalizeLevel(level));
+        return applied({ kind: "levelUpdated", level: this.levels.get(level.levelId)! }, [
           { kind: "level/update", level: previous },
+        ]);
+      }
+      case "level/patch": {
+        const previous = this.levels.get(command.levelId);
+        if (!previous) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `Level "${command.levelId}" does not exist`);
+        }
+        // Um patch é um GESTO (uma pincelada), não um comando avulso: sem
+        // transactionId o histórico não teria como coalescer as centenas de
+        // células de um arrasto num único item desfazível.
+        if (typeof command.transactionId !== "string" || command.transactionId.length === 0) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `"level/patch" requires a transactionId identifying the gesture`,
+          );
+        }
+        if (!Array.isArray(command.changes) || command.changes.length === 0) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `"changes" must be a non-empty array`);
+        }
+
+        const cells = [...previous.intGrid];
+        let effective = 0;
+        for (const change of command.changes) {
+          if (!Number.isInteger(change.index) || change.index < 0 || change.index >= cells.length) {
+            throw new JsonRpcError(
+              RpcErrorCode.InvalidParams,
+              `Cell index ${String(change.index)} is outside level "${command.levelId}"`,
+            );
+          }
+          if (!Number.isInteger(change.after) || change.after < 0 || change.after > MAX_PALETTE_VALUE) {
+            throw new JsonRpcError(
+              RpcErrorCode.InvalidParams,
+              `Cell value must be an integer between 0 and ${MAX_PALETTE_VALUE}`,
+            );
+          }
+          // `before` divergente = o cliente pintou sobre uma leitura velha.
+          if (cells[change.index] !== change.before) {
+            throw new JsonRpcError(
+              RpcErrorCode.ProjectSessionConflict,
+              `Cell ${change.index} of "${command.levelId}" changed since it was read`,
+            );
+          }
+          if (change.before !== change.after) effective++;
+          cells[change.index] = change.after;
+        }
+        rejectNoop(effective === 0, `level/patch would not change "${command.levelId}"`);
+
+        const level: LevelSpec = Object.freeze({ ...previous, intGrid: Object.freeze(cells) });
+        this.levels.set(level.levelId, level);
+        return applied({ kind: "levelPatched", level, changes: command.changes }, [
+          {
+            kind: "level/patch",
+            levelId: command.levelId,
+            transactionId: command.transactionId,
+            changes: command.changes.map((change) => ({
+              index: change.index,
+              before: change.after,
+              after: change.before,
+            })),
+          },
+        ]);
+      }
+      case "level/palette": {
+        const previous = this.levels.get(command.levelId);
+        if (!previous) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `Level "${command.levelId}" does not exist`);
+        }
+        if (!Array.isArray(command.changes) || command.changes.length === 0) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `"changes" must be a non-empty array`);
+        }
+
+        const byValue = new Map((previous.palette ?? []).map((entry) => [entry.value, entry]));
+        let effective = 0;
+        for (const change of command.changes) {
+          validatePaletteValue(change.value);
+          if (change.after !== null) validatePaletteEntry(change.after, change.value);
+          const current = byValue.get(change.value) ?? null;
+          if (!valuesEqual(current, change.before)) {
+            throw new JsonRpcError(
+              RpcErrorCode.ProjectSessionConflict,
+              `Palette entry ${change.value} of "${command.levelId}" changed since it was read`,
+            );
+          }
+          if (!valuesEqual(change.before, change.after)) effective++;
+          if (change.after === null) byValue.delete(change.value);
+          else byValue.set(change.value, Object.freeze({ ...change.after }));
+        }
+        rejectNoop(effective === 0, `level/palette would not change "${command.levelId}"`);
+
+        const level = normalizeLevel({ ...previous, palette: [...byValue.values()] });
+        this.levels.set(level.levelId, level);
+        return applied({ kind: "levelPaletteChanged", level, changes: command.changes }, [
+          {
+            kind: "level/palette",
+            levelId: command.levelId,
+            changes: command.changes.map((change) => ({
+              value: change.value,
+              before: change.after,
+              after: change.before,
+            })),
+          },
         ]);
       }
       case "level/remove": {
@@ -867,6 +1027,22 @@ function validateLevel(level: LevelSpec): void {
       `Level exceeds ${MAX_LEVEL_CELLS} cells (engine tilemap slot limit)`,
     );
   }
+  if (level.palette !== undefined) {
+    if (!Array.isArray(level.palette)) {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `"palette" must be an array`);
+    }
+    const seen = new Set<number>();
+    for (const entry of level.palette) {
+      validatePaletteEntry(entry);
+      if (seen.has(entry.value)) {
+        throw new JsonRpcError(
+          RpcErrorCode.InvalidParams,
+          `Duplicate palette value ${entry.value}`,
+        );
+      }
+      seen.add(entry.value);
+    }
+  }
   try {
     validateGrid({ width: level.width, height: level.height, values: level.intGrid });
     validateRules(level.rules);
@@ -1077,6 +1253,51 @@ function validateBinding(b: MeshBinding): void {
   }
   if (!Number.isInteger(b.strideInBytes) || b.strideInBytes < 4) {
     throw new JsonRpcError(RpcErrorCode.InvalidBinaryLayout, `"strideInBytes" must be an integer >= 4`);
+  }
+}
+
+/**
+ * Forma canônica do nível: paleta ordenada por `value` e congelada.
+ *
+ * Ordenar na entrada, e não na leitura, é o que torna a comparação estrutural
+ * de `level/update` confiável — sem isso, dois níveis idênticos com a paleta
+ * em ordens diferentes pareceriam distintos e o no-op não seria detectado.
+ */
+function normalizeLevel(level: LevelSpec): LevelSpec {
+  if (level.palette === undefined) return Object.freeze({ ...level });
+  const palette = [...level.palette]
+    .sort((a, b) => a.value - b.value)
+    .map((entry) => Object.freeze({ ...entry }));
+  return Object.freeze({ ...level, palette: Object.freeze(palette) });
+}
+
+function validatePaletteValue(value: unknown): void {
+  if (
+    !Number.isInteger(value) ||
+    (value as number) < MIN_PALETTE_VALUE ||
+    (value as number) > MAX_PALETTE_VALUE
+  ) {
+    throw new JsonRpcError(
+      RpcErrorCode.InvalidParams,
+      `Palette value must be an integer between ${MIN_PALETTE_VALUE} and ${MAX_PALETTE_VALUE} ` +
+        `(0 is the implicit empty cell)`,
+    );
+  }
+}
+
+function validatePaletteEntry(entry: LevelPaletteEntry, expectedValue?: number): void {
+  validatePaletteValue(entry.value);
+  if (expectedValue !== undefined && entry.value !== expectedValue) {
+    throw new JsonRpcError(
+      RpcErrorCode.InvalidParams,
+      `Palette entry declares value ${entry.value} but the change targets ${expectedValue}`,
+    );
+  }
+  if (typeof entry.name !== "string" || entry.name.trim().length === 0) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `Palette entry requires a non-empty "name"`);
+  }
+  if (typeof entry.color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(entry.color)) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `Palette "color" must be "#rrggbb"`);
   }
 }
 

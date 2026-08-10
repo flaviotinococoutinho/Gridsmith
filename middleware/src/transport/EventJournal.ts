@@ -24,6 +24,22 @@ export interface EnvelopeProjection {
   readonly reason?: string;
 }
 
+/**
+ * Trilha do histórico que viaja NO ENVELOPE, não dentro do evento canônico.
+ *
+ * Mesma razão de `projection`: é metadado de transporte. O evento de domínio
+ * não sabe que existe um histórico, e um cliente precisa saber se o que
+ * chegou foi uma edição, um desfazer ou um refazer para não duplicar estado.
+ */
+export interface EnvelopeHistory {
+  readonly actor: string;
+  readonly action: string;
+  readonly documentStateId: string;
+  readonly historyCursor: string;
+  readonly transactionId?: string;
+  readonly historyEntryId?: string;
+}
+
 export interface EventEnvelope {
   readonly seq: EventSequence;
   readonly projectSessionId: string;
@@ -33,6 +49,8 @@ export interface EventEnvelope {
   readonly payload: unknown;
   /** Ausente em eventos de controle e quando não há adapter de runtime. */
   readonly projection?: EnvelopeProjection;
+  /** Ausente em eventos de controle (troca de sessão). */
+  readonly history?: EnvelopeHistory;
 }
 
 export type ResyncReason =
@@ -164,6 +182,7 @@ export class EventJournal extends EventEmitter {
     kind: string,
     payload: unknown,
     projection?: EnvelopeProjection,
+    history?: EnvelopeHistory,
   ): EventEnvelope | undefined {
     const sequence = parseEventSequence(commandSequence);
     if (
@@ -187,6 +206,7 @@ export class EventJournal extends EventEmitter {
       // congela a CÓPIA: broadcast JSON-RPC e stream gRPC compartilham a mesma
       // referência do ring — o freeze do envelope é raso.
       ...(projection ? { projection: Object.freeze({ ...projection }) } : {}),
+      ...(history ? { history: Object.freeze({ ...history }) } : {}),
     });
     this.partition.ring.push(envelope);
     if (this.partition.ring.length > this.capacity) this.partition.ring.shift();

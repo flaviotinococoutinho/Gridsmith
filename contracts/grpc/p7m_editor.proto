@@ -36,6 +36,53 @@ service EditorHotPath {
   }
   // Primeiro frame é status; eventos só seguem quando não exige resync.
   rpc StreamEventsV2(EventCursorRequest) returns (stream EventStreamFrame);
+  // Histórico global: desfazer/refazer pelo MESMO caminho canônico, com
+  // compare-and-swap por history_cursor.
+  rpc Undo(HistoryMutationRequest) returns (HistoryOperationReply);
+  rpc Redo(HistoryMutationRequest) returns (HistoryOperationReply);
+  rpc HistoryStatus(HistoryStatusRequest) returns (HistoryStatusReply);
+}
+
+message HistoryMutationRequest {
+  // Cursor que o cliente viu; vazio dispensa o compare-and-swap.
+  string expected_history_cursor = 1;
+  string expected_project_session_id = 2;
+}
+
+message HistoryStatusRequest {
+  uint32 limit = 1;
+}
+
+message HistoryEntrySummary {
+  string id = 1;
+  string label = 2;
+  // human|agent|pipeline
+  string actor = 3;
+  uint64 timestamp_unix_ms = 4;
+  bool barrier = 5;
+  // true para as entradas já desfeitas (o ramo do redo).
+  bool undone = 6;
+}
+
+message HistoryStatusReply {
+  string document_state_id = 1;
+  string history_cursor = 2;
+  bool can_undo = 3;
+  bool can_redo = 4;
+  string undo_label = 5;
+  string redo_label = 6;
+  repeated HistoryEntrySummary entries = 7;
+}
+
+message HistoryOperationReply {
+  // apply|undo|redo
+  string action = 1;
+  string history_entry_id = 2;
+  string label = 3;
+  // Um gesto desfeito publica N eventos, um por comando inverso.
+  repeated EventEnvelope events = 4;
+  string document_state_id = 5;
+  string history_cursor = 6;
 }
 
 message HealthRequest {}
@@ -129,6 +176,11 @@ message ProjectStatusReply {
   uint64 created_at_unix_ms = 5;
   // synchronized|deferred|failed
   string runtime_state = 6;
+  // Identidade lógica do conteúdo e posição no histórico (documento v4).
+  string document_state_id = 7;
+  string history_cursor = 8;
+  bool can_undo = 9;
+  bool can_redo = 10;
 }
 
 message ProjectOperationReply {
@@ -167,6 +219,27 @@ message EventEnvelope {
   string projection_status = 8;
   // Razão acionável quando o status é skipped ou deferred.
   string projection_reason = 9;
+
+  // --- Trilha do histórico (documento v4) ---------------------------------
+  // Os campos 1-9 acima são IMUTÁVEIS: já foram publicados e um cliente
+  // antigo os decodifica por número. Todo campo de histórico entra a partir
+  // do 10 — reaproveitar 7/8/9 não seria conflito de texto, seria
+  // incompatibilidade BINÁRIA: o proto3 decodificaria um campo como o outro
+  // em silêncio, e um build intermediário leria `projection_status` onde o
+  // outro escreveu `transaction_id`.
+  //
+  // Agrupa os comandos de UM gesto do usuário (um arrasto = uma entrada).
+  string transaction_id = 10;
+  // Identidade lógica do conteúdo; VOLTA ao valor anterior no undo.
+  string document_state_id = 11;
+  // Entrada desfazível a que este evento pertence.
+  string history_entry_id = 12;
+  // Proveniência: human, agent ou pipeline.
+  string actor = 13;
+  // apply, undo ou redo.
+  string history_action = 14;
+  // Posição no histórico, como string (CAS do undo/redo).
+  string history_cursor = 15;
 }
 
 message EventStreamStatus {

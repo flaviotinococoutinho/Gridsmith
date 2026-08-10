@@ -87,11 +87,11 @@ graph TD
 | Campo | Conteúdo |
 |---|---|
 | Componente | Documento declarativo do projeto (`exportBlueprint` / load por replay) |
-| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 3`; documento sem `schemaVersion` é tratado como versão `0` |
+| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 4`; documento sem `schemaVersion` é tratado como versão `0` |
 | Fonte de verdade | `middleware/src/canonical/BlueprintSerializer.ts` |
 | Regra de compatibilidade | Versão exata é carregada direto; versões anteriores são **migradas em cadeia** `v(n) → v(n+1)` antes do replay |
 | Breaking change | Qualquer mudança estrutural do documento exige nova versão **+** entrada correspondente no registro `MIGRATIONS` |
-| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3`); v2 introduz `projectId`, derivado deterministicamente para v1; v3 introduz `metadata` (nome, resolução de referência e convenção espacial declarada) e converte coordenadas **apenas** nos quatro ramos descritos abaixo; `project/openDocument` prepara e valida antes da troca; `expectedProjectSessionId` protege o commit contra candidato obsoleto |
+| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3 → 4`); v2 introduz `projectId`, derivado deterministicamente para v1; v3 introduz `metadata` (nome, resolução de referência e convenção espacial declarada) e converte coordenadas **apenas** nos quatro ramos descritos abaixo; v4 traz a paleta de significados para dentro do documento (era constante de build do editor), dando entradas default a todo nível que não tinha e nomeando deterministicamente os valores pintados fora dela; `project/openDocument` prepara e valida antes da troca; `expectedProjectSessionId` protege o commit contra candidato obsoleto |
 | Fallback | Versão acima da suportada é **rejeitada** com `BlueprintDocumentError` (mensagem clara); versão sem migrador registrado é rejeitada |
 | Teste | `middleware/test/blueprint-migration.test.ts` (um teste nomeado por ramo da 2 → 3 + round-trip do corpus) + `grid-coordinates.test.ts` + `project-session-manager.test.ts` (projectId v1 determinístico, replay isolado, rollback, CAS e troca A→B) |
 
@@ -116,12 +116,28 @@ impressão digital** do documento e não especula sobre o resto:
 | (d) | **qualquer outro** documento | **intactas, bit a bit** | `Projeto importado` |
 
 O ramo (d) cobre todo projeto real de usuário, edição manual e documento gerado
-por agente — converter um deles às cegas destruiria o projeto. Os shapes
+por agente — converter um deles às cegas destruiria o projeto.
+
+> **A v4 altera a 2 → 3, e isso é deliberado.** A partir da v4 um documento que
+> simula v2 pode carregar `palette`. Como a impressão digital compara o
+> documento inteiro, sem remover a paleta antes do hash o template
+> pré-correção deixaria de ser reconhecido e a conversão de coordenadas
+> pararia de disparar **em silêncio**. Por isso o strip entra junto com a v4:
+> antes dela seria código morto impossível de testar. Os shapes
 reconhecidos são congelados em
 `middleware/src/canonical/legacyBlueprintShapes.ts`, e o corpus de documentos
 v2 reais vive em `middleware/test/fixtures/documents/`. **O corpus só cresce:**
 cada bump acrescenta arquivos, nenhum arquivo existente é regenerado — eles são
 a única prova de que documentos antigos ainda abrem.
+
+### Envelope de eventos (gRPC)
+
+| Campo | Conteúdo |
+|---|---|
+| Componente | `EventEnvelope` do `contracts/grpc/p7m_editor.proto` |
+| Regra de compatibilidade | **Os campos 7, 8 e 9 são IMUTÁVEIS**: já foram publicados como `has_projection`/`projection_status`/`projection_reason`. Todo campo de histórico entra **a partir do 10** |
+| Por quê | Em proto3 o número do campo É a identidade no fio. Reaproveitar 7/8/9 não seria conflito de texto: um build decodificaria um campo como o outro **em silêncio** |
+| Teste | `middleware/test/envelope-compat.test.ts` — serializa com o proto novo e decodifica com o antigo (e vice-versa), mais uma verificação textual de que nenhum campo de histórico usa número abaixo de 10 |
 
 ### Artefato versionável
 
