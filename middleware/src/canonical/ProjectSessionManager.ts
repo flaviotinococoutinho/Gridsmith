@@ -13,6 +13,7 @@ import type {
   BlueprintCommand,
   BlueprintEvent,
   BlueprintStore as BlueprintStoreType,
+  CommandActor,
 } from "../domain/BlueprintStore.js";
 import { BlueprintStore } from "../domain/BlueprintStore.js";
 import type { ProjectionResult, RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
@@ -95,7 +96,11 @@ export interface ProjectSessionPort {
   readonly current: ProjectSession | undefined;
   readonly status: ProjectStatus;
   readCurrent(): ProjectSession | undefined;
-  dispatch(command: BlueprintCommand, expectedProjectSessionId?: string): Promise<SessionDispatchResult>;
+  dispatch(
+    command: BlueprintCommand,
+    expectedProjectSessionId?: string,
+    actor?: CommandActor,
+  ): Promise<SessionDispatchResult>;
 }
 
 export interface ProjectSessionManagerOptions {
@@ -247,7 +252,11 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
     }));
   }
 
-  dispatch(command: BlueprintCommand, expectedProjectSessionId?: string): Promise<SessionDispatchResult> {
+  dispatch(
+    command: BlueprintCommand,
+    expectedProjectSessionId?: string,
+    actor?: CommandActor,
+  ): Promise<SessionDispatchResult> {
     return this.enqueue(() => this.withTransition(async () => {
       const session = this.requireCurrent();
       if (this.runtimeStates.get(session.sessionId) === "failed") {
@@ -263,7 +272,7 @@ export class ProjectSessionManager extends EventEmitter implements ProjectSessio
           `Project session changed before dispatch (expected ${expectedProjectSessionId}, got ${session.sessionId})`,
         );
       }
-      const result = await session.orchestrator.dispatch(command);
+      const result = await session.orchestrator.dispatch(command, actor ? { actor } : {});
       if (result.projection?.status === "deferred") {
         this.runtimeStates.set(session.sessionId, "deferred");
       }

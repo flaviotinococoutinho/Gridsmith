@@ -6,46 +6,125 @@
   "$defs": {
     "skeleton/define": {
       "description": "Define um esqueleto (hierarquia de ossos com matriz inversa de bind).",
-      "payload": { "$ref": "#/$defs/shared/skeleton" }
+      "payload": {
+        "$ref": "#/$defs/shared/skeleton"
+      }
     },
     "mesh/bind": {
       "description": "Vincula uma malha a um esqueleto pelo plano de dados (shared memory).",
-      "payload": { "$ref": "#/$defs/shared/meshBinding" }
+      "payload": {
+        "$ref": "#/$defs/shared/meshBinding"
+      }
     },
     "camera/configure": {
-      "description": "Configura a câmera cinemática. Merge PARCIAL sobre o estado corrente: campos ausentes preservam o valor atual.",
-      "payload": { "$ref": "#/$defs/shared/cameraSettings" }
+      "description": "Configura a câmera cinemática. Por padrão faz merge PARCIAL sobre o estado corrente; com `replace: true` substitui a configuração inteira — é a forma que o inverso do histórico usa para restaurar o estado anterior exato.",
+      "payload": {
+        "$ref": "#/$defs/shared/cameraConfigure"
+      }
     },
     "light/add": {
       "description": "Acrescenta uma luz ao Blueprint.",
-      "payload": { "$ref": "#/$defs/shared/light" }
+      "payload": {
+        "$ref": "#/$defs/shared/light"
+      }
+    },
+    "light/update": {
+      "description": "Substitui INTEGRALMENTE uma luz existente (mesma forma de level/update). A substituição integral, em vez de um patch parcial, é o que dá inverso exato e preserva a ordem do documento.",
+      "payload": {
+        "$ref": "#/$defs/shared/light"
+      }
     },
     "light/remove": {
       "description": "Remove a luz pelo id canônico.",
       "payload": {
         "type": "object",
-        "properties": { "lightId": { "type": "string", "minLength": 1 } },
-        "required": ["lightId"],
+        "properties": {
+          "lightId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "lightId"
+        ],
         "additionalProperties": false
       }
     },
     "entitydef/define": {
       "description": "Define o tipo de entidade (campos tipados que geram a UI do inspector) e, opcionalmente, o archetype do runtime que a materializa como ator vivo.",
-      "payload": { "$ref": "#/$defs/shared/entityDefinition" }
+      "payload": {
+        "$ref": "#/$defs/shared/entityDefinition"
+      }
+    },
+    "entitydef/update": {
+      "description": "Substitui integralmente uma definição existente. Recusa trocar o archetype com instâncias vivas, e recusa update que mudaria implicitamente os campos já resolvidos das instâncias.",
+      "payload": {
+        "$ref": "#/$defs/shared/entityDefinition"
+      }
+    },
+    "entitydef/remove": {
+      "description": "Remove a definição. Recusa se ainda houver instâncias dela.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "entityDefId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "entityDefId"
+        ],
+        "additionalProperties": false
+      }
     },
     "entity/place": {
       "description": "Instancia uma entidade no mundo. Campos ausentes assumem o default da definição; campo sem valor e sem default é erro.",
-      "payload": { "$ref": "#/$defs/shared/entityInstance" }
+      "payload": {
+        "$ref": "#/$defs/shared/entityInstance"
+      }
     },
     "entity/move": {
       "description": "Move uma instância existente. Posição em PIXELS do mundo (contracts/schemas/actors.methods.schema.json).",
       "payload": {
         "type": "object",
         "properties": {
-          "entityId": { "type": "string", "minLength": 1 },
-          "position": { "$ref": "#/$defs/shared/worldPosition" }
+          "entityId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "position": {
+            "$ref": "#/$defs/shared/worldPosition"
+          }
         },
-        "required": ["entityId", "position"],
+        "required": [
+          "entityId",
+          "position"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "entity/properties": {
+      "description": "Edita campos tipados de uma instância. Cada mudança carrega o valor ANTERIOR: se ele não bater com o estado corrente, o comando é recusado como conflito — o cliente editou sobre uma leitura velha.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "entityId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "changes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/shared/entityPropertyChange"
+            }
+          }
+        },
+        "required": [
+          "entityId",
+          "changes"
+        ],
         "additionalProperties": false
       }
     },
@@ -53,38 +132,65 @@
       "description": "Remove a instância pelo id canônico.",
       "payload": {
         "type": "object",
-        "properties": { "entityId": { "type": "string", "minLength": 1 } },
-        "required": ["entityId"],
+        "properties": {
+          "entityId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "entityId"
+        ],
         "additionalProperties": false
       }
     },
     "level/define": {
       "description": "Cria um nível novo (IntGrid de significado + regras de auto-tiling). Rejeita id duplicado.",
-      "payload": { "$ref": "#/$defs/shared/level" }
+      "payload": {
+        "$ref": "#/$defs/shared/level"
+      }
     },
     "level/update": {
       "description": "Substitui um nível existente. Mesmo shape de level/define; rejeita id inexistente.",
-      "payload": { "$ref": "#/$defs/shared/level" }
+      "payload": {
+        "$ref": "#/$defs/shared/level"
+      }
     },
     "level/remove": {
       "description": "Remove o nível e o posicionamento correspondente no world map.",
       "payload": {
         "type": "object",
-        "properties": { "levelId": { "type": "string", "minLength": 1 } },
-        "required": ["levelId"],
+        "properties": {
+          "levelId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "levelId"
+        ],
         "additionalProperties": false
       }
     },
     "world/place": {
       "description": "Posiciona um nível no world map (free layout, coordenadas em pixels do mundo).",
-      "payload": { "$ref": "#/$defs/shared/worldPlacement" }
+      "payload": {
+        "$ref": "#/$defs/shared/worldPlacement"
+      }
     },
     "world/unplace": {
       "description": "Retira o nível do world map sem removê-lo do projeto.",
       "payload": {
         "type": "object",
-        "properties": { "levelId": { "type": "string", "minLength": 1 } },
-        "required": ["levelId"],
+        "properties": {
+          "levelId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "levelId"
+        ],
         "additionalProperties": false
       }
     },
@@ -93,14 +199,19 @@
       "worldPosition": {
         "type": "array",
         "description": "Posição no mundo em PIXELS [x, y]. Nenhuma camada converte: célula → pixel é decidido na origem.",
-        "items": { "type": "number" },
+        "items": {
+          "type": "number"
+        },
         "minItems": 2,
         "maxItems": 2
       },
       "skeleton": {
         "type": "object",
         "properties": {
-          "skeletonId": { "type": "string", "minLength": 1 },
+          "skeletonId": {
+            "type": "string",
+            "minLength": 1
+          },
           "bones": {
             "type": "array",
             "minItems": 1,
@@ -108,48 +219,106 @@
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "integer", "minimum": 0 },
-                "parentId": { "type": "integer", "minimum": -1, "description": "-1 = raiz; qualquer outro valor deve existir entre os ossos" },
+                "id": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "parentId": {
+                  "type": "integer",
+                  "minimum": -1,
+                  "description": "-1 = raiz; qualquer outro valor deve existir entre os ossos"
+                },
                 "inverseBindMatrix": {
                   "type": "array",
                   "description": "Matriz afim 2D coluna-maior: m11, m12, m21, m22, m31, m32",
-                  "items": { "type": "number" },
+                  "items": {
+                    "type": "number"
+                  },
                   "minItems": 6,
                   "maxItems": 6
                 }
               },
-              "required": ["id", "parentId", "inverseBindMatrix"],
+              "required": [
+                "id",
+                "parentId",
+                "inverseBindMatrix"
+              ],
               "additionalProperties": false
             }
           }
         },
-        "required": ["skeletonId", "bones"],
+        "required": [
+          "skeletonId",
+          "bones"
+        ],
         "additionalProperties": false
       },
       "meshBinding": {
         "type": "object",
         "properties": {
-          "meshId": { "type": "string", "minLength": 1 },
-          "skeletonId": { "type": "string", "minLength": 1 },
-          "sharedMemoryMapName": { "type": "string", "minLength": 1 },
-          "vertexCount": { "type": "integer", "minimum": 1 },
-          "strideInBytes": { "type": "integer", "minimum": 4 }
+          "meshId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "skeletonId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sharedMemoryMapName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "vertexCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "strideInBytes": {
+            "type": "integer",
+            "minimum": 4
+          }
         },
-        "required": ["meshId", "skeletonId", "sharedMemoryMapName", "vertexCount", "strideInBytes"],
+        "required": [
+          "meshId",
+          "skeletonId",
+          "sharedMemoryMapName",
+          "vertexCount",
+          "strideInBytes"
+        ],
         "additionalProperties": false
       },
       "cameraSettings": {
         "type": "object",
         "properties": {
-          "frequency": { "type": "number", "exclusiveMinimum": 0 },
-          "damping": { "type": "number", "minimum": 0 },
-          "response": { "type": "number" },
-          "anticipationSeconds": { "type": "number", "minimum": 0 },
-          "shakeFrequencyHz": { "type": "number" },
-          "shakeMaxOffset": { "type": "number" },
-          "shakeMaxRotationRadians": { "type": "number" },
-          "shakeTraumaDecayPerSecond": { "type": "number" },
-          "shakeSeed": { "type": "number" }
+          "frequency": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "damping": {
+            "type": "number",
+            "minimum": 0
+          },
+          "response": {
+            "type": "number"
+          },
+          "anticipationSeconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "shakeFrequencyHz": {
+            "type": "number"
+          },
+          "shakeMaxOffset": {
+            "type": "number"
+          },
+          "shakeMaxRotationRadians": {
+            "type": "number"
+          },
+          "shakeTraumaDecayPerSecond": {
+            "type": "number"
+          },
+          "shakeSeed": {
+            "type": "number"
+          }
         },
         "additionalProperties": false
       },
@@ -157,142 +326,347 @@
         "type": "object",
         "description": "Luz do pipeline deferred. `radius` é obrigatório para point/spot; os ângulos de cone, para spot (0 < inner <= outer < 180).",
         "properties": {
-          "lightId": { "type": "string", "minLength": 1 },
-          "type": { "enum": ["directional", "point", "spot"] },
-          "position": { "$ref": "#/$defs/shared/worldPosition" },
-          "height": { "type": "number" },
+          "lightId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "enum": [
+              "directional",
+              "point",
+              "spot"
+            ]
+          },
+          "position": {
+            "$ref": "#/$defs/shared/worldPosition"
+          },
+          "height": {
+            "type": "number"
+          },
           "direction": {
             "type": "array",
-            "items": { "type": "number" },
+            "items": {
+              "type": "number"
+            },
             "minItems": 2,
             "maxItems": 2
           },
           "color": {
             "type": "array",
             "description": "RGB linear",
-            "items": { "type": "number" },
+            "items": {
+              "type": "number"
+            },
             "minItems": 3,
             "maxItems": 3
           },
-          "intensity": { "type": "number", "exclusiveMinimum": 0 },
-          "radius": { "type": "number", "exclusiveMinimum": 0 },
-          "innerConeDegrees": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 180 },
-          "outerConeDegrees": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 180 }
+          "intensity": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "radius": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "innerConeDegrees": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 180
+          },
+          "outerConeDegrees": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 180
+          }
         },
-        "required": ["lightId", "type", "color", "intensity"],
+        "required": [
+          "lightId",
+          "type",
+          "color",
+          "intensity"
+        ],
         "additionalProperties": false
       },
       "entityFieldDef": {
         "type": "object",
         "description": "Campo tipado que gera a UI do inspector. `options` é obrigatório e não-vazio quando type = enum; `default`, quando presente, é validado contra o próprio campo.",
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "type": { "enum": ["int", "float", "bool", "string", "enum", "point", "color"] },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "enum": [
+              "int",
+              "float",
+              "bool",
+              "string",
+              "enum",
+              "point",
+              "color"
+            ]
+          },
           "default": {},
-          "min": { "type": "number" },
-          "max": { "type": "number" },
+          "min": {
+            "type": "number"
+          },
+          "max": {
+            "type": "number"
+          },
           "options": {
             "type": "array",
             "minItems": 1,
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           }
         },
-        "required": ["name", "type"],
+        "required": [
+          "name",
+          "type"
+        ],
         "additionalProperties": false
       },
       "entityDefinition": {
         "type": "object",
         "properties": {
-          "entityDefId": { "type": "string", "minLength": 1 },
+          "entityDefId": {
+            "type": "string",
+            "minLength": 1
+          },
           "fields": {
             "type": "array",
             "description": "Nomes únicos dentro da definição",
-            "items": { "$ref": "#/$defs/shared/entityFieldDef" }
+            "items": {
+              "$ref": "#/$defs/shared/entityFieldDef"
+            }
           },
           "archetypeId": {
             "type": "string",
             "minLength": 1,
             "description": "Spawn table: sem archetype a entidade é puramente editorial e a projeção explica isso com razão acionável"
           },
-          "tags": { "type": "array", "items": { "type": "string" } },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "editor": {
             "type": "object",
             "properties": {
-              "color": { "type": "string" },
-              "icon": { "type": "string" }
+              "color": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              }
             },
             "additionalProperties": false
           }
         },
-        "required": ["entityDefId", "fields"],
+        "required": [
+          "entityDefId",
+          "fields"
+        ],
         "additionalProperties": false
       },
       "entityInstance": {
         "type": "object",
         "properties": {
-          "entityId": { "type": "string", "minLength": 1 },
-          "entityDefId": { "type": "string", "minLength": 1 },
-          "position": { "$ref": "#/$defs/shared/worldPosition" },
+          "entityId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "entityDefId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "position": {
+            "$ref": "#/$defs/shared/worldPosition"
+          },
           "fields": {
             "type": "object",
             "description": "Valores por campo declarado na definição; campo não declarado é erro",
             "additionalProperties": true
           }
         },
-        "required": ["entityId", "entityDefId", "position"],
+        "required": [
+          "entityId",
+          "entityDefId",
+          "position"
+        ],
         "additionalProperties": false
       },
       "autoTileRule": {
         "type": "object",
         "description": "Regra determinística de auto-tiling. `pattern` tem exatamente patternSize² células, linha-maior, centro = célula avaliada; null casa qualquer valor.",
         "properties": {
-          "name": { "type": "string" },
-          "patternSize": { "enum": [1, 3, 5] },
+          "name": {
+            "type": "string"
+          },
+          "patternSize": {
+            "enum": [
+              1,
+              3,
+              5
+            ]
+          },
           "pattern": {
             "type": "array",
-            "items": { "type": ["integer", "null"] }
+            "items": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
           },
           "tileIds": {
             "type": "array",
             "minItems": 1,
-            "items": { "type": "integer" }
+            "items": {
+              "type": "integer"
+            }
           },
-          "chance": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+          "chance": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1
+          }
         },
-        "required": ["patternSize", "pattern", "tileIds"],
+        "required": [
+          "patternSize",
+          "pattern",
+          "tileIds"
+        ],
         "additionalProperties": false
       },
       "level": {
         "type": "object",
         "description": "O designer edita SIGNIFICADO (intGrid) + regras; a resolução em tiles é da projeção, pura e determinística por seed. width×height não pode exceder o limite de células do slot de tilemap da engine.",
         "properties": {
-          "levelId": { "type": "string", "minLength": 1 },
-          "width": { "type": "integer", "minimum": 1 },
-          "height": { "type": "integer", "minimum": 1 },
-          "tileSize": { "type": "integer", "minimum": 1 },
-          "seed": { "type": "integer" },
+          "levelId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tileSize": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "seed": {
+            "type": "integer"
+          },
           "intGrid": {
             "type": "array",
             "description": "width×height valores linha-maior; 0 = vazio",
-            "items": { "type": "integer" }
+            "items": {
+              "type": "integer"
+            }
           },
           "rules": {
             "type": "array",
-            "items": { "$ref": "#/$defs/shared/autoTileRule" }
+            "items": {
+              "$ref": "#/$defs/shared/autoTileRule"
+            }
           }
         },
-        "required": ["levelId", "width", "height", "tileSize", "seed", "intGrid", "rules"],
+        "required": [
+          "levelId",
+          "width",
+          "height",
+          "tileSize",
+          "seed",
+          "intGrid",
+          "rules"
+        ],
         "additionalProperties": false
       },
       "worldPlacement": {
         "type": "object",
         "description": "Free layout do world map; o retângulo do nível deriva de width/height × tileSize.",
         "properties": {
-          "levelId": { "type": "string", "minLength": 1 },
-          "x": { "type": "number" },
-          "y": { "type": "number" }
+          "levelId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          }
         },
-        "required": ["levelId", "x", "y"],
+        "required": [
+          "levelId",
+          "x",
+          "y"
+        ],
+        "additionalProperties": false
+      },
+      "entityPropertyChange": {
+        "type": "object",
+        "description": "Mudança de um campo declarado, com antes e depois explícitos.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "before": {},
+          "after": {}
+        },
+        "required": [
+          "name",
+          "before",
+          "after"
+        ],
+        "additionalProperties": false
+      },
+      "cameraConfigure": {
+        "type": "object",
+        "properties": {
+          "frequency": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "damping": {
+            "type": "number",
+            "minimum": 0
+          },
+          "response": {
+            "type": "number"
+          },
+          "anticipationSeconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "shakeFrequencyHz": {
+            "type": "number"
+          },
+          "shakeMaxOffset": {
+            "type": "number"
+          },
+          "shakeMaxRotationRadians": {
+            "type": "number"
+          },
+          "shakeTraumaDecayPerSecond": {
+            "type": "number"
+          },
+          "shakeSeed": {
+            "type": "number"
+          },
+          "replace": {
+            "type": "boolean",
+            "description": "Substitui em vez de mesclar"
+          }
+        },
         "additionalProperties": false
       }
     }
