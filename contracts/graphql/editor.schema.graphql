@@ -21,10 +21,14 @@ enum CommandKind {
   mesh_bind
   camera_configure
   light_add
+  light_update
   light_remove
   entitydef_define
+  entitydef_update
+  entitydef_remove
   entity_place
   entity_move
+  entity_properties
   entity_remove
   level_define
   level_update

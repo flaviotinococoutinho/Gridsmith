@@ -142,6 +142,35 @@ export class MonoGameAdapter implements RuntimeAdapter {
         };
       }
 
+      case "lightUpdated": {
+        // A engine não tem `lighting/update`: o slot é recriado. Fazer isso
+        // AQUI, e não no domínio, é o que mantém o comando canônico com
+        // inverso exato — no domínio, remover+adicionar mudaria a ordem do
+        // documento exportado.
+        const previousSlot = this.engineLightIds.get(event.light.lightId);
+        if (previousSlot !== undefined) {
+          await this.requestAtEpoch(
+            session,
+            expectedRuntimeSessionEpoch,
+            "lighting/remove",
+            { lightId: previousSlot },
+          );
+          this.engineLightIds.delete(event.light.lightId);
+        }
+        const { lightId } = await this.requestAtEpoch<{ lightId: number }>(
+          session,
+          expectedRuntimeSessionEpoch,
+          "lighting/add",
+          toEngineLight(event.light),
+        );
+        this.engineLightIds.set(event.light.lightId, lightId);
+        return {
+          event: event.kind,
+          status: "projected",
+          detail: { lightId: event.light.lightId, engineLightId: lightId },
+        };
+      }
+
       case "lightRemoved": {
         const engineLightId = this.engineLightIds.get(event.lightId);
         if (engineLightId === undefined) {
@@ -205,10 +234,24 @@ export class MonoGameAdapter implements RuntimeAdapter {
         return { event: event.kind, status: "projected" };
 
       case "entityDefDefined":
+      case "entityDefUpdated":
+      case "entityDefRemoved":
         return {
           event: event.kind,
           status: "skipped",
           reason: "entity definitions are editorial; instances with archetypeId spawn actors",
+        };
+
+      case "entityPropertiesChanged":
+        // Os campos tipados ainda não atravessam o fio — o spawn leva apenas
+        // (entityId, archetypeId, position). Enquanto for assim, a razão diz
+        // exatamente o que falta em vez de fingir que aplicou.
+        return {
+          event: event.kind,
+          status: "skipped",
+          reason:
+            `fields of "${event.entity.entityId}" are editorial: the runtime spawn contract ` +
+            `carries only archetype and position`,
         };
 
       case "entityPlaced": {

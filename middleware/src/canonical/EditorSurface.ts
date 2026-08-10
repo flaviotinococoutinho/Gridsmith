@@ -27,7 +27,7 @@ import {
   type SessionDispatchResult,
 } from "./ProjectSessionManager.js";
 import { COMMAND_KINDS, reshapeCommand } from "./commandShape.js";
-import type { BlueprintCommand } from "../domain/BlueprintStore.js";
+import type { BlueprintCommand, CommandActor } from "../domain/BlueprintStore.js";
 import type { ExperienceGovernor, ResolvedExperience } from "../runtime/ExperienceGovernor.js";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.js";
 import { JsonRpcError, RpcErrorCode } from "../protocol/jsonrpc.js";
@@ -91,11 +91,19 @@ export class EditorSurface {
 
   constructor(private readonly options: EditorSurfaceOptions) {}
 
-  /** Dispatch canônico a partir do par transportável (kind, payload). */
+  /**
+   * Dispatch canônico a partir do par transportável (kind, payload).
+   *
+   * `actor` é a PROVENIÊNCIA, decidida pela borda e nunca pelo payload. O
+   * default é "human" porque as bordas do app (JSON-RPC, GraphQL, gRPC)
+   * servem a UI; a fachada MCP passa "agent" explicitamente. Uma borda futura
+   * com informação melhor (um runner de pipeline, por exemplo) passa a sua.
+   */
   async dispatchByKind(
     kind: string,
     payload: unknown,
     requestId?: string,
+    actor: CommandActor = "human",
   ): Promise<DispatchResult> {
     if (
       typeof kind !== "string" ||
@@ -117,7 +125,7 @@ export class EditorSurface {
       throw new JsonRpcError(RpcErrorCode.ProjectNotOpen, "No project session is active");
     }
     if (requestId === undefined) {
-      return this.dispatchInSession(command, projectSessionId);
+      return this.dispatchInSession(command, projectSessionId, actor);
     }
     if (
       typeof requestId !== "string" ||
@@ -154,7 +162,7 @@ export class EditorSurface {
       );
     }
 
-    const promise = this.dispatchInSession(command, projectSessionId);
+    const promise = this.dispatchInSession(command, projectSessionId, actor);
     this.inFlightDispatches.set(requestId, { projectSessionId, fingerprint, promise });
     void promise.then(
       (value) => this.completeDispatch(
@@ -347,9 +355,10 @@ export class EditorSurface {
   private async dispatchInSession(
     command: BlueprintCommand,
     projectSessionId: string,
+    actor: CommandActor,
   ): Promise<SessionDispatchResult> {
     try {
-      return await this.options.sessions.dispatch(command, projectSessionId);
+      return await this.options.sessions.dispatch(command, projectSessionId, actor);
     } catch (error) {
       throw this.toApplicationError(error);
     }

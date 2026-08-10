@@ -117,21 +117,67 @@ export interface LevelSpec {
 /** Limite alinhado ao TilemapStore da engine (256×256). */
 export const MAX_LEVEL_CELLS = 256 * 256;
 
-export type BlueprintCommand =
+/**
+ * Quem originou o comando. A proveniência é definida pela BORDA confiável
+ * (gateway, MCP, IPC), NUNCA pelo payload — payload não escolhe quem é.
+ */
+export type CommandActor = "human" | "agent" | "pipeline";
+
+export interface CommandMetadata {
+  readonly actor: CommandActor;
+  /** Rótulo humano do gesto ("Mover Player"), para o histórico da UI. */
+  readonly label?: string;
+  /** Comando sem inverso: o histórico não desfaz além dele. */
+  readonly barrier?: boolean;
+}
+
+/**
+ * Contexto que acompanha todo comando canônico. `transactionId` agrupa os
+ * comandos de UM gesto do usuário (um arrasto vira um item de histórico, não
+ * trinta), e é o que o coalescing da etapa seguinte usa.
+ */
+export interface CommandContext {
+  readonly transactionId?: string;
+  readonly metadata?: CommandMetadata;
+}
+
+/** Mudança de um campo tipado de instância, com o valor anterior explícito. */
+export interface EntityPropertyChange {
+  readonly name: string;
+  readonly before: unknown;
+  readonly after: unknown;
+}
+
+type Command =
   | { readonly kind: "skeleton/define"; readonly skeleton: SkeletonBlueprint }
   | { readonly kind: "mesh/bind"; readonly binding: MeshBinding }
-  | { readonly kind: "camera/configure"; readonly settings: CameraSettings }
+  | {
+      readonly kind: "camera/configure";
+      readonly settings: CameraSettings;
+      /** `true` substitui a configuração inteira em vez de mesclar — é o que o inverso precisa. */
+      readonly replace?: boolean;
+    }
   | { readonly kind: "light/add"; readonly light: LightSpec }
+  | { readonly kind: "light/update"; readonly light: LightSpec }
   | { readonly kind: "light/remove"; readonly lightId: string }
   | { readonly kind: "entitydef/define"; readonly definition: EntityDefinition }
+  | { readonly kind: "entitydef/update"; readonly definition: EntityDefinition }
+  | { readonly kind: "entitydef/remove"; readonly entityDefId: string }
   | { readonly kind: "entity/place"; readonly entity: EntityInstance }
   | { readonly kind: "entity/move"; readonly entityId: string; readonly position: readonly [number, number] }
+  | {
+      readonly kind: "entity/properties";
+      readonly entityId: string;
+      readonly changes: readonly EntityPropertyChange[];
+    }
   | { readonly kind: "entity/remove"; readonly entityId: string }
   | { readonly kind: "level/define"; readonly level: LevelSpec }
   | { readonly kind: "level/update"; readonly level: LevelSpec }
   | { readonly kind: "level/remove"; readonly levelId: string }
   | { readonly kind: "world/place"; readonly placement: WorldPlacement }
   | { readonly kind: "world/unplace"; readonly levelId: string };
+
+export type BlueprintCommand = Command & CommandContext;
 
 /**
  * Posição de um nível no world map (LDtk "free layout"): coordenadas em
@@ -155,8 +201,17 @@ export type BlueprintEvent =
   | { readonly kind: "meshBound"; readonly binding: MeshBinding }
   | { readonly kind: "cameraConfigured"; readonly settings: CameraSettings }
   | { readonly kind: "lightAdded"; readonly light: LightSpec }
+  | { readonly kind: "lightUpdated"; readonly light: LightSpec }
   | { readonly kind: "lightRemoved"; readonly lightId: string }
   | { readonly kind: "entityDefDefined"; readonly definition: EntityDefinition }
+  | { readonly kind: "entityDefUpdated"; readonly definition: EntityDefinition }
+  | { readonly kind: "entityDefRemoved"; readonly entityDefId: string }
+  | {
+      readonly kind: "entityPropertiesChanged";
+      readonly entity: EntityInstance;
+      readonly changes: readonly EntityPropertyChange[];
+      readonly archetypeId?: string;
+    }
   // evento enriquecido: a projeção precisa do archetype sem consultar o store
   | { readonly kind: "entityPlaced"; readonly entity: EntityInstance; readonly archetypeId?: string }
   | { readonly kind: "entityMoved"; readonly entity: EntityInstance; readonly archetypeId?: string }
@@ -167,28 +222,142 @@ export type BlueprintEvent =
   | { readonly kind: "worldLevelPlaced"; readonly placement: WorldPlacement }
   | { readonly kind: "worldLevelUnplaced"; readonly levelId: string };
 
+/** Resultado de um comando: o evento e como desfazê-lo. */
+export interface AppliedCommand {
+  readonly event: BlueprintEvent;
+  /**
+   * Comandos que restauram o estado anterior, na ordem em que devem ser
+   * aplicados. Vazio significa BARREIRA: o comando não é desfazível e o
+   * histórico para nele.
+   */
+  readonly inverse: readonly BlueprintCommand[];
+  readonly barrier: boolean;
+}
+
+/**
+ * Lote planejado mas ainda não comitado. O estado real só muda em
+ * `commitBatch`, e só se a versão base ainda for a corrente.
+ */
+export interface BatchPlan {
+  readonly source: BlueprintStore;
+  readonly baseVersion: number;
+  readonly draft: BlueprintStore;
+  readonly results: readonly AppliedCommand[];
+}
+
 /**
  * Estado canônico sem publicação própria. `apply` devolve o evento ao
  * orquestrador; somente o ProjectSessionManager publica depois que store e
  * CommandHistory foram confirmados como um único commit.
+ *
+ * TRANSACIONAL: um lote é validado inteiro num rascunho privado
+ * (`planBatch`) e só então adotado de uma vez (`commitBatch`). Falha no
+ * terceiro comando NUNCA deixa os dois primeiros aplicados — antes disto, um
+ * replay que falhasse no meio deixava o documento pela metade, e a única
+ * proteção era o chamador lembrar de usar um store temporário.
  */
 export class BlueprintStore {
-  private readonly skeletons = new Map<string, SkeletonBlueprint>();
-  private readonly meshes = new Map<string, MeshBinding>();
-  private readonly lights = new Map<string, LightSpec>();
-  private readonly entityDefs = new Map<string, EntityDefinition>();
-  private readonly entities = new Map<string, EntityInstance>();
-  private readonly levels = new Map<string, LevelSpec>();
-  private readonly placements = new Map<string, WorldPlacement>();
+  private skeletons = new Map<string, SkeletonBlueprint>();
+  private meshes = new Map<string, MeshBinding>();
+  private lights = new Map<string, LightSpec>();
+  private entityDefs = new Map<string, EntityDefinition>();
+  private entities = new Map<string, EntityInstance>();
+  private levels = new Map<string, LevelSpec>();
+  private placements = new Map<string, WorldPlacement>();
   private camera: CameraSettings = {};
 
+  /**
+   * Relógio de mutação, usado como compare-and-swap INTERNO do lote: um plano
+   * preparado sobre a versão N só pode ser comitado enquanto a versão ainda
+   * for N. Distinto do `commandSequence` do histórico, que é o relógio lógico
+   * publicado nos eventos.
+   */
+  private version = 0;
+
+  get mutationVersion(): number {
+    return this.version;
+  }
+
+  /** Rascunho independente com o MESMO conteúdo. Valores já são congelados. */
+  fork(): BlueprintStore {
+    const draft = new BlueprintStore();
+    draft.skeletons = new Map(this.skeletons);
+    draft.meshes = new Map(this.meshes);
+    draft.lights = new Map(this.lights);
+    draft.entityDefs = new Map(this.entityDefs);
+    draft.entities = new Map(this.entities);
+    draft.levels = new Map(this.levels);
+    draft.placements = new Map(this.placements);
+    draft.camera = this.camera;
+    draft.version = this.version;
+    return draft;
+  }
+
+  /**
+   * Valida e aplica o lote inteiro num rascunho. Qualquer comando que falhe
+   * lança e o rascunho é descartado — este store não foi tocado.
+   */
+  planBatch(commands: readonly BlueprintCommand[]): BatchPlan {
+    const draft = this.fork();
+    const results = commands.map((command) => draft.applyMutable(command));
+    return Object.freeze({ source: this, baseVersion: this.version, draft, results });
+  }
+
+  /**
+   * Adota o rascunho de uma vez, SINCRONAMENTE. Recusa plano de outro store ou
+   * preparado sobre uma versão que já mudou — sem isso, dois lotes concorrentes
+   * sobrescreveriam um ao outro em silêncio.
+   */
+  commitBatch(plan: BatchPlan): void {
+    if (plan.source !== this) {
+      throw new JsonRpcError(
+        RpcErrorCode.ProjectSessionConflict,
+        "Batch plan was prepared by a different BlueprintStore",
+      );
+    }
+    if (plan.baseVersion !== this.version) {
+      throw new JsonRpcError(
+        RpcErrorCode.ProjectSessionConflict,
+        `Batch plan is stale (prepared over version ${plan.baseVersion}, store is at ${this.version})`,
+      );
+    }
+    const draft = plan.draft;
+    this.skeletons = draft.skeletons;
+    this.meshes = draft.meshes;
+    this.lights = draft.lights;
+    this.entityDefs = draft.entityDefs;
+    this.entities = draft.entities;
+    this.levels = draft.levels;
+    this.placements = draft.placements;
+    this.camera = draft.camera;
+    this.version += 1;
+  }
+
+  /** Aplica um comando e devolve evento + inverso. */
+  applyWithInverse(command: BlueprintCommand): AppliedCommand {
+    const plan = this.planBatch([command]);
+    this.commitBatch(plan);
+    return plan.results[0]!;
+  }
+
+  /** Fachada histórica: só o evento. */
   apply(command: BlueprintCommand): BlueprintEvent {
+    return this.applyWithInverse(command).event;
+  }
+
+  private applyMutable(command: BlueprintCommand): AppliedCommand {
     switch (command.kind) {
       case "camera/configure": {
         validateCameraSettings(command.settings);
-        this.camera = Object.freeze({ ...this.camera, ...command.settings });
-        const event: BlueprintEvent = { kind: "cameraConfigured", settings: this.camera };
-        return event;
+        const previous = this.camera;
+        const next = Object.freeze(
+          command.replace === true ? { ...command.settings } : { ...previous, ...command.settings },
+        );
+        rejectNoop(valuesEqual(previous, next), "camera/configure would not change anything");
+        this.camera = next;
+        return applied({ kind: "cameraConfigured", settings: next }, [
+          { kind: "camera/configure", settings: previous, replace: true },
+        ]);
       }
       case "light/add": {
         const light = command.light;
@@ -197,15 +366,38 @@ export class BlueprintStore {
           throw new JsonRpcError(RpcErrorCode.DuplicateId, `Light "${light.lightId}" already exists`);
         }
         this.lights.set(light.lightId, Object.freeze({ ...light }));
-        const event: BlueprintEvent = { kind: "lightAdded", light };
-        return event;
+        return applied({ kind: "lightAdded", light }, [
+          { kind: "light/remove", lightId: light.lightId },
+        ]);
+      }
+      case "light/update": {
+        const light = command.light;
+        validateLight(light);
+        const previous = this.lights.get(light.lightId);
+        if (!previous) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Light "${light.lightId}" does not exist — use light/add to create it`,
+          );
+        }
+        rejectNoop(valuesEqual(previous, light), `light/update would not change "${light.lightId}"`);
+        // substituição integral (mesma forma de level/update): o inverso é
+        // exato e a ordem de inserção do Map — logo a ordem do documento
+        // exportado — não muda, o que remove+add não garantiria.
+        this.lights.set(light.lightId, Object.freeze({ ...light }));
+        return applied({ kind: "lightUpdated", light }, [
+          { kind: "light/update", light: previous },
+        ]);
       }
       case "light/remove": {
-        if (!this.lights.delete(command.lightId)) {
+        const previous = this.lights.get(command.lightId);
+        if (!previous) {
           throw new JsonRpcError(RpcErrorCode.InvalidParams, `Light "${command.lightId}" does not exist`);
         }
-        const event: BlueprintEvent = { kind: "lightRemoved", lightId: command.lightId };
-        return event;
+        this.lights.delete(command.lightId);
+        return applied({ kind: "lightRemoved", lightId: command.lightId }, [
+          { kind: "light/add", light: previous },
+        ]);
       }
       case "entitydef/define": {
         const definition = command.definition;
@@ -217,8 +409,85 @@ export class BlueprintStore {
           );
         }
         this.entityDefs.set(definition.entityDefId, Object.freeze({ ...definition }));
-        const event: BlueprintEvent = { kind: "entityDefDefined", definition };
-        return event;
+        return applied({ kind: "entityDefDefined", definition }, [
+          { kind: "entitydef/remove", entityDefId: definition.entityDefId },
+        ]);
+      }
+      case "entitydef/update": {
+        const definition = command.definition;
+        validateEntityDefinition(definition);
+        const previous = this.entityDefs.get(definition.entityDefId);
+        if (!previous) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Entity definition "${definition.entityDefId}" does not exist — use entitydef/define to create it`,
+          );
+        }
+        rejectNoop(
+          valuesEqual(previous, definition),
+          `entitydef/update would not change "${definition.entityDefId}"`,
+        );
+
+        const live = [...this.entities.values()].filter(
+          (entity) => entity.entityDefId === definition.entityDefId,
+        );
+        if (live.length > 0 && previous.archetypeId !== definition.archetypeId) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Cannot change the archetype of "${definition.entityDefId}" while ${live.length} instance(s) exist — ` +
+              `remove the instances first, or create a new definition`,
+          );
+        }
+        // Uma atualização que mudaria IMPLICITAMENTE os campos já resolvidos
+        // das instâncias é recusada: reescrever instância por tabela é uma
+        // migração de conteúdo, não um update de definição.
+        for (const entity of live) {
+          let resolved: EntityInstance;
+          try {
+            resolved = resolveEntityFields(entity, definition);
+          } catch (error) {
+            throw new JsonRpcError(
+              RpcErrorCode.InvalidParams,
+              `Entity "${entity.entityId}" would become invalid under the new definition: ` +
+                (error instanceof Error ? error.message : String(error)),
+            );
+          }
+          if (!valuesEqual(resolved.fields, entity.fields)) {
+            throw new JsonRpcError(
+              RpcErrorCode.InvalidParams,
+              `Entity "${entity.entityId}" would have its resolved fields changed implicitly — ` +
+                `update the instances with entity/properties first`,
+            );
+          }
+        }
+
+        this.entityDefs.set(definition.entityDefId, Object.freeze({ ...definition }));
+        return applied({ kind: "entityDefUpdated", definition }, [
+          { kind: "entitydef/update", definition: previous },
+        ]);
+      }
+      case "entitydef/remove": {
+        const previous = this.entityDefs.get(command.entityDefId);
+        if (!previous) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Entity definition "${command.entityDefId}" does not exist`,
+          );
+        }
+        const live = [...this.entities.values()].filter(
+          (entity) => entity.entityDefId === command.entityDefId,
+        );
+        if (live.length > 0) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Entity definition "${command.entityDefId}" still has ${live.length} instance(s) — ` +
+              `remove them before removing the definition`,
+          );
+        }
+        this.entityDefs.delete(command.entityDefId);
+        return applied({ kind: "entityDefRemoved", entityDefId: command.entityDefId }, [
+          { kind: "entitydef/define", definition: previous },
+        ]);
       }
       case "entity/place": {
         const definition = this.entityDefs.get(command.entity.entityDefId);
@@ -236,12 +505,14 @@ export class BlueprintStore {
         }
         const entity = resolveEntityFields(command.entity, definition);
         this.entities.set(entity.entityId, entity);
-        const event: BlueprintEvent = {
-          kind: "entityPlaced",
-          entity,
-          ...(definition.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
-        };
-        return event;
+        return applied(
+          {
+            kind: "entityPlaced",
+            entity,
+            ...(definition.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
+          },
+          [{ kind: "entity/remove", entityId: entity.entityId }],
+        );
       }
       case "entity/move": {
         const current = this.entities.get(command.entityId);
@@ -253,22 +524,97 @@ export class BlueprintStore {
             !position.every((n) => typeof n === "number" && Number.isFinite(n))) {
           throw new JsonRpcError(RpcErrorCode.InvalidParams, `"position" must contain 2 numbers`);
         }
-        const entity: EntityInstance = { ...current, position: [position[0]!, position[1]!] };
+        rejectNoop(
+          valuesEqual(current.position, position),
+          `entity/move would leave "${command.entityId}" in the same position`,
+        );
+        const entity: EntityInstance = Object.freeze({
+          ...current,
+          position: [position[0]!, position[1]!] as readonly [number, number],
+        });
         this.entities.set(entity.entityId, entity);
         const definition = this.entityDefs.get(entity.entityDefId);
-        const event: BlueprintEvent = {
-          kind: "entityMoved",
-          entity,
-          ...(definition?.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
-        };
-        return event;
+        return applied(
+          {
+            kind: "entityMoved",
+            entity,
+            ...(definition?.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
+          },
+          [{ kind: "entity/move", entityId: entity.entityId, position: current.position }],
+        );
       }
-      case "entity/remove": {
-        if (!this.entities.delete(command.entityId)) {
+      case "entity/properties": {
+        const current = this.entities.get(command.entityId);
+        if (!current) {
           throw new JsonRpcError(RpcErrorCode.InvalidParams, `Entity "${command.entityId}" does not exist`);
         }
-        const event: BlueprintEvent = { kind: "entityRemoved", entityId: command.entityId };
-        return event;
+        const definition = this.entityDefs.get(current.entityDefId);
+        if (!definition) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Entity definition "${current.entityDefId}" is not defined`,
+          );
+        }
+        if (!Array.isArray(command.changes) || command.changes.length === 0) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `"changes" must be a non-empty array`);
+        }
+
+        const byName = new Map(definition.fields.map((field) => [field.name, field]));
+        const fields: Record<string, unknown> = { ...current.fields };
+        let effective = 0;
+        for (const change of command.changes) {
+          const field = byName.get(change.name);
+          if (!field) {
+            throw new JsonRpcError(
+              RpcErrorCode.InvalidParams,
+              `Field "${change.name}" is not declared in "${definition.entityDefId}"`,
+            );
+          }
+          // `before` desatualizado significa que o cliente editou sobre uma
+          // leitura velha: é conflito, não parâmetro inválido.
+          if (!valuesEqual(fields[change.name], change.before)) {
+            throw new JsonRpcError(
+              RpcErrorCode.ProjectSessionConflict,
+              `Field "${change.name}" of "${command.entityId}" changed since it was read`,
+            );
+          }
+          validateFieldValue(field, change.after, `"${change.name}" of entity "${command.entityId}"`);
+          if (!valuesEqual(change.before, change.after)) effective++;
+          fields[change.name] = change.after;
+        }
+        rejectNoop(effective === 0, `entity/properties would not change "${command.entityId}"`);
+
+        const entity: EntityInstance = Object.freeze({ ...current, fields: Object.freeze(fields) });
+        this.entities.set(entity.entityId, entity);
+        return applied(
+          {
+            kind: "entityPropertiesChanged",
+            entity,
+            changes: command.changes,
+            ...(definition.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
+          },
+          [
+            {
+              kind: "entity/properties",
+              entityId: command.entityId,
+              changes: command.changes.map((change) => ({
+                name: change.name,
+                before: change.after,
+                after: change.before,
+              })),
+            },
+          ],
+        );
+      }
+      case "entity/remove": {
+        const previous = this.entities.get(command.entityId);
+        if (!previous) {
+          throw new JsonRpcError(RpcErrorCode.InvalidParams, `Entity "${command.entityId}" does not exist`);
+        }
+        this.entities.delete(command.entityId);
+        return applied({ kind: "entityRemoved", entityId: command.entityId }, [
+          { kind: "entity/place", entity: previous },
+        ]);
       }
       case "level/define": {
         const level = command.level;
@@ -277,29 +623,39 @@ export class BlueprintStore {
           throw new JsonRpcError(RpcErrorCode.DuplicateId, `Level "${level.levelId}" is already defined`);
         }
         this.levels.set(level.levelId, Object.freeze({ ...level }));
-        const event: BlueprintEvent = { kind: "levelDefined", level };
-        return event;
+        return applied({ kind: "levelDefined", level }, [
+          { kind: "level/remove", levelId: level.levelId },
+        ]);
       }
       case "level/update": {
         const level = command.level;
         validateLevel(level);
-        if (!this.levels.has(level.levelId)) {
+        const previous = this.levels.get(level.levelId);
+        if (!previous) {
           throw new JsonRpcError(
             RpcErrorCode.InvalidParams,
             `Level "${level.levelId}" does not exist — use level/define to create it`,
           );
         }
+        rejectNoop(valuesEqual(previous, level), `level/update would not change "${level.levelId}"`);
         this.levels.set(level.levelId, Object.freeze({ ...level }));
-        const event: BlueprintEvent = { kind: "levelUpdated", level };
-        return event;
+        return applied({ kind: "levelUpdated", level }, [
+          { kind: "level/update", level: previous },
+        ]);
       }
       case "level/remove": {
-        if (!this.levels.delete(command.levelId)) {
+        const previous = this.levels.get(command.levelId);
+        if (!previous) {
           throw new JsonRpcError(RpcErrorCode.InvalidParams, `Level "${command.levelId}" does not exist`);
         }
+        const placement = this.placements.get(command.levelId);
+        this.levels.delete(command.levelId);
         this.placements.delete(command.levelId); // sai também do world map
-        const event: BlueprintEvent = { kind: "levelRemoved", levelId: command.levelId };
-        return event;
+        // o inverso restaura TAMBÉM a posição no world map: sem o segundo
+        // comando, desfazer a remoção devolveria o nível sem lugar nenhum
+        const inverse: BlueprintCommand[] = [{ kind: "level/define", level: previous }];
+        if (placement) inverse.push({ kind: "world/place", placement });
+        return applied({ kind: "levelRemoved", levelId: command.levelId }, inverse);
       }
       case "world/place": {
         const placement = command.placement;
@@ -324,20 +680,31 @@ export class BlueprintStore {
             );
           }
         }
+        const previous = this.placements.get(placement.levelId);
+        rejectNoop(
+          previous !== undefined && valuesEqual(previous, placement),
+          `world/place would leave "${placement.levelId}" in the same spot`,
+        );
         // re-posicionar é permitido (drag-n-drop): substitui a colocação
         this.placements.set(placement.levelId, Object.freeze({ ...placement }));
-        const event: BlueprintEvent = { kind: "worldLevelPlaced", placement };
-        return event;
+        return applied({ kind: "worldLevelPlaced", placement }, [
+          previous
+            ? { kind: "world/place", placement: previous }
+            : { kind: "world/unplace", levelId: placement.levelId },
+        ]);
       }
       case "world/unplace": {
-        if (!this.placements.delete(command.levelId)) {
+        const previous = this.placements.get(command.levelId);
+        if (!previous) {
           throw new JsonRpcError(
             RpcErrorCode.InvalidParams,
             `Level "${command.levelId}" is not placed on the world map`,
           );
         }
-        const event: BlueprintEvent = { kind: "worldLevelUnplaced", levelId: command.levelId };
-        return event;
+        this.placements.delete(command.levelId);
+        return applied({ kind: "worldLevelUnplaced", levelId: command.levelId }, [
+          { kind: "world/place", placement: previous },
+        ]);
       }
       case "skeleton/define": {
         const s = command.skeleton;
@@ -346,8 +713,10 @@ export class BlueprintStore {
           throw new JsonRpcError(RpcErrorCode.DuplicateId, `Skeleton "${s.skeletonId}" is already defined`);
         }
         this.skeletons.set(s.skeletonId, deepFreezeSkeleton(s));
-        const event: BlueprintEvent = { kind: "skeletonDefined", skeleton: s };
-        return event;
+        // BARREIRA: não existe skeleton/remove no domínio, então não há
+        // inverso. Inventar um comando só para "completar" o par criaria um
+        // kind sem DoD e sem projeção.
+        return applied({ kind: "skeletonDefined", skeleton: s }, [], true);
       }
       case "mesh/bind": {
         const b = command.binding;
@@ -359,8 +728,7 @@ export class BlueprintStore {
           throw new JsonRpcError(RpcErrorCode.DuplicateId, `Mesh "${b.meshId}" is already bound`);
         }
         this.meshes.set(b.meshId, Object.freeze({ ...b }));
-        const event: BlueprintEvent = { kind: "meshBound", binding: b };
-        return event;
+        return applied({ kind: "meshBound", binding: b }, [], true); // BARREIRA, idem
       }
     }
   }
@@ -710,6 +1078,57 @@ function validateBinding(b: MeshBinding): void {
   if (!Number.isInteger(b.strideInBytes) || b.strideInBytes < 4) {
     throw new JsonRpcError(RpcErrorCode.InvalidBinaryLayout, `"strideInBytes" must be an integer >= 4`);
   }
+}
+
+/** Empacota evento + inverso. `barrier` marca comando que não se desfaz. */
+function applied(
+  event: BlueprintEvent,
+  inverse: readonly BlueprintCommand[],
+  barrier = false,
+): AppliedCommand {
+  return Object.freeze({ event, inverse: Object.freeze([...inverse]), barrier });
+}
+
+/**
+ * Recusa comando que não muda nada.
+ *
+ * Não é preciosismo: um no-op aceito viraria uma entrada de histórico vazia,
+ * e o usuário apertaria Ctrl+Z sem que nada acontecesse na tela — parecendo
+ * que o desfazer quebrou. Melhor recusar na borda do domínio.
+ */
+function rejectNoop(isNoop: boolean, message: string): void {
+  if (isNoop) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, message);
+  }
+}
+
+/**
+ * Igualdade ESTRUTURAL por valor. Comparar por referência não serve: os
+ * comandos chegam desserializados do fio, então dois objetos equivalentes
+ * nunca são o mesmo objeto.
+ */
+function valuesEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null || typeof a !== "object") return false;
+
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, index) => valuesEqual(item, b[index]));
+  }
+
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  // chaves com valor `undefined` são equivalentes a chaves ausentes: o
+  // JSON do fio não distingue as duas
+  const keys = (o: Record<string, unknown>): string[] =>
+    Object.keys(o).filter((key) => o[key] !== undefined);
+  const leftKeys = keys(left);
+  const rightKeys = keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every(
+    (key) => rightKeys.includes(key) && valuesEqual(left[key], right[key]),
+  );
 }
 
 function deepFreezeSkeleton(s: SkeletonBlueprint): SkeletonBlueprint {

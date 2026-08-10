@@ -236,7 +236,9 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
   ): void => {
     server.registerTool(name, { description, inputSchema }, async (payload) => {
       const normalized = stripUndefined(payload as Record<string, unknown>);
-      const result = await canonical.surface.dispatchByKind(kind, normalized);
+      // A fachada MCP FIXA a proveniência: tudo que entra por aqui vem de um
+      // agente, e nenhum payload pode se declarar humano.
+      const result = await canonical.surface.dispatchByKind(kind, normalized, undefined, "agent");
       return { content: [{ type: "text", text: jsonText(result) }] };
     });
   };
@@ -252,7 +254,7 @@ function registerCanonicalTools(server: McpServer, canonical: CanonicalServices)
       },
     },
     async ({ kind, payload }) => {
-      const result = await canonical.surface.dispatchByKind(kind, payload);
+      const result = await canonical.surface.dispatchByKind(kind, payload, undefined, "agent");
       return { content: [{ type: "text", text: jsonText(result) }] };
     },
   );

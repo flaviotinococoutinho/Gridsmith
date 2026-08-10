@@ -198,7 +198,7 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 | D13 | E6 pendente: camada de aplicação de assets + superfície fria GraphQL | `middleware/src/application/` não existe | E6 |
 | ~~D14~~ | ✅ **Entregue (E7).** Blueprint v3: `metadata` (nome, resolução de referência, convenção espacial declarada), `GridCoordinates` canônico e migração 2 → 3 com os quatro ramos por impressão digital | — | — |
 | D22 | A luz dos templates fica 8 px fora do centro geométrico do nível (`[136, 80]` onde o centro é `[128, 72]`) — a expressão original aplica a fórmula de centro de célula a um índice fracionário | `legacyLevelCenterPx` em `ProjectTemplates.ts`, com o desvio documentado | **órfã** — revelada pela E7 e deixada fora dela de propósito: corrigi-la move a luz de todo projeto novo, o que não pertence a um PR de migração |
-| D15 | E8 pendente: domínio transacional (`planBatch`/`commitBatch`/`fork`, `applyWithInverse`, comandos in-place, proveniência) | nenhum desses símbolos existe no `BlueprintStore` | E8 (receita §9.4) |
+| ~~D15~~ | ✅ **Entregue (E8).** Domínio transacional (`planBatch`/`commitBatch`/`fork` com `mutationVersion` como CAS interno, `applyWithInverse`, inverso por kind, barreiras, rejeição de no-op), quatro kinds in-place e proveniência carimbada pela borda | — | — |
 | D16 | E9 pendente: histórico global transacional com `level/patch`, paleta e bump v4 | idem D11 + campos de histórico ausentes do proto | E9 (receita §9.4) |
 | D17 | E10 pendente: casca do workbench por contribuições (nenhum dos módulos de framework existe) | `frontend/src/core/` e `frontend/src/renderer/` não têm nenhum deles | E10 |
 | D18 | Cauda: asset browser com inspector, `spriteRenderer` com bump v5, campos do wizard sobre o núcleo puro da `main` | o "Novo" hoje só escolhe template por diálogo de botões | cauda pós-E10 |
@@ -256,13 +256,17 @@ flowchart TD
 **E4 entregue.** A rede está no lugar: cada kind novo agora precisa do schema e
 do membro do enum, ou o CI quebra com o nome do kind órfão.
 
-**E7 entregue.** O documento está em v3, com a unidade espacial declarada no
-arquivo em vez de combinada entre camadas, e todo documento v2 do mundo abre
-correto — provado por um corpus de documentos reais congelados, um teste
-nomeado por ramo da migração.
+**E7 e E8 entregues.** O documento está em v3, com a unidade espacial declarada
+no arquivo em vez de combinada entre camadas, e todo documento v2 do mundo abre
+correto. O domínio virou transacional: um lote é validado inteiro num rascunho
+e adotado de uma vez, cada comando devolve o próprio inverso, e a proveniência
+é carimbada pela borda confiável — as três peças que o histórico global da E9
+consome.
 
-**Próximo passo natural: E8** (domínio transacional), que a E4 destravou e que
-a E9 exige. Em paralelo, E5 continua liberada — e F1 nunca esteve bloqueada.
+**Próximo passo natural: E9** (histórico global transacional: undo/redo
+canônico, `level/patch`, paleta e bump v4). Ela exige E7 **e** E8, ambas
+agora na `main`, e é **indivisível** — ver as armadilhas na §9.4. Em paralelo,
+E5 continua liberada — e F1 nunca esteve bloqueada.
 
 ## 9. Receitas executáveis
 
@@ -485,6 +489,23 @@ migração do documento editado à mão preserva as posições bit a bit e de qu
 do platformer pré-correção move o player para o pixel esperado.
 
 ### 9.4. Receita E8 + E9 — domínio transacional e histórico global
+
+> ✅ **E8 entregue; E9 pendente.** Ajustes da E8 em relação ao plano original:
+>
+> 1. **`light/update` e `entitydef/update` substituem INTEGRALMENTE**, como
+>    `level/update` já fazia, em vez de aplicarem patch parcial. Um patch
+>    parcial não consegue expressar "remover um campo opcional", então o
+>    inverso não seria exato; e remover+adicionar mudaria a ordem de inserção
+>    do `Map` — logo a ordem do documento exportado.
+> 2. **A projeção de `lightUpdated` recria o slot na engine** (remove + add),
+>    porque não existe `lighting/update` no contrato do runtime. Fazer isso na
+>    borda de projeção, e não no domínio, é o que preserva o inverso exato.
+> 3. **`entity/properties` trata `before` divergente como CONFLITO**, não como
+>    parâmetro inválido: significa que o cliente editou sobre uma leitura
+>    velha. Usa o código de conflito de sessão que já existia.
+> 4. **A proveniência foi ligada às bordas no mesmo PR** — MCP fixa `agent`, as
+>    bordas do app usam o default `human`. Uma opção sem produtor seria
+>    exatamente a dívida que este plano registra em T6.
 
 > **Duas etapas, dois PRs, nesta ordem.** A E8 é mergeável sozinha; a E9 é
 > indivisível.
