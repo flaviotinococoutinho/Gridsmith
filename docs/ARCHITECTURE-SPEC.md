@@ -54,7 +54,7 @@ O P7M é um **ecossistema Engine-as-a-Service local** de três processos
 desacoplados — editor Electron/TypeScript, middleware Node.js/TypeScript e engine
 .NET 8/MonoGame — mediados por um **modelo canônico** independente de runtime e por
 **contratos versionados** (JSON Schema, layouts binários, perfis de runtime). A
-arquitetura já é **madura na plataforma** e **executável em suas regras**: 23 regras
+arquitetura já é **madura na plataforma** e **executável em suas regras**: 24 regras
 arquiteturais são testes que quebram o CI (`GOVERNANCE.md`), a compatibilidade
 binária entre TS e C# é provada por checksums cruzados em e2e, e o hot path da engine
 é verificado como Zero-GC por asserções de alocação. **CONFIRMADO.**
@@ -124,7 +124,7 @@ vertical `Projeto → Asset → Entidade → Nível → Preview → Live edit �
 
 ## 3. Pontos fortes (a preservar)
 
-1. **Governança executável, não documental** — 23 regras (R1–R13, F1–F5, E1–E5) são
+1. **Governança executável, não documental** — 24 regras (R1–R13, F1–F6, E1–E5) são
    testes que quebram o CI com o arquivo infrator no erro
    (`middleware/test/architecture.test.ts`, `frontend/test/architecture.test.ts`,
    `engine/tests/.../ArchitectureTests.cs`). **CONFIRMADO.**

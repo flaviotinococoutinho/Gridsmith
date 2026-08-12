@@ -22,10 +22,24 @@
 
     <main id="workbench">
       <nav id="panel-rail" aria-label="Painéis do editor"></nav>
+      <div
+        id="resize-rail"
+        class="resizer vertical"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Redimensionar o rail de painéis"
+      ></div>
 
       <section id="workspace">
         <div id="error-banner" role="alert" hidden></div>
         <div id="view-host" role="region" aria-label="Área de trabalho"></div>
+        <div
+          id="resize-bottom"
+          class="resizer horizontal"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Redimensionar o painel inferior"
+        ></div>
         <section id="bottom-panel">
           <div id="bottom-tabs" role="tablist" aria-label="Painéis inferiores">
             <button role="tab" data-tab="problems">Problemas <span id="problem-count" class="badge">0</span></button>
@@ -37,6 +51,13 @@
         </section>
       </section>
 
+      <div
+        id="resize-inspector"
+        class="resizer vertical"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Redimensionar o inspector"
+      ></div>
       <aside id="inspector" aria-label="Inspector">
         <h2>Inspector</h2>
         <div id="inspector-content"><p class="muted">Nada selecionado.</p></div>

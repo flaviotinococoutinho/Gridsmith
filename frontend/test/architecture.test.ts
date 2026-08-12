@@ -90,6 +90,27 @@ test("F4: o frontend nunca reimplementa protocolo — JSON-RPC/framing vêm do m
   }
 });
 
+test("F6: o teclado global tem UM ouvinte — atalho se contribui, não se instala", () => {
+  // Enquanto cada vista instalava o próprio `keydown`, dois donos do mesmo
+  // Ctrl+Z conviviam em silêncio e vencia quem tivesse montado por último.
+  // Desde a E10 o acorde é declarado num comando/ferramenta e o registro
+  // RECUSA um segundo pretendente — o que só vale se ninguém escapar por fora.
+  const OWNER = "renderer/renderer.ts";
+  const offenders: string[] = [];
+  for (const module_ of modules) {
+    if (module_.file === OWNER) continue;
+    const source = fs.readFileSync(path.join(SRC, module_.file), "utf8");
+    if (/addEventListener\(\s*["']keydown["']/.test(source)) {
+      offenders.push(module_.file);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `só ${OWNER} escuta o teclado; o resto contribui comandos/ferramentas ao workbench`,
+  );
+});
+
 test("F5: libs de transporte do app (gRPC/HTTP) são exclusivas de main/transport/", () => {
   // a política de roteamento vive em core/ (pura); os SDKs de transporte só
   // podem aparecer nas implementações de main/transport/ — renderer e core

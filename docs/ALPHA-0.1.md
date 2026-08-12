@@ -239,12 +239,23 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
   de projeção, estados de projeto e de serviços
 - [x] Log estruturado — `core/eventLog.ts`: rótulo, objeto afetado, status da
   projeção com razão, filtro por texto/status, contador de problemas
-- [x] View-model de navegação — `core/workbenchModel.ts`: foco automático no
-  primeiro painel habilitado, realocação quando a governança muda, fail-safe
+- [x] View-model de navegação — `core/workbench/workbenchShell.ts`: foco
+  automático no primeiro painel habilitado, realocação quando a governança
+  muda, fail-safe
+- [x] Casca por contribuições (E10) — painel, comando, ferramenta e seção de
+  inspector se declaram em registros puros (`core/workbench/`); o rail é
+  derivado do registro, o inspector ganhou seções por tipo de seleção e a
+  seleção virou serviço observável em vez de variável do closure da vista
+- [x] Um dono por atalho — o acorde se contribui ao `commandRegistry`, que
+  RECUSA um segundo pretendente; nenhuma vista instala `keydown` global
+  (regra arquitetural F6)
 - [x] Falha de conexão com ação corretiva (botão "Tentar reconectar")
 - [x] Menu nativo (Arquivo/Editar/Exibir) com atalhos: Ctrl+N/O/S/Shift+S/W
-  no main; Ctrl+Z/Shift+Z roteados ao editor ativo via `p7m:menu-action`
-- [ ] Painéis redimensionáveis e layouts salvos
+  no main; Ctrl+Z/Shift+Z resolvidos pelo MESMO registro do teclado, via
+  `p7m:menu-action`
+- [x] Painéis redimensionáveis e layouts salvos — `core/workbench/
+  workbenchLayout.ts` (tamanho e visibilidade por área, clamp por limites,
+  serialização versionada com fail-safe) + alças de arrasto e persistência
 - [ ] Razões da governança traduzidas. **Atenção:** os perfis JÁ estão em
   pt-BR (`middleware/src/runtime/profiles/monogame.ts`); o inglês que resta
   vem das razões GERADAS pelo governor (`ExperienceGovernor.ts` — "capability

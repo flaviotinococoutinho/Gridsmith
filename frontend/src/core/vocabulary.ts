@@ -25,6 +25,14 @@ export const FEATURE_LABELS: Readonly<Record<string, string>> = {
   "assets.mgcb-compile": "Compilação de assets (MGCB)",
   "preview.embedded": "Pré-visualização embutida",
   "debug.overlay": "Sobreposição de depuração",
+  "entities.spawn": "Posicionamento de entidades",
+};
+
+/** Atores do histórico canônico (E9): quem fez a edição. */
+export const HISTORY_ACTOR_LABELS: Readonly<Record<string, string>> = {
+  human: "Você",
+  agent: "Agente",
+  pipeline: "Pipeline",
 };
 
 /** Eventos do Blueprint (log de saída e histórico). */
@@ -100,3 +108,4 @@ export const projectionLabel = lookup(PROJECTION_LABELS);
 export const projectStateLabel = lookup(PROJECT_STATE_LABELS);
 export const serviceStateLabel = lookup(SERVICE_STATE_LABELS);
 export const runtimeStateLabel = lookup(RUNTIME_STATE_LABELS);
+export const historyActorLabel = lookup(HISTORY_ACTOR_LABELS);
