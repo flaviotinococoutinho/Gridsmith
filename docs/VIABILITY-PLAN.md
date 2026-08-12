@@ -939,6 +939,20 @@ duplicata) e os campos do wizard reexpressos sobre o núcleo puro da `main`.
 > conversão da luz em meia-célula: migrar um projeto antigo e criar um projeto
 > novo têm de produzir o mesmo documento.
 >
+> **Ondas 5, 6 e 7 entregues (E8, E9, E10).** A E8 tornou o domínio
+> transacional: um lote é validado inteiro num rascunho e adotado de uma vez,
+> cada comando devolve o próprio inverso e a proveniência é carimbada pela
+> borda confiável. A E9 consumiu essas três peças e fez do desfazer uma
+> operação canônica — os inversos viajam como comandos pelo mesmo caminho, com
+> CAS por `historyCursor`, coalescing por gesto, paleta no documento (v4) e o
+> `EventEnvelope` renumerado a partir do campo 10, conforme a Onda 0. A E10
+> trocou a casca hardcoded por contribuições: painel, comando, ferramenta e
+> seção de inspector se declaram, a seleção saiu do closure da vista e o
+> teclado passou a ter um ouvinte só (regra arquitetural F6, nova). O único
+> item da E10 deixado de fora foi apontar o Ctrl+Z ao histórico canônico:
+> enquanto a pintura não virar `level/patch` por gesto (frente F6), trocar o
+> alvo tiraria o desfazer da pincelada.
+>
 > **Onda 1 entregue (E1, E2, E3).** A escrita do projeto passou a ser durável
 > (temporário, `flush`, `rename` atômico, `.bak`, publicação no-clobber no
 > "Novo"); o autosave ganhou leitor e ciclo de vida — antes era gravado e nunca

@@ -1,9 +1,13 @@
 /**
- * Vista do editor de níveis (P0.4) — DOM/eventos apenas; as decisões de
- * ferramenta vivem em core/levelEditorTools.ts (puras e testadas) e o
- * documento em core/intGridDocument.ts. Montada pelo workbench
- * (renderer.ts) com contexto explícito — organizada para crescer sem
- * estado de módulo compartilhado.
+ * Vista do editor de níveis — DOM/eventos apenas; as decisões de ferramenta
+ * vivem em core/levelEditorTools.ts (puras e testadas) e o documento em
+ * core/intGridDocument.ts.
+ *
+ * Desde a E10 a vista não é mais dona da própria barra de ferramentas nem dos
+ * próprios atalhos: ela CONTRIBUI ferramentas e comandos ao workbench e lê a
+ * ferramenta ativa do registro. Foi assim que o Ctrl+Z passou a ter um dono
+ * único e verificável, e que a seleção saiu do closure — sem ela fora daqui,
+ * nenhum inspector conseguiria existir.
  */
 
 import { CanvasViewport } from "../core/canvasViewport.js";
@@ -23,7 +27,10 @@ import {
 import { LEVEL_PALETTE, TILE_COLORS, defaultLevelRules } from "../core/levelPresets.js";
 import { presentError } from "../core/errorCatalog.js";
 import { projectionLabel } from "../core/vocabulary.js";
-import type { ExperienceGate } from "../core/experienceGate.js";
+import { LEVEL_EDITOR_PANEL } from "../core/workbench/editorContributions.js";
+import type { KeyStroke } from "../core/workbench/keybindings.js";
+import type { Selection } from "../core/workbench/selectionService.js";
+import type { WorkbenchModel } from "../core/workbench/workbenchShell.js";
 // type-only (apagado na compilação): o módulo real é vendorizado pelo build
 import type { resolveAutoTiles as ResolveAutoTilesFn } from "@p7m/middleware/dist/leveldesign/AutoTiler.js";
 
@@ -38,20 +45,36 @@ async function loadAutoTiler(): Promise<typeof ResolveAutoTilesFn> {
   return resolveAutoTiles;
 }
 
+export interface InspectorField {
+  readonly label: string;
+  readonly value: string;
+}
+
+/** Quem sabe descrever a seleção corrente para o inspector da casca. */
+export interface InspectorDataProvider {
+  fields(sectionId: string, selection: Selection): readonly InspectorField[];
+}
+
 export interface LevelEditorContext {
   readonly host: HTMLElement;
-  /** Ações undo/redo do editor ativo (menu Editar / atalhos globais). */
-  readonly activeEditor: { undo?: () => void; redo?: () => void };
+  /** Registros do workbench: ferramentas, comandos, seleção e governança. */
+  readonly workbench: WorkbenchModel;
   /** Registra a limpeza a executar quando o painel for trocado. */
   readonly setCleanup: (cleanup: () => void) => void;
-  /** Gate da experiência (governança por runtime); pode não existir offline. */
-  readonly gate: ExperienceGate | undefined;
+  /** Publica o descritor da seleção para o inspector. */
+  readonly setInspectorData: (provider: InspectorDataProvider) => void;
+  /**
+   * Teclas que só fazem sentido dentro desta vista (os dígitos da paleta). A
+   * casca chama isto DEPOIS de comandos e ferramentas, então a vista nunca
+   * rouba um atalho global.
+   */
+  readonly setKeyHandler: (handler: (stroke: KeyStroke) => boolean) => void;
   /** Nível a abrir; sem ele a vista abre o primeiro nível do projeto. */
   readonly levelId?: string;
 }
 
 export function mountLevelEditor(ctx: LevelEditorContext): void {
-  const { host, activeEditor, gate } = ctx;
+  const { host, workbench } = ctx;
   // O editor NÃO é dono destes valores: eles descrevem o nível ABERTO. Só
   // valem como partida de um projeto vazio; a hidratação os substitui pelo
   // que o Blueprint tiver, venha do template canônico, de um agente ou de
@@ -66,7 +89,9 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   let seed = 1;
   let rules: ReturnType<typeof defaultLevelRules> = defaultLevelRules();
   let activeValue = 1;
-  let tool: LevelTool = "pencil";
+
+  /** Ferramenta corrente: LIDA do registro, nunca guardada aqui. */
+  const currentTool = (): LevelTool => (workbench.activeToolId() ?? "pencil") as LevelTool;
 
   // camada de entidades (P0.4 placement ⇄ P0.6 spawn): marcadores em pixels
   // do mundo, hidratados do Blueprint e mantidos pelos próprios dispatches
@@ -82,15 +107,27 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   };
   const entities = new Map<string, EntityMarker>();
   let entityDefEnsured = false;
-  let selectedEntityId: string | undefined;
   let draggingEntity: EntityMarker | undefined;
+
+  /** Seleção: mora no workbench, não no closure — é o que o inspector lê. */
+  const selectedEntityId = (): string | undefined => {
+    const selection = workbench.selection.current;
+    return selection?.kind === "entity" ? selection.ids[0] : undefined;
+  };
+  const selectEntity = (entityId: string | undefined): void => {
+    if (entityId === undefined) workbench.selection.clear();
+    else workbench.selection.select("entity", [entityId], LEVEL_EDITOR_PANEL);
+  };
 
   const view = document.createElement("div");
   view.id = "level-view";
 
-  // toolbar do editor
   const toolbar = document.createElement("div");
   toolbar.id = "level-toolbar";
+  const toolStrip = document.createElement("div");
+  toolStrip.className = "tool-strip";
+  toolbar.append(toolStrip);
+
   const addButton = (label: string, onClick: () => void, title?: string): HTMLButtonElement => {
     const b = document.createElement("button");
     b.textContent = label;
@@ -100,27 +137,25 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     return b;
   };
 
-  const toolButtons = new Map<string, HTMLButtonElement>();
-  const selectTool = (name: LevelTool): void => {
-    tool = name;
-    for (const [id, b] of toolButtons) b.setAttribute("aria-pressed", String(id === name));
-  };
-  toolButtons.set("pencil", addButton("Pincel", () => selectTool("pencil"), "Pintar célula (arraste)"));
-  toolButtons.set("eraser", addButton("Borracha", () => selectTool("eraser")));
-  toolButtons.set("flood", addButton("Balde", () => selectTool("flood"), "Preencher região conectada"));
-  toolButtons.set("rect", addButton("Retângulo", () => selectTool("rect"), "Arraste para preencher a área"));
-  toolButtons.set("line", addButton("Linha", () => selectTool("line"), "Arraste para traçar uma linha"));
-  toolButtons.set("picker", addButton("Conta-gotas", () => selectTool("picker"), "Clique para pegar o significado da célula"));
-  toolButtons.set("entity", addButton("Jogador", () => selectTool("entity"), "Clique posiciona, arraste move, Delete remove"));
-  selectTool("pencil");
-
-  // governança: a ferramenta de spawn segue a decisão do perfil/manifesto
-  // (fail-safe, com a razão no tooltip — nunca um "indisponível" genérico)
-  const spawnAnswer = gate?.feature("entities.spawn");
-  if (spawnAnswer && !spawnAnswer.enabled) {
-    const entityButton = toolButtons.get("entity")!;
-    entityButton.disabled = true;
-    entityButton.title = spawnAnswer.reason;
+  /**
+   * A barra de ferramentas é DERIVADA do registro a cada render: a governança
+   * de `entities.spawn` era aplicada uma única vez na montagem, então um
+   * perfil que mudasse com o painel aberto deixava o botão clicável.
+   */
+  function renderToolStrip(): void {
+    toolStrip.replaceChildren();
+    for (const resolved of workbench.activeTools()) {
+      const button = document.createElement("button");
+      button.textContent = resolved.tool.label;
+      button.disabled = !resolved.enabled;
+      button.setAttribute("aria-pressed", String(resolved.active));
+      const tooltip = resolved.enabled
+        ? [resolved.tool.hint, resolved.shortcut].filter(Boolean).join(" · ")
+        : resolved.reason;
+      if (tooltip) button.title = tooltip;
+      button.addEventListener("click", () => workbench.activateTool(resolved.tool.id));
+      toolStrip.append(button);
+    }
   }
 
   toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
@@ -143,26 +178,41 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   selectValue(1);
 
   toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
-  const doUndo = (): void => { doc.undo(); onEdited(); };
-  const doRedo = (): void => { doc.redo(); onEdited(); };
+
+  const doUndo = (): void => {
+    doc.undo();
+    onEdited();
+  };
+  const doRedo = (): void => {
+    doc.redo();
+    onEdited();
+  };
   const undoBtn = addButton("Desfazer", doUndo, "Ctrl+Z");
   const redoBtn = addButton("Refazer", doRedo, "Ctrl+Shift+Z");
-  activeEditor.undo = doUndo;
-  activeEditor.redo = doRedo;
-  addButton("Enquadrar", () => { viewport.fit(doc.width, doc.height, tileSize); repaint(); });
+  addButton("Enquadrar", () => {
+    viewport.fit(doc.width, doc.height, tileSize);
+    repaint();
+  });
 
   // "Pinte significado, derive arte": preview usa o MESMO resolvedor da projeção
   let artPreview = false;
   let previewTiles: Int32Array | undefined;
   let previewTimer: ReturnType<typeof setTimeout> | undefined;
-  const previewBtn = addButton("Ver arte", () => {
-    artPreview = !artPreview;
-    previewBtn.setAttribute("aria-pressed", String(artPreview));
-    schedulePreview(0);
-  }, "Alterna entre significado (IntGrid) e arte derivada pelas regras");
+  const previewBtn = addButton(
+    "Ver arte",
+    () => {
+      artPreview = !artPreview;
+      previewBtn.setAttribute("aria-pressed", String(artPreview));
+      schedulePreview(0);
+    },
+    "Alterna entre significado (IntGrid) e arte derivada pelas regras",
+  );
 
   function schedulePreview(delayMs = 80): void {
-    if (!artPreview) { repaint(); return; }
+    if (!artPreview) {
+      repaint();
+      return;
+    }
     clearTimeout(previewTimer);
     previewTimer = setTimeout(() => {
       void loadAutoTiler().then((resolve) => {
@@ -203,7 +253,8 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     viewport.resize(canvas.width, canvas.height);
     repaint();
   };
-  new ResizeObserver(resize).observe(canvas);
+  const observer = new ResizeObserver(resize);
+  observer.observe(canvas);
 
   const meaningColors = new Map(LEVEL_PALETTE.map((p) => [p.value, p.color]));
 
@@ -240,7 +291,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       context.globalAlpha = 0.55;
       context.fillStyle = meaningColors.get(activeValue) ?? "#888";
       const size = tileSize * zoom;
-      for (const [x, y] of dragCells(tool, dragAnchor, dragCurrent)) {
+      for (const [x, y] of dragCells(currentTool(), dragAnchor, dragCurrent)) {
         const screen = viewport.worldToScreen(x * tileSize, y * tileSize);
         context.fillRect(screen.x, screen.y, size - gap, size - gap);
       }
@@ -248,6 +299,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     }
 
     // marcadores de entidade (círculo com inicial; anel na seleção)
+    const selected = selectedEntityId();
     for (const marker of entities.values()) {
       const screen = viewport.worldToScreen(marker.position[0], marker.position[1]);
       const radius = Math.max(5, tileSize * 0.45 * zoom);
@@ -255,7 +307,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       context.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
       context.fillStyle = "#3aa0f0";
       context.fill();
-      if (marker.entityId === selectedEntityId) {
+      if (marker.entityId === selected) {
         context.lineWidth = 2;
         context.strokeStyle = "#ffffff";
         context.stroke();
@@ -276,7 +328,13 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   function entityAtScreen(offsetX: number, offsetY: number): EntityMarker | undefined {
     const zoom = viewport.current.zoom;
     const hitRadius = Math.max(6, tileSize * 0.5 * zoom);
-    return hitMarker(entities.values(), offsetX, offsetY, (wx, wy) => viewport.worldToScreen(wx, wy), hitRadius);
+    return hitMarker(
+      entities.values(),
+      offsetX,
+      offsetY,
+      (wx, wy) => viewport.worldToScreen(wx, wy),
+      hitRadius,
+    );
   }
 
   /** Posição do clique em pixels do mundo, ancorada no centro da célula. */
@@ -319,7 +377,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       fields: {},
     });
     entities.set(entityId, { entityId, entityDefId: entityDef.entityDefId, position });
-    selectedEntityId = entityId;
+    selectEntity(entityId);
     status.textContent = withProjection(
       `Jogador posicionado em (${position[0]}, ${position[1]}).`,
       outcome,
@@ -339,11 +397,11 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   }
 
   async function removeSelectedEntity(): Promise<void> {
-    if (!selectedEntityId) return;
-    const entityId = selectedEntityId;
+    const entityId = selectedEntityId();
+    if (!entityId) return;
     const outcome = await window.p7m.dispatch("entity/remove", { entityId });
     entities.delete(entityId);
-    selectedEntityId = undefined;
+    selectEntity(undefined);
     status.textContent = withProjection("Jogador removido.", outcome);
     repaint();
   }
@@ -351,50 +409,127 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   const applyAt = (offsetX: number, offsetY: number): void => {
     const cell = viewport.screenToCell(offsetX, offsetY, tileSize, doc.width, doc.height);
     if (!cell.inside) return;
-    if (applyBrushAt(doc, tool, cell.x, cell.y, activeValue)) onEdited();
+    if (applyBrushAt(doc, currentTool(), cell.x, cell.y, activeValue)) onEdited();
   };
 
-  // Atalhos do editor: dígitos selecionam o significado, Ctrl+Z/Shift+Z desfazem
-  const onKeyDown = (e: KeyboardEvent): void => {
-    if (e.target instanceof HTMLInputElement) return;
-    const paletteEntry = LEVEL_PALETTE.find((p) => p.shortcut === e.key);
-    if (paletteEntry) { selectValue(paletteEntry.value); return; }
-    if (e.key === "Delete" && selectedEntityId) {
-      e.preventDefault();
-      void removeSelectedEntity();
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
-      e.preventDefault();
-      if (e.shiftKey) doRedo(); else doUndo();
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
-      e.preventDefault();
-      doRedo();
-    }
-  };
-  window.addEventListener("keydown", onKeyDown);
+  // ------------------------------------------------ contribuições da vista
+
+  /**
+   * Comandos de VIDA CURTA: existem enquanto o painel está montado e são
+   * devolvidos ao registro na limpeza. É isso que dá ao Ctrl+Z um dono único —
+   * o registro RECUSA um segundo pretendente ao mesmo acorde, em vez de deixar
+   * os dois conviverem e vencer o último montado.
+   *
+   * O alvo do Ctrl+Z ainda é o rascunho LOCAL do IntGrid: a pintura só vira
+   * canônica quando cada gesto virar `level/patch` (frente F6). Enquanto isso,
+   * apontá-lo ao histórico do documento tiraria o desfazer da pincelada.
+   */
+  const viewCommandIds = ["level.undoDraft", "level.redoDraft", "entity.remove"] as const;
+  workbench.commands.register({
+    id: "level.undoDraft",
+    label: "Desfazer a edição do nível",
+    category: "Editar",
+    requires: ["level.intgrid-editor"],
+    requiresProject: true,
+    order: 2,
+    keybindings: ["Ctrl+Z"],
+    run: doUndo,
+  });
+  workbench.commands.register({
+    id: "level.redoDraft",
+    label: "Refazer a edição do nível",
+    category: "Editar",
+    requires: ["level.intgrid-editor"],
+    requiresProject: true,
+    order: 3,
+    keybindings: ["Ctrl+Shift+Z", "Ctrl+Y"],
+    run: doRedo,
+  });
+  workbench.commands.register({
+    id: "entity.remove",
+    label: "Remover a entidade selecionada",
+    category: "Editar",
+    requires: ["entities.spawn"],
+    requiresProject: true,
+    order: 4,
+    keybindings: ["Delete"],
+    run: () => removeSelectedEntity(),
+  });
+
+  ctx.setInspectorData({
+    fields(sectionId, selection) {
+      if (selection.kind !== "entity") return [];
+      const marker = entities.get(selection.ids[0] ?? "");
+      if (!marker) return [];
+      if (sectionId === "entity.identity") {
+        return [
+          { label: "Identificador", value: marker.entityId },
+          { label: "Definição", value: marker.entityDefId },
+        ];
+      }
+      if (sectionId === "entity.transform") {
+        return [
+          { label: "X (pixels do mundo)", value: String(marker.position[0]) },
+          { label: "Y (pixels do mundo)", value: String(marker.position[1]) },
+          { label: "Célula", value: `${Math.floor(marker.position[0] / tileSize)}, ${Math.floor(marker.position[1] / tileSize)}` },
+        ];
+      }
+      return [];
+    },
+  });
+
+  // dígitos da paleta: teclas que só existem DENTRO desta vista, resolvidas
+  // depois dos comandos e das ferramentas para nunca roubar um atalho global
+  ctx.setKeyHandler((stroke) => {
+    if (stroke.ctrlKey === true || stroke.metaKey === true || stroke.altKey === true) return false;
+    const entry = LEVEL_PALETTE.find((p) => p.shortcut === stroke.key);
+    if (!entry) return false;
+    selectValue(entry.value);
+    return true;
+  });
+
+  // a barra de ferramentas e o realce da seleção acompanham o workbench
+  const unsubscribe = workbench.onChange(() => {
+    renderToolStrip();
+    repaint();
+  });
+  renderToolStrip();
+
   ctx.setCleanup(() => {
-    window.removeEventListener("keydown", onKeyDown);
-    delete activeEditor.undo;
-    delete activeEditor.redo;
+    unsubscribe();
+    observer.disconnect();
+    clearTimeout(previewTimer);
+    window.removeEventListener("mouseup", onMouseUp);
+    // devolver os comandos LIBERA os acordes: sem isso remontar o painel
+    // bateria no conflito de id que o registro impõe de propósito
+    for (const id of viewCommandIds) workbench.commands.unregister(id);
+    // a seleção NÃO é limpa aqui: quem troca de painel já a limpa, e limpá-la
+    // durante a desmontagem notificaria a casca no meio do próprio render
   });
 
   let painting = false;
   let panning = false;
   let last = { x: 0, y: 0 };
   canvas.addEventListener("mousedown", (e) => {
-    if (e.button === 1) { panning = true; last = { x: e.offsetX, y: e.offsetY }; e.preventDefault(); return; }
+    if (e.button === 1) {
+      panning = true;
+      last = { x: e.offsetX, y: e.offsetY };
+      e.preventDefault();
+      return;
+    }
     if (e.button !== 0) return;
+    const tool = currentTool();
 
     if (tool === "picker") {
       const cell = viewport.screenToCell(e.offsetX, e.offsetY, tileSize, doc.width, doc.height);
       if (cell.inside) {
         const value = doc.valueAt(cell.x, cell.y);
         if (value > 0) selectValue(value);
-        selectTool(value > 0 ? "pencil" : "eraser");
-        status.textContent = value > 0
-          ? `Significado "${LEVEL_PALETTE.find((p) => p.value === value)?.name ?? value}" selecionado.`
-          : "Célula vazia: borracha selecionada.";
+        workbench.activateTool(value > 0 ? "pencil" : "eraser");
+        status.textContent =
+          value > 0
+            ? `Significado "${LEVEL_PALETTE.find((p) => p.value === value)?.name ?? value}" selecionado.`
+            : "Célula vazia: borracha selecionada.";
       }
       return;
     }
@@ -402,7 +537,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     if (tool === "entity") {
       const hit = entityAtScreen(e.offsetX, e.offsetY);
       if (hit) {
-        selectedEntityId = hit.entityId;
+        selectEntity(hit.entityId);
         draggingEntity = hit;
         repaint();
         return;
@@ -432,6 +567,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   canvas.addEventListener("mousemove", (e) => {
     const cell = viewport.screenToCell(e.offsetX, e.offsetY, tileSize, doc.width, doc.height);
     status.textContent = cell.inside ? `Célula (${cell.x}, ${cell.y})` : "Fora do nível";
+    const tool = currentTool();
     if (panning) {
       viewport.panByScreen(e.offsetX - last.x, e.offsetY - last.y);
       last = { x: e.offsetX, y: e.offsetY };
@@ -449,7 +585,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       applyAt(e.offsetX, e.offsetY);
     }
   });
-  window.addEventListener("mouseup", () => {
+  const onMouseUp = (): void => {
     if (draggingEntity) {
       const marker = draggingEntity;
       draggingEntity = undefined;
@@ -458,19 +594,24 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       });
     }
     if (dragAnchor && dragCurrent) {
-      commitDrag(doc, tool, dragAnchor, dragCurrent, activeValue);
+      commitDrag(doc, currentTool(), dragAnchor, dragCurrent, activeValue);
       dragAnchor = undefined;
       dragCurrent = undefined;
       onEdited();
     }
     painting = false;
     panning = false;
-  });
-  canvas.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    viewport.zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
-    repaint();
-  }, { passive: false });
+  };
+  window.addEventListener("mouseup", onMouseUp);
+  canvas.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      viewport.zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+      repaint();
+    },
+    { passive: false },
+  );
 
   async function publish(): Promise<void> {
     // as MESMAS regras do preview ("Ver arte"): preview ≡ publicação
@@ -547,6 +688,8 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         entityDef = chosen;
         entityDefEnsured = true;
       }
+      // a seleção pode ter sobrevivido a uma remoção vinda de outra borda
+      workbench.selection.retain((id) => entities.has(id));
       if (entities.size > 0) repaint();
     } catch {
       // gateway indisponível: o editor continua editável com um grid vazio

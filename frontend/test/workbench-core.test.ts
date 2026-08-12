@@ -10,7 +10,7 @@ import {
 } from "../src/core/vocabulary.js";
 import { PANEL_REQUIREMENTS } from "../src/core/experienceGate.js";
 import { EventLog, subjectOf } from "../src/core/eventLog.js";
-import { WorkbenchModel } from "../src/core/workbenchModel.js";
+import { WorkbenchModel } from "../src/core/workbench/workbenchShell.js";
 import type { ResolvedExperienceLike } from "../src/core/experienceGate.js";
 
 // ---------- Vocabulário (P0.3: IDs internos nunca aparecem) ----------

@@ -53,8 +53,10 @@ algo violando uma destas linhas está errando, não melhorando.
 | O sidecar `.autosave` só é removido após save confirmado ou descarte explícito do usuário | `frontend/test/recovery-plan.test.ts` |
 | Um bump de `BLUEPRINT_DOCUMENT_VERSION` por PR, sempre com migração encadeada e fixtures; documento editado à mão **nunca** é convertido às cegas | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.4 + `middleware/test/blueprint-migration.test.ts` |
 | Falha de DOMÍNIO nunca troca o transporte; o fallback gRPC→GraphQL é só para falha DE TRANSPORTE, com eventos contínuos por `seq` | `frontend/test/transport-router.test.ts` |
-| Governança visível: painel/ferramenta desabilitada sempre carrega a RAZÃO (perfil ou manifesto vivo); a razão da governança tem precedência sobre a de projeto | `ExperienceGovernor`/`experienceGate` + `frontend/test/workbench-core.test.ts` |
+| Governança visível: painel/ferramenta desabilitada sempre carrega a RAZÃO (perfil ou manifesto vivo); a razão da governança tem precedência sobre a de projeto | `ExperienceGovernor`/`experienceGate` + `frontend/test/workbench-core.test.ts` e `workbench-contributions.test.ts` |
 | Nenhum id interno aparece na UI; todo texto passa pelo vocabulário/catálogo pt-BR | `frontend/src/core/vocabulary.ts`, `frontend/src/core/errorCatalog.ts` + testes |
+| **Um acorde de teclado tem UM dono.** O atalho se CONTRIBUI ao registro de comandos (que recusa o segundo pretendente) — nenhuma vista instala `keydown` global | regra F6 em `frontend/test/architecture.test.ts` + `frontend/test/workbench-contributions.test.ts` |
+| Capacidade da UI (painel, comando, ferramenta, seção) resolve pelo `capabilityRegistry`, e a razão do "desabilitado" preserva a ORIGEM (governança ou sessão) | `frontend/test/workbench-contributions.test.ts` |
 | Diagramas SEMPRE em Mermaid; commits em pt-BR descritivo; sem contagens de teste fixadas em docs | `npm run docs:verify` |
 
 ## 4. Registro de decisões (o que JÁ está decidido — não redecidir)
@@ -146,6 +148,13 @@ correlação `lightId`↔slot da engine publicada em `Projection.detail`.
 autosave com quatro saídas e ciclo de vida do sidecar; segunda instância e
 `argv` roteando `.p7m.json` com fila.
 
+**Casca do workbench por contribuições (E10):** painel, comando, ferramenta e
+seção de inspector se DECLARAM em registros puros; a casca só materializa. A
+seleção saiu do closure da vista e virou serviço observável — sem ela fora de
+lá nenhum inspector podia existir. O teclado passou a ter **um ouvinte só**
+(regra F6), e um segundo pretendente ao mesmo acorde falha no `register`, não
+em produção. Layout redimensionável e persistido, com clamp e fail-safe.
+
 **Infra de qualidade:** regras arquiteturais executáveis nas três camadas +
 regras semânticas; anti-drift de docs (`npm run docs:verify`); e2e das fases
 1–4 + transports; medição Zero-GC determinística.
@@ -164,16 +173,16 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 
 | # | Pendência | Evidência | Onde no plano |
 |---|---|---|---|
-| B1 | **F1 inteira**: não existe host gráfico MonoGame — nenhum pixel é desenhado | `engine/src/` tem só Core, Graphics, Ipc e Runtime; o csproj do Runtime não referencia Graphics | F1 (receita §9.5) |
-| B2 | **Tileset/atlas não existe em nenhuma camada** — "pinte significado, derive arte" termina em `tileId` inteiro | busca por `tileset`/`atlas` em `middleware/src`, `frontend/src` e `contracts/` não retorna nada | F1 (receita §9.5) |
+| B1 | **F1 inteira**: não existe host gráfico MonoGame — nenhum pixel é desenhado | `engine/src/` tem só Core, Graphics, Ipc e Runtime; o csproj do Runtime não referencia Graphics | F1 (receita §9.6) |
+| B2 | **Tileset/atlas não existe em nenhuma camada** — "pinte significado, derive arte" termina em `tileId` inteiro | busca por `tileset`/`atlas` em `middleware/src`, `frontend/src` e `contracts/` não retorna nada | F1 (receita §9.6) |
 | B3 | **P0.5 — preview embutido** (run/pause/stop, live edit, overlays) | não existe classe `Game`/`GraphicsDeviceManager` na engine; o "Runtime MonoGame" é headless | F1, onda B |
 | B4 | **P0.7 — undo/redo global** no nível do comando canônico | `CommandHistory` declara no cabeçalho que é só o relógio lógico; undo segue local ao IntGrid | E8 + E9 (receita §9.4) |
-| B5 | **Placement de câmera e luz com handles no canvas** | a vista do editor de níveis não menciona câmera nem luz; `camera/configure`, `light/add` e `light/remove` existem completos no canônico, sem UI | F4 (absorvida pela E10) |
+| B5 | **Placement de câmera e luz com handles no canvas** | a vista do editor de níveis não menciona câmera nem luz; `camera/configure`, `light/add` e `light/remove` existem completos no canônico, sem UI | cauda pós-E10 — os registros que faltavam (painel, ferramenta, seleção, inspector) já existem; falta a vista |
 | B6 | **Archetype só carrega posição** — transform/sprite/animação/colisão não cruzam o fio | os parâmetros de spawn na engine são `(EntityId, ArchetypeId, Position)`; o `ActorStore` guarda só archetypes e posições | F7 + F1 (sem tileset nada vira sprite) |
 | B7 | **F2 residual (a)**: o store de sessão vive só em memória — reiniciar o middleware apaga o projeto | não há nenhuma escrita em disco no `ProjectSessionManager` | F2 residual (gate de milestone) |
-| B8 | **F3a residual**: a rota de conceitos (`editorConcepts`) não atravessa nenhuma borda do app | os únicos consumidores são o MCP e dois drivers de teste; o app sobe o middleware com `--no-mcp` | F3a — destrava após a E10 |
-| B9 | **F4 inteira**: inspector sem um único escritor em TS, sem modelo de seleção, sem registro de painéis | não existe `inspectorView.ts` nem `selection.ts`/`panelRegistry.ts`; o rail é hardcoded e leva a telas mortas | F4 → E10 |
-| B10 | **F6 inteira**: o estado da vista vive no closure — trocar de aba OU um resync remoto remonta o editor e destrói grid não publicado, undo, zoom/pan e seleção | o handler de resync chama `renderView()`; a vista recria o documento IntGrid a cada mount | F6 → E8/E9 |
+| B8 | **F3a residual**: a rota de conceitos (`editorConcepts`) não atravessa nenhuma borda do app | os únicos consumidores são o MCP e dois drivers de teste; o app sobe o middleware com `--no-mcp` | F3a — **destravada** pela E10 (há registro onde pendurar a rota) |
+| ~~B9~~ (parte) | ✅ **Entregue (E10).** Registro de painéis, serviço de seleção e inspector por contribuições (`core/workbench/`), com o rail derivado do registro e a razão da governança preservada em cada seção. **Resta**: o inspector ainda é de LEITURA (escrita = D6) e câmera/luz seguem sem vista (B5) | — | — |
+| B10 (parte) | **F6**: o grid não publicado, o undo local e o zoom/pan ainda vivem no closure da vista. A E10 tirou de lá a SELEÇÃO e fez a casca remontar só na troca de painel — um resync remoto deixou de destruir a pintura —, mas o documento continua recriado a cada mount | a vista instancia `IntGridDocument` na montagem; a seleção agora é `workbench.selection` | F6 (o que falta é a pintura virar `level/patch` canônico) |
 | B11 | **F6: pintar não suja o documento** — fechar ou trocar descarta a pintura sem diálogo | `commandApplied` só dispara em evento de Blueprint; não existe marcação de sujeira local | F6 |
 | B12 | **F7 inteira**: CRUD assimétrico, sem camadas em `LevelSpec`, campos nunca cruzam o runtime, pipeline de assets sem porta no app | os mesmos kinds do diagnóstico continuam em `commandShape.ts`; `middleware/src/application/` não existe | F7 → E5/E6/E8/E9 |
 | B13 | **P0.9 — empacotamento** (executável por plataforma, bundling, smoke do artefato, release alpha) | nenhuma configuração de Electron Builder/Forge; o workflow de CI não tem job de artefato | **órfã** — só existe como P0.9 da milestone |
@@ -184,23 +193,23 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 | # | Pendência | Evidência | Onde no plano |
 |---|---|---|---|
 | D1 | Menu "Recentes" nativo | o menu nativo tem só Arquivo/Editar/Exibir; os recentes só aparecem na tela inicial | **órfã** |
-| D2 | Painéis redimensionáveis e layouts salvos | o único resize é o do canvas; nenhuma persistência de layout | E10 (`workbenchLayout`) |
+| ~~D2~~ | ✅ **Entregue (E10).** `workbenchLayout` puro (tamanho + visibilidade por área, clamp por limites, serialização versionada com fail-safe) + alças de arrasto e persistência na casca | — | — |
 | D3 | Razões da governança traduzidas — os perfis já estão em pt-BR; o inglês vem das razões GERADAS pelo governor | mensagens geradas em inglês exibidas em tooltip | F4 (razão como código estável + `vocabulary.ts`) |
 | D4 | Edição da paleta de tipos (a paleta é constante de build, não dado do projeto) | a vista importa uma paleta fixa; nenhum comando canônico de paleta | F7 + E9 (`level/palette`, v4) |
 | D5 | Diretório `examples/` versionado e a ação "Abrir exemplo" | o diretório não existe; o modelo da tela inicial tem o flag e ninguém o satisfaz | F8 residual |
-| D6 | Inspector de entidades tipadas (só leitura hoje seria possível) | não existe escritor do painel em TS | F4; escrita bloqueada por F7/E8 |
+| D6 (parte) | Inspector de entidades: a **leitura** entrou na E10 (seções por tipo de seleção, com governança e razão). **Falta a escrita** — editar um campo tem de virar comando canônico | `entity.identity`/`entity.transform` renderizam; nenhum campo é editável | F7 (campos tipados) |
 | D7 | F2 residual (c): trocar de projeto com trabalho sujo descarta sem diálogo | os ramos `new`/`open` não passam por `requestClose()` | F2 residual |
 | D8 | F3a residual: nenhuma view consome `constraints` — a UI não antecipa teto de luzes/células/atores | o merge existe no governor; nenhuma vista lê o registro | F3a (parte "consumo") |
 | D9 | F4: a governança é resolvida UMA vez no boot — o rail congela se a engine subir ou cair depois | só há uma chamada de `experience()`, dentro do boot | F4 |
 | D10 | F5 residual: status `failed` na projeção, reidratação abortando no primeiro erro sem trilha por item, fila única na fronteira do adapter | registrado no blockquote da frente F5 | F5 residual |
-| D11 | F6: o Ctrl+Z da UI ainda vai ao IntGrid local | o histórico canônico existe e está exposto por IPC/GraphQL/gRPC/MCP; trocar o atalho exige antes tirar o estado da vista do closure | F6/E10 |
+| D11 (parte) | F6: o Ctrl+Z **continua indo ao rascunho local**, mas agora por decisão declarada e verificável: o closure `activeEditor` morreu, o acorde tem dono único (regra F6) e o histórico canônico ficou operável na aba Histórico, com CAS por `historyCursor`. Apontar o Ctrl+Z ao documento antes de a pintura virar `level/patch` tiraria o desfazer da pincelada | `level.undoDraft` reivindica `Ctrl+Z`; `document.undo` existe sem atalho | F6 (pintura canônica) |
 | D12 | E5 pendente: publicação de artefato em duas fases, tombstones e rollback | o `ArtifactStore` só tem `publish` monofásico | E5 (receita §9.2) |
 | D13 | E6 pendente: camada de aplicação de assets + superfície fria GraphQL | `middleware/src/application/` não existe | E6 |
 | ~~D14~~ | ✅ **Entregue (E7).** Blueprint v3: `metadata` (nome, resolução de referência, convenção espacial declarada), `GridCoordinates` canônico e migração 2 → 3 com os quatro ramos por impressão digital | — | — |
 | D22 | A luz dos templates fica 8 px fora do centro geométrico do nível (`[136, 80]` onde o centro é `[128, 72]`) — a expressão original aplica a fórmula de centro de célula a um índice fracionário | `legacyLevelCenterPx` em `ProjectTemplates.ts`, com o desvio documentado | **órfã** — revelada pela E7 e deixada fora dela de propósito: corrigi-la move a luz de todo projeto novo, o que não pertence a um PR de migração |
 | ~~D15~~ | ✅ **Entregue (E8).** Domínio transacional (`planBatch`/`commitBatch`/`fork` com `mutationVersion` como CAS interno, `applyWithInverse`, inverso por kind, barreiras, rejeição de no-op), quatro kinds in-place e proveniência carimbada pela borda | — | — |
 | ~~D16~~ | ✅ **Entregue (E9).** Histórico global transacional: pilhas past/future, undo/redo canônico com CAS por `historyCursor`, coalescing por gesto, barreiras, `level/patch`, paleta no documento (v4) e proto renumerado a partir do campo 10 | — | — |
-| D17 | E10 pendente: casca do workbench por contribuições (nenhum dos módulos de framework existe) | `frontend/src/core/` e `frontend/src/renderer/` não têm nenhum deles | E10 |
+| ~~D17~~ | ✅ **Entregue (E10).** `capabilityRegistry`, `panelRegistry`, `commandRegistry` (com conflito de acorde), `toolRegistry`, `inspectorRegistry`, `selectionService`, `workbenchLayout` e a casca (`workbenchShell`) que os compõe | — | — |
 | D18 | Cauda: asset browser com inspector, `spriteRenderer` com bump v5, campos do wizard sobre o núcleo puro da `main` | o "Novo" hoje só escolhe template por diálogo de botões | cauda pós-E10 |
 | D19 | DoD ainda não exige "todo domínio editável expõe create/update/delete" | o modelo segue assimétrico e o DoD não menciona simetria | F7 + E8 |
 | D20 | P0.8 parcial: falta navegação ao objeto, fix automático e consolidação de compatibilidade/pipeline no painel | o painel existe e é honesto; as três funções não | F4 + F5 residual |
@@ -244,14 +253,15 @@ flowchart TD
   E7 --> E9["E9 — histórico global (v4)"]
   E8 --> E9
   E9 --> E10["E10 — casca do workbench<br/>(absorve F4)"]
-  E6 --> E10
+  E10 --> F6["F6 — pintura canonica<br/>(level/patch por gesto)"]
   E10 --> F3a["F3a — rota de conceitos"]
-  E10 --> CAUDA["cauda: asset browser,<br/>spriteRenderer (v5), wizard"]
+  E6 --> CAUDA["cauda: asset browser,<br/>spriteRenderer (v5), wizard"]
+  E10 --> CAUDA
   F1A["F1 onda A — host gráfico<br/>+ tileset/atlas + telemetria"] --> F1B["F1 onda B — preview embutido"]
   F1B --> P09["P0.9 — empacotamento"]
 ```
 
-*Mostra as duas trilhas do plano: a cadeia de domínio E4→E10 com a cauda, e a trilha ortogonal do host gráfico F1 que desemboca no empacotamento.*
+*Mostra as duas trilhas do plano: a cadeia de domínio E4→E10 com a F6 e a cauda, e a trilha ortogonal do host gráfico F1 que desemboca no empacotamento.*
 
 **E4 entregue.** A rede está no lugar: cada kind novo agora precisa do schema e
 do membro do enum, ou o CI quebra com o nome do kind órfão.
@@ -267,11 +277,19 @@ consome.
 como comandos pelo mesmo caminho, então a engine vê a reversão como qualquer
 edição, e agente e humano compartilham o mesmo histórico.
 
-**Próximo passo natural: E10** (casca do workbench por contribuições), que a E9
-destravou e que absorve a frente F4. Ela é também o que permite o Ctrl+Z da UI
-migrar do IntGrid local para o histórico canônico — hoje a vista guarda estado
-no closure, e trocar o atalho antes disso faria os dois desfazeres brigarem.
-Em paralelo, E5 e E6 continuam liberadas — e F1 nunca esteve bloqueada.
+**E10 entregue.** A casca deixou de conhecer os próprios painéis: painel,
+comando, ferramenta e seção de inspector se declaram em registros puros. O
+Ctrl+Z ganhou dono único e verificável (regra F6), a seleção saiu do closure —
+o que fez o inspector poder existir — e o layout virou dado persistido. O
+alvo do Ctrl+Z segue no rascunho local **de propósito**: apontá-lo ao documento
+antes de a pintura virar `level/patch` tiraria o desfazer da pincelada, e é
+essa a última milha da frente F6.
+
+**Próximo passo natural: F6** (tirar o documento IntGrid do closure e publicar
+cada gesto como `level/patch`), que fecha B10/B11/D11 e é o que a E10 deixou a
+um passo. A rota de conceitos **F3a** também destravou. Em paralelo, E5 e E6
+continuam liberadas — e F1 nunca esteve bloqueada, e segue sendo a raiz nunca
+atacada: é ela que faz o produto parecer um editor de jogos.
 
 ## 9. Receitas executáveis
 
@@ -644,7 +662,67 @@ enxergando os kinds novos, e o teste binário do envelope passando nos dois
 sentidos. Manual: abrir projeto antigo migra até v4 com paleta e coordenadas
 corretas; desfazer e refazer no app refletem na engine pela projeção.
 
-### 9.5. Receita F1 — host gráfico MonoGame, tileset/atlas e telemetria
+### 9.5. Receita E10 — casca do workbench por contribuições
+
+> ✅ **Etapa entregue.** Fica como registro do que foi feito, do que foi
+> deixado de fora e do porquê. Absorve a frente F4.
+
+**Problema.** A casca conhecia os próprios painéis: o rail era a ordem das
+chaves de `PANEL_REQUIREMENTS`, a vista de cada painel era um `if` no renderer,
+o inspector era uma `<aside>` sem um único escritor, e cada vista instalava o
+próprio `keydown` — dois donos do mesmo Ctrl+Z conviviam em silêncio e vencia
+quem tivesse montado por último. A seleção morava numa variável do closure da
+vista de níveis, e por isso nada fora dela sabia o que o usuário tinha em mãos.
+
+**O que entrou** (tudo em `frontend/src/core/workbench/`, puro pela regra F1):
+
+| Módulo | Papel |
+|---|---|
+| `contributions.ts` | Forma comum (`id`, rótulo, `order`, requisito) + registro genérico com conflito de id |
+| `capabilityRegistry.ts` | Único lugar que responde "habilitado, e por quê", compondo governança + sessão e PRESERVANDO a origem da razão |
+| `panelRegistry.ts` | Painéis como dado; o rail passou a ser derivado |
+| `commandRegistry.ts` | Comandos com acorde, governança e handler; conflito de atalho falha no `register` |
+| `keybindings.ts` | Acorde normalizado (Ctrl e Cmd são o MESMO modificador) e formatação para a UI |
+| `toolRegistry.ts` | Ferramentas contribuídas por painel, com ativa por painel e fallback quando a governança muda |
+| `inspectorRegistry.ts` | Seções por tipo de seleção, ordenadas e governadas |
+| `selectionService.ts` | Fonte única da seleção, observável |
+| `workbenchLayout.ts` | Tamanho/visibilidade por área, clamp e serialização versionada |
+| `editorContributions.ts` | As contribuições CONCRETAS do P7M (ferramentas do nível, seções do inspector) |
+| `workbenchShell.ts` | Compõe tudo; substituiu o antigo `core/workbenchModel.ts` |
+
+**Armadilhas encontradas** (todas custaram um bug real durante a extração):
+
+- **Remontar a vista a cada notificação.** A casca redesenha rail, vista,
+  inspector e rodapé de uma assinatura só; sem guardar qual painel está
+  MONTADO, cada clique de ferramenta destruía o canvas. O guarda também
+  corrigiu de graça um sintoma do B10: um resync remoto deixou de remontar o
+  editor e destruir a pintura não publicada.
+- **Notificar no meio de uma operação composta.** Trocar de painel mexe em
+  duas coisas (foco e seleção) e cada uma notificava — a casca remontava a
+  vista com o painel novo e a seleção velha. Daí o agrupamento (`batch`).
+- **Limpar a seleção na desmontagem da vista.** Notificaria a casca de dentro
+  do próprio render, com recursão. Quem troca de painel já limpa.
+- **Comando de vida curta.** O painel montado contribui os seus comandos e os
+  DEVOLVE na limpeza; sem `unregister`, remontar o painel batia no conflito de
+  id que o registro impõe de propósito.
+- **Contribuição sem requisito nenhum** (esconder o inspector, redefinir o
+  layout) precisa habilitar OFFLINE: prendê-la à governança deixaria o usuário
+  numa janela que ele não consegue nem reorganizar enquanto a conexão não vem.
+
+**O que ficou de fora, de propósito.** O Ctrl+Z continua desfazendo o rascunho
+LOCAL do IntGrid. A pintura só vira canônica quando cada gesto virar
+`level/patch` (frente F6, que a E9 já preparou com o coalescing por
+`transactionId`); apontar o atalho ao documento antes disso tiraria o desfazer
+da pincelada — uma regressão. O que a E10 entregou é o mecanismo: o closure
+`activeEditor` morreu, o acorde tem dono único e verificável, `document.undo`/
+`document.redo` já existem e operam o histórico canônico pela aba Histórico com
+o CAS de `historyCursor`. Trocar o alvo passou a ser uma linha.
+
+**Aceite.** Suíte do frontend verde (incluindo a regra arquitetural F6, nova),
+`npm run build` nas duas camadas, as quatro fases e os transports verdes,
+`npm run docs:verify` limpo.
+
+### 9.6. Receita F1 — host gráfico MonoGame, tileset/atlas e telemetria
 
 > **Complexidade alta · exige ADR.** É a frente ortogonal: não depende de
 > nenhuma etapa da cadeia de domínio, e é a única que faz o produto parecer um

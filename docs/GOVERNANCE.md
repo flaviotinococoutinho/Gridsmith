@@ -9,7 +9,7 @@ que as impõe e define o que "pronto" significa.
 > princípios invioláveis, paradigmas, padrões, contratos, versionamento, erros,
 > testes e plano de evolução, com evidência classificada) está em
 > [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md). Este `GOVERNANCE.md` é o
-> subconjunto executável (as 23 regras e o DoD).
+> subconjunto executável (as 24 regras e o DoD).
 
 ```mermaid
 graph LR
@@ -61,13 +61,14 @@ graph LR
 | **F3** | Electron só existe no processo `main/` | teste F3 |
 | **F4** | O frontend nunca reimplementa framing de protocolo — peers vêm de `@p7m/middleware` | teste F4 |
 | **F5** | SDKs de transporte (`@grpc/*`, `node:http`) são exclusivos de `main/transport/` — `core/` decide, `main/transport/` fala | teste F5 |
+| **F6** | O teclado global tem UM ouvinte (`renderer/renderer.ts`); atalho se CONTRIBUI ao workbench, não se instala | teste F6 |
 
-As três camadas concentram 23 regras estruturais, cada uma verificada por
+As três camadas concentram 24 regras estruturais, cada uma verificada por
 grafo de import (middleware/frontend) ou reflexão de assembly (engine):
 
 ```mermaid
 graph TD
-  ROOT(["23 regras estruturais executaveis"]) --> MWg
+  ROOT(["24 regras estruturais executaveis"]) --> MWg
   ROOT --> ENg
   ROOT --> FEg
   subgraph MWg["Middleware (R1-R13) — import-graph"]
@@ -92,16 +93,17 @@ graph TD
     E4["E4 Runtime Core+Ipc, nunca Graphics"]
     E5["E5 Core sem MonoGame"]
   end
-  subgraph FEg["Frontend (F1-F5)"]
+  subgraph FEg["Frontend (F1-F6)"]
     F1["F1 core/ puro (sem Electron/Node/mw)"]
     F2["F2 renderer sem Electron/Node"]
     F3["F3 Electron so no main/"]
     F4["F4 framing vem de @p7m/middleware"]
     F5["F5 SDKs de transporte so em main/transport/"]
+    F6["F6 um unico ouvinte de teclado"]
   end
 ```
 
-*Mostra as 23 regras estruturais mapeadas às três camadas (R1-R13 middleware, E1-E5 engine, F1-F5 frontend) e o método de verificação de cada grupo.*
+*Mostra as 24 regras estruturais mapeadas às três camadas (R1-R13 middleware, E1-E5 engine, F1-F6 frontend) e o método de verificação de cada grupo.*
 
 ### Regras semânticas (impostas por testes de comportamento)
 
@@ -153,7 +155,7 @@ mindmap
   root(("Fitness Functions P7M"))
     Estruturais
       Middleware R1-R13 import-graph
-      Frontend F1-F5
+      Frontend F1-F6
       Engine E1-E5 reflexao de assembly
     Semanticas
       Zero-GC allocation-free
@@ -239,7 +241,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 | Item | Estado |
 |---|---|
 | Testes: três suítes (engine/middleware/frontend), contagem calculada e validada pelo CI | ✅ verdes |
-| Testes arquiteturais (23 regras) | ✅ ativos (R10-R13/F5 cobrem os transports e a sessão do app) |
+| Testes arquiteturais (24 regras) | ✅ ativos (R10-R13/F5 cobrem os transports e a sessão do app; F6 cobre o dono único do teclado) |
 | E2e fases 1–4 | ✅ verdes |
 | Persistência de projeto (documento v2 com `projectId`; open transacional e replay privado) | ✅ **fechado nesta revisão** (`ProjectSessionManager`, `project/create`, `project/openDocument`, `project/close`, `project/status`) |
 | Contratos ↔ implementação | ✅ auditados (R8/R9 + tabela contracts) |
@@ -251,7 +253,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 |---|---|---|
 | G1 | `middleware` | build + suíte middleware (inclui R1–R13) |
 | G2 | `engine` | build + suíte engine (inclui E1–E5, Zero-GC) |
-| G3 | `frontend` | build + suíte frontend (inclui F1–F5) |
+| G3 | `frontend` | build + suíte frontend (inclui F1–F6) |
 | G4 | `e2e` | verify-phase1..4 + verify-transports com processos reais |
 
 Os três gates de camada e o gate e2e devem convergir verdes para liberar a
@@ -261,7 +263,7 @@ integração:
 graph LR
   G1["G1 middleware<br/>build + suite (R1-R13)"] --> J{"4 gates verdes?"}
   G2["G2 engine<br/>build + suite (E1-E5, Zero-GC)"] --> J
-  G3["G3 frontend<br/>build + suite (F1-F5)"] --> J
+  G3["G3 frontend<br/>build + suite (F1-F6)"] --> J
   G4["G4 e2e<br/>verify-phase1..4 (processos reais)"] --> J
   J -->|"sim"| OK(["PR integravel"])
   J -->|"nao"| NO(["bloqueado"])

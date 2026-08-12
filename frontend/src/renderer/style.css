@@ -252,7 +252,53 @@ button:disabled { color: var(--muted); cursor: not-allowed; }
 
 /* sem projeto aberto a moldura de edição some: a tela inicial é a tela */
 body[data-project-state="no-project"] #panel-rail,
-body[data-project-state="no-project"] #inspector { display: none; }
+body[data-project-state="no-project"] #inspector,
+body[data-project-state="no-project"] .resizer.vertical { display: none; }
+
+/* ---- alças de redimensionamento (E10) ---- */
+.resizer {
+  background: transparent;
+  flex: 0 0 auto;
+  /* faixa de alvo maior que a linha visível: 1px é impossível de acertar */
+  touch-action: none;
+}
+.resizer.vertical { width: 5px; cursor: col-resize; }
+.resizer.horizontal { height: 5px; cursor: row-resize; }
+.resizer:hover, .resizer:focus-visible { background: var(--accent); }
+.resizer[hidden] { display: none; }
+
+/* ---- inspector por contribuições (E10) ---- */
+.inspector-section { margin-bottom: 0.9rem; }
+.inspector-section h3 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 0.35rem;
+}
+/* seção governada como desabilitada continua VISÍVEL, em somente-leitura */
+.inspector-section[data-readonly="true"] dd { color: var(--muted); }
+.inspector-section .reason { color: var(--warn); font-size: 0.85em; margin: 0 0 0.35rem; }
+
+/* ---- histórico canônico (E9/E10) ---- */
+.history-actions { display: flex; gap: 0.4rem; margin-bottom: 0.5rem; }
+.history-row .history-actor {
+  color: var(--muted);
+  min-width: 5rem;
+  font-size: 0.85em;
+}
+.history-row[data-undone="true"] { opacity: 0.55; text-decoration: line-through; }
+.history-barrier {
+  margin-left: auto;
+  color: var(--warn);
+  font-size: 0.8em;
+  border: 1px solid var(--warn);
+  border-radius: 3px;
+  padding: 0 0.3rem;
+}
+
+/* ---- barra de ferramentas contribuída (E10) ---- */
+#level-toolbar .tool-strip { display: flex; gap: 0.25rem; }
 
 @media (max-width: 720px) {
   .welcome-columns { grid-template-columns: minmax(0, 1fr); }
