@@ -1,6 +1,7 @@
 using System.Reflection;
 using Gridsmith.Engine.Core.Rigging;
 using Gridsmith.Engine.Graphics;
+using Gridsmith.Engine.Host;
 using Gridsmith.Engine.Ipc.Protocol;
 using Gridsmith.Engine.Runtime;
 using Xunit;
@@ -52,6 +53,39 @@ public class ArchitectureTests
         // o host MonoGame acopla por fora, nunca o contrário.
         var runtime = typeof(EngineService).Assembly;
         Assert.Equal(new[] { "Gridsmith.Engine.Core", "Gridsmith.Engine.Ipc" }, GridsmithReferencesOf(runtime));
+    }
+
+    private static bool ReferencesMonoGame(Assembly assembly) =>
+        assembly.GetReferencedAssemblies()
+            .Any(a => (a.Name ?? "").Contains("MonoGame", StringComparison.OrdinalIgnoreCase));
+
+    [Fact]
+    public void E6_so_o_Host_junta_MonoGame_com_o_plano_de_controle()
+    {
+        // O host gráfico é COMPOSIÇÃO (ADR-022): é o único ponto onde MonoGame
+        // encontra o plano de controle. Se o Runtime passar a arrastar
+        // MonoGame, ele deixa de subir sem GPU — e as fases 1–4 e os
+        // transports saem do CI junto, que é o que a regra E4 protege.
+        var host = typeof(GridsmithGame).Assembly;
+        Assert.True(ReferencesMonoGame(host), "o host gráfico precisa de MonoGame");
+        Assert.Equal(
+            new[] { "Gridsmith.Engine.Core", "Gridsmith.Engine.Ipc", "Gridsmith.Engine.Runtime" },
+            GridsmithReferencesOf(host));
+
+        // Graphics também vê MonoGame — é a camada de desenho —, mas não vê o
+        // plano de controle (E3). Fora esses dois, ninguém em produção vê.
+        Assert.True(ReferencesMonoGame(typeof(DeferredRenderer).Assembly));
+        foreach (var assembly in new[]
+                 {
+                     typeof(SkeletonStore).Assembly,
+                     typeof(FrameCodec).Assembly,
+                     typeof(EngineService).Assembly,
+                 })
+        {
+            Assert.False(
+                ReferencesMonoGame(assembly),
+                $"{assembly.GetName().Name} não pode arrastar MonoGame");
+        }
     }
 
     [Fact]

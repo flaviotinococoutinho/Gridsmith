@@ -9,7 +9,7 @@ que as impõe e define o que "pronto" significa.
 > princípios invioláveis, paradigmas, padrões, contratos, versionamento, erros,
 > testes e plano de evolução, com evidência classificada) está em
 > [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md). Este `GOVERNANCE.md` é o
-> subconjunto executável (as 24 regras e o DoD).
+> subconjunto executável (as 25 regras e o DoD).
 
 ```mermaid
 graph LR
@@ -50,7 +50,8 @@ graph LR
 | **E2** | `Ipc` é plano de controle independente do domínio | teste E2 |
 | **E3** | `Graphics` (MonoGame) só conhece `Core` | teste E3 |
 | **E4** | `Runtime` (serviço headless) orquestra `Core`+`Ipc`, nunca `Graphics` — o host gráfico acopla por fora | teste E4 |
-| **E5** | `Core` não referencia MonoGame | teste E5 |
+| **E5** | `Core` não referencia MonoGame |
+| **E6** | Só o **Host gráfico** junta MonoGame com o plano de controle; `Core`, `Ipc` e `Runtime` não arrastam MonoGame (ADR-022) | teste E6 |
 
 ### Frontend (`frontend/test/architecture.test.ts`)
 
@@ -63,12 +64,12 @@ graph LR
 | **F5** | SDKs de transporte (`@grpc/*`, `node:http`) são exclusivos de `main/transport/` — `core/` decide, `main/transport/` fala | teste F5 |
 | **F6** | O teclado global tem UM ouvinte (`renderer/renderer.ts`); atalho se CONTRIBUI ao workbench, não se instala | teste F6 |
 
-As três camadas concentram 24 regras estruturais, cada uma verificada por
+As três camadas concentram 25 regras estruturais, cada uma verificada por
 grafo de import (middleware/frontend) ou reflexão de assembly (engine):
 
 ```mermaid
 graph TD
-  ROOT(["24 regras estruturais executaveis"]) --> MWg
+  ROOT(["25 regras estruturais executaveis"]) --> MWg
   ROOT --> ENg
   ROOT --> FEg
   subgraph MWg["Middleware (R1-R13) — import-graph"]
@@ -86,12 +87,13 @@ graph TD
     R12["R12 bordas do app so EditorSurface"]
     R13["R13 todas as bordas usam a mesma sessao"]
   end
-  subgraph ENg["Engine (E1-E5) — reflexao de assembly"]
+  subgraph ENg["Engine (E1-E6) — reflexao de assembly"]
     E1["E1 Core sem deps Gridsmith"]
     E2["E2 Ipc independente do dominio"]
     E3["E3 Graphics so conhece Core"]
     E4["E4 Runtime Core+Ipc, nunca Graphics"]
     E5["E5 Core sem MonoGame"]
+    E6["E6 so o Host junta MonoGame<br/>com o plano de controle"]
   end
   subgraph FEg["Frontend (F1-F6)"]
     F1["F1 core/ puro (sem Electron/Node/mw)"]
@@ -103,7 +105,7 @@ graph TD
   end
 ```
 
-*Mostra as 24 regras estruturais mapeadas às três camadas (R1-R13 middleware, E1-E5 engine, F1-F6 frontend) e o método de verificação de cada grupo.*
+*Mostra as 25 regras estruturais mapeadas às três camadas (R1-R13 middleware, E1-E6 engine, F1-F6 frontend) e o método de verificação de cada grupo.*
 
 ### Regras semânticas (impostas por testes de comportamento)
 
@@ -156,7 +158,7 @@ mindmap
     Estruturais
       Middleware R1-R13 import-graph
       Frontend F1-F6
-      Engine E1-E5 reflexao de assembly
+      Engine E1-E6 reflexao de assembly
     Semanticas
       Zero-GC allocation-free
       Determinismo por seed
@@ -241,7 +243,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 | Item | Estado |
 |---|---|
 | Testes: três suítes (engine/middleware/frontend), contagem calculada e validada pelo CI | ✅ verdes |
-| Testes arquiteturais (24 regras) | ✅ ativos (R10-R13/F5 cobrem os transports e a sessão do app; F6 cobre o dono único do teclado) |
+| Testes arquiteturais (25 regras) | ✅ ativos (R10-R13/F5 cobrem os transports e a sessão do app; F6 cobre o dono único do teclado) |
 | E2e fases 1–4 | ✅ verdes |
 | Persistência de projeto (documento v2 com `projectId`; open transacional e replay privado) | ✅ **fechado nesta revisão** (`ProjectSessionManager`, `project/create`, `project/openDocument`, `project/close`, `project/status`) |
 | Contratos ↔ implementação | ✅ auditados (R8/R9 + tabela contracts) |
@@ -252,7 +254,7 @@ para fechar as colunas 4–5 é [`ALPHA-0.1.md`](ALPHA-0.1.md).
 | Gate | Job | Conteúdo |
 |---|---|---|
 | G1 | `middleware` | build + suíte middleware (inclui R1–R13) |
-| G2 | `engine` | build + suíte engine (inclui E1–E5, Zero-GC) |
+| G2 | `engine` | build + suíte engine (inclui E1–E6, Zero-GC) |
 | G3 | `frontend` | build + suíte frontend (inclui F1–F6) |
 | G4 | `e2e` | verify-phase1..4 + verify-transports com processos reais |
 
@@ -262,7 +264,7 @@ integração:
 ```mermaid
 graph LR
   G1["G1 middleware<br/>build + suite (R1-R13)"] --> J{"4 gates verdes?"}
-  G2["G2 engine<br/>build + suite (E1-E5, Zero-GC)"] --> J
+  G2["G2 engine<br/>build + suite (E1-E6, Zero-GC)"] --> J
   G3["G3 frontend<br/>build + suite (F1-F6)"] --> J
   G4["G4 e2e<br/>verify-phase1..4 (processos reais)"] --> J
   J -->|"sim"| OK(["PR integravel"])

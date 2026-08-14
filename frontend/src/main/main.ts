@@ -189,10 +189,21 @@ function buildSupervisor(
 ): ProcessSupervisor {
   const repoRoot = path.join(dirname, "../../..");
   const middlewareEntry = path.join(dirname, "../../node_modules/@gridsmith/middleware/dist/index.js");
-  const engineDll = path.join(
+  // Dois executáveis atendem o MESMO plano de controle sobre os mesmos stores
+  // (ADR-022): o Host abre janela e DESENHA; o Runtime é headless. Preferimos o
+  // Host quando ele estiver compilado — é o que faz o produto mostrar o jogo —
+  // e caímos para o Runtime quando não estiver, em vez de deixar o editor sem
+  // engine nenhuma.
+  const hostDll = path.join(
+    repoRoot,
+    "engine/src/Gridsmith.Engine.Host/bin/Debug/net8.0/Gridsmith.Engine.Host.dll",
+  );
+  const runtimeDll = path.join(
     repoRoot,
     "engine/src/Gridsmith.Engine.Runtime/bin/Debug/net8.0/Gridsmith.Engine.Runtime.dll",
   );
+  const graphicsHostAvailable = fs.existsSync(hostDll);
+  const engineDll = graphicsHostAvailable ? hostDll : runtimeDll;
 
   return new ProcessSupervisor([
     {
@@ -215,14 +226,17 @@ function buildSupervisor(
     },
     {
       id: "engine",
-      displayName: "Runtime MonoGame",
+      // O rótulo diz o que o processo É. Chamar de "Runtime MonoGame" um
+      // servidor JSON-RPC que nunca carregou MonoGame fazia a barra de status
+      // prometer pixels que não existiam.
+      displayName: graphicsHostAvailable ? "Engine (janela gráfica)" : "Engine (sem janela)",
       optional: true, // editor segue editável com a engine caída (modo degradado)
       launch: () => {
         if (!fs.existsSync(engineDll)) {
           return {
             exited: Promise.resolve({
               code: null,
-              error: `runtime não compilado (${engineDll}); execute "dotnet build" em engine/`,
+              error: `engine não compilada (${engineDll}); execute "dotnet build" em engine/`,
             }),
             kill: () => undefined,
           };

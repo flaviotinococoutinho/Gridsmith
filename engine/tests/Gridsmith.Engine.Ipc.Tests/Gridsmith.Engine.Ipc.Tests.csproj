@@ -31,5 +31,6 @@
     <ProjectReference Include="../../src/Gridsmith.Engine.Graphics/Gridsmith.Engine.Graphics.csproj" />
     <ProjectReference Include="../../src/Gridsmith.Engine.Ipc/Gridsmith.Engine.Ipc.csproj" />
     <ProjectReference Include="../../src/Gridsmith.Engine.Runtime/Gridsmith.Engine.Runtime.csproj" />
+    <ProjectReference Include="../../src/Gridsmith.Engine.Host/Gridsmith.Engine.Host.csproj" />
   </ItemGroup>
 </Project>

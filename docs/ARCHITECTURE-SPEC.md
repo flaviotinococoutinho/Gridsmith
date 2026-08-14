@@ -54,7 +54,7 @@ O Gridsmith é um **ecossistema Engine-as-a-Service local** de três processos
 desacoplados — editor Electron/TypeScript, middleware Node.js/TypeScript e engine
 .NET 8/MonoGame — mediados por um **modelo canônico** independente de runtime e por
 **contratos versionados** (JSON Schema, layouts binários, perfis de runtime). A
-arquitetura já é **madura na plataforma** e **executável em suas regras**: 24 regras
+arquitetura já é **madura na plataforma** e **executável em suas regras**: 25 regras
 arquiteturais são testes que quebram o CI (`GOVERNANCE.md`), a compatibilidade
 binária entre TS e C# é provada por checksums cruzados em e2e, e o hot path da engine
 é verificado como Zero-GC por asserções de alocação. **CONFIRMADO.**
@@ -124,7 +124,7 @@ vertical `Projeto → Asset → Entidade → Nível → Preview → Live edit �
 
 ## 3. Pontos fortes (a preservar)
 
-1. **Governança executável, não documental** — 24 regras (R1–R13, F1–F6, E1–E5) são
+1. **Governança executável, não documental** — 25 regras (R1–R13, F1–F6, E1–E6) são
    testes que quebram o CI com o arquivo infrator no erro
    (`middleware/test/architecture.test.ts`, `frontend/test/architecture.test.ts`,
    `engine/tests/.../ArchitectureTests.cs`). **CONFIRMADO.**
@@ -1080,7 +1080,7 @@ Nenhuma seta aponta de dentro para fora. **CONFIRMADO** por R1–R13.
 
 ## 31. Arquitetura da engine
 
-**Separação (CONFIRMADO — E1-E5):**
+**Separação (CONFIRMADO — E1-E6):**
 
 - **`Core`** — DOD/Zero-GC, **sem** dependência Gridsmith e **sem** MonoGame (E1, E5);
   testável headless; estruturas e algoritmos (stores, câmera, skinning, lighting, LUT,
@@ -1156,7 +1156,7 @@ critério de revisão, status, data e links para código e teste.
   Electron/Node; `main` só type), F3 (Electron só em `main/`), F4 (proibido
   `writeUInt32LE`/`readUInt32LE` no source), F5 (SDKs de transporte — `@grpc/*`,
   `node:http` — só em `main/transport/`).
-- **Engine E1–E5** (`ArchitectureTests.cs`) por **reflexão de assembly**: layering
+- **Engine E1–E6** (`ArchitectureTests.cs`) por **reflexão de assembly**: layering
   Core/Ipc/Graphics/Runtime + Core sem MonoGame.
 - **Semânticas:** testes `*_is_allocation_free` (um por hot loop), determinismo por seed,
   contratos binários por reflexão+checksum, shaders≡CPU, imutabilidade de perfis,
@@ -1187,7 +1187,7 @@ executável, estável, relevante e difícil de validar manualmente.
 | Gate | Job | Conteúdo | Bloqueante |
 |---|---|---|---|
 | G1 | middleware | build + suíte middleware (inclui R1–R13) | sim |
-| G2 | engine | build + suíte engine (inclui E1–E5, Zero-GC) | sim |
+| G2 | engine | build + suíte engine (inclui E1–E6, Zero-GC) | sim |
 | G3 | frontend | build + suíte frontend (inclui F1–F5) | sim |
 | G4 | e2e | `verify-phase1..4` com processos reais | sim |
 
