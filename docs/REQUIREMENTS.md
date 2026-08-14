@@ -99,7 +99,7 @@ mindmap
     Estruturais
       Middleware R1-R13 import-graph
       Frontend F1-F5
-      Engine E1-E5 reflexao de assembly
+      Engine E1-E6 reflexao de assembly
     Semanticas
       Zero-GC allocation-free por hot loop
       Determinismo por seed
@@ -128,7 +128,7 @@ mindmap
 | RT-02 | .NET 8, `LayoutKind.Sequential` para todo dado de fio binário | ✅ |
 | RT-03 | MonoGame 3.8.2 (DesktopGL); shaders HLSL compilados via MGCB fora do CI headless (referências de CPU cobrem as equações) | ✅ (caveat documentado) |
 | RT-04 | Plano de controle da engine: JSON-RPC 2.0 com framing `uint32 LE` (16 MiB máx); app ↔ middleware: gRPC prioritário medido + GraphQL fallback; cursor de eventos `(middlewareInstanceId, projectSessionId, seq)` ([`COMPATIBILITY.md`](COMPATIBILITY.md), ADR-016/017/019/020) | ✅ |
-| RT-05 | Fronteiras de camada impostas por testes arquiteturais (24 regras, incluindo R13 para sessão única nas bordas e F6 para o dono único do teclado) | ✅ |
+| RT-05 | Fronteiras de camada impostas por testes arquiteturais (25 regras, incluindo R13 para sessão única nas bordas e F6 para o dono único do teclado) | ✅ |
 | RT-06 | CI: 4 gates (middleware, engine, frontend, e2e) | ✅ |
 | RT-07 | Electron com contextIsolation; binário dispensável no CI (`ELECTRON_SKIP_BINARY_DOWNLOAD`) | ✅ |
 

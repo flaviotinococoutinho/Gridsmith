@@ -156,6 +156,13 @@ lá nenhum inspector podia existir. O teclado passou a ter **um ouvinte só**
 (regra F6), e um segundo pretendente ao mesmo acorde falha no `register`, não
 em produção. Layout redimensionável e persistido, com clamp e fail-safe.
 
+**Host gráfico (F1, onda A — primeira fatia):** existe um processo que
+desenha. `Gridsmith.Engine.Host` instancia a janela MonoGame e desenha, por
+referência, os mesmos stores DOD que o plano de controle muta — o `Runtime`
+continua sem ver MonoGame (E4 intacta, E6 nova). O que compõe o frame saiu do
+host e virou `FrameComposer`, puro e Zero-GC: é o que torna "o que é desenhado"
+verificável sem GPU e sem shader compilado.
+
 **Infra de qualidade:** regras arquiteturais executáveis nas três camadas +
 regras semânticas; anti-drift de docs (`npm run docs:verify`); e2e das fases
 1–4 + transports; medição Zero-GC determinística.
@@ -174,7 +181,7 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 
 | # | Pendência | Evidência | Onde no plano |
 |---|---|---|---|
-| B1 | **F1 inteira**: não existe host gráfico MonoGame — nenhum pixel é desenhado | `engine/src/` tem só Core, Graphics, Ipc e Runtime; o csproj do Runtime não referencia Graphics | F1 (receita §9.6) |
+| B1 (parte) | **F1**: o host gráfico EXISTE e desenha (`Gridsmith.Engine.Host`, ADR-022) — o que falta para "o jogo aparece como jogo" é a arte: sem tileset/atlas os quads saem em cor chapada | `Gridsmith.Engine.Host` instancia `Game`/`GraphicsDeviceManager` e desenha os stores por referência; `FrameComposer` compõe o frame sem alocar | F1 (receita §9.6, fatias restantes) |
 | B2 | **Tileset/atlas não existe em nenhuma camada** — "pinte significado, derive arte" termina em `tileId` inteiro | busca por `tileset`/`atlas` em `middleware/src`, `frontend/src` e `contracts/` não retorna nada | F1 (receita §9.6) |
 | B3 | **P0.5 — preview embutido** (run/pause/stop, live edit, overlays) | não existe classe `Game`/`GraphicsDeviceManager` na engine; o "Runtime MonoGame" é headless | F1, onda B |
 | B4 | **P0.7 — undo/redo global** no nível do comando canônico | `CommandHistory` declara no cabeçalho que é só o relógio lógico; undo segue local ao IntGrid | E8 + E9 (receita §9.4) |
@@ -728,6 +735,21 @@ o CAS de `historyCursor`. Trocar o alvo passou a ser uma linha.
 > **Complexidade alta · exige ADR.** É a frente ortogonal: não depende de
 > nenhuma etapa da cadeia de domínio, e é a única que faz o produto parecer um
 > editor de jogos. Entregue em **duas ondas**.
+>
+> ✅ **Onda A, primeira fatia entregue** (ADR-022 + host + `FrameComposer` +
+> regra E6 + supervisão honesta). O que mudou em relação ao plano original:
+> **a paridade visual é verificada na DESCRIÇÃO do frame, não no framebuffer.**
+> A comparação de pixels exigiria Xvfb com rasterização por software E os
+> `.xnb` compilados (MGCB com Wine), o que a tornaria a única verificação do
+> repositório fora do gate — e, com a tolerância que llvmpipe obriga, passaria
+> a aceitar justamente as divergências que ela deveria pegar. A ADR-022 registra
+> a decisão e as alternativas descartadas.
+>
+> **Fatias restantes da onda A**, cada uma mergeável sozinha: (i) `tileset/define`
+> como comando canônico com o DoD completo + `tilesetId` em `LevelSpec`;
+> (ii) `frontend/src/core/tilesetAtlas.ts` e o canvas desenhando a partir da
+> tabela; (iii) `scripts/verify-visual-parity.sh` comparando as duas listas de
+> quads; (iv) telemetria de frame como notificação no `EventJournal`.
 
 **Objetivo (onda A).** Que exista um processo que desenhe, em janela própria,
 os mesmos stores que os handlers JSON-RPC mutam — e que o que o usuário pinta

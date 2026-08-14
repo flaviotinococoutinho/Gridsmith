@@ -114,6 +114,14 @@ public sealed class ActorStore
         return ActorHandle.Invalid;
     }
 
+    /// <summary>
+    /// O slot está ocupado? É o que permite varrer a SoA sem alocar: o
+    /// composer de frame percorre <see cref="Capacity"/> e pula os vazios, em
+    /// vez de materializar uma lista de vivos a cada frame.
+    /// </summary>
+    public bool IsLive(ActorHandle handle) =>
+        handle.IsValid && handle.Slot < _maxActors && _entityIds[handle.Slot] is not null;
+
     public string EntityId(ActorHandle handle) => _entityIds[handle.Slot]
         ?? throw new InvalidOperationException($"Actor handle (slot {handle.Slot}) is not active");
 

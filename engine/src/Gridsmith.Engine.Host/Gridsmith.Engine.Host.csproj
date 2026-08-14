@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Gridsmith.Engine.Host</RootNamespace>
+    <Description>Host gráfico do Gridsmith: instancia a janela MonoGame e desenha, por referência, os mesmos stores DOD que o plano de controle muta. É COMPOSIÇÃO — o Runtime continua sem ver Graphics (ADR-022, regras E4 e E6).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Gridsmith.Engine.Core/Gridsmith.Engine.Core.csproj" />
+    <ProjectReference Include="../Gridsmith.Engine.Ipc/Gridsmith.Engine.Ipc.csproj" />
+    <ProjectReference Include="../Gridsmith.Engine.Graphics/Gridsmith.Engine.Graphics.csproj" />
+    <ProjectReference Include="../Gridsmith.Engine.Runtime/Gridsmith.Engine.Runtime.csproj" />
+  </ItemGroup>
+</Project>
