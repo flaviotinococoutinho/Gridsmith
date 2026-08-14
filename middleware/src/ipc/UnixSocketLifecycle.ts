@@ -16,7 +16,7 @@ function endpointCollisionError(endpoint: LocalEndpoint): Error {
     : endpoint.address;
   return Object.assign(new Error(`editor transport endpoint already in use at ${target}`), {
     name: "TransportEndpointCollisionError",
-    code: "P7M_ENDPOINT_COLLISION",
+    code: "GRIDSMITH_ENDPOINT_COLLISION",
   });
 }
 
@@ -55,7 +55,7 @@ export async function prepareTransportEndpoint(endpoint: LocalEndpoint): Promise
 export async function prepareUnixSocketPath(
   socketPath: string,
   collision: () => Error = () => Object.assign(new Error(`endpoint already in use at ${socketPath}`), {
-    code: "P7M_ENDPOINT_COLLISION",
+    code: "GRIDSMITH_ENDPOINT_COLLISION",
   }),
 ): Promise<void> {
   const endpoint: LocalEndpoint = { family: "uds", address: socketPath, grpcTarget: `unix:${socketPath}` };

@@ -1,6 +1,6 @@
 /**
  * Adapter MonoGame (docs/CANONICAL-MODEL.md §2): projeta eventos canônicos
- * nos métodos JSON-RPC da engine P7M/MonoGame.
+ * nos métodos JSON-RPC da engine Gridsmith/MonoGame.
  *
  * O adapter conhece o runtime; o modelo canônico não. Instâncias de entidade
  * cuja definição tem archetypeId viram atores vivos (spawn table, ALPHA-0.1

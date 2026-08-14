@@ -46,6 +46,44 @@ export interface SerializedLayout {
   readonly areas: Readonly<Record<string, { size: number; visible: boolean }>>;
 }
 
+/** Chave de armazenamento do layout na casca. */
+export const LAYOUT_STORAGE_KEY = "gridsmith.workbench.layout";
+
+/**
+ * Chave anterior ao rebrand P7M → Gridsmith, lida como fallback.
+ *
+ * Mora aqui, e não no renderer, porque o renderer é o único módulo do frontend
+ * sem teste: solta lá, a garantia dependia de ninguém "limpar o p7m que
+ * sobrou" — e a perda seria silenciosa por construção, já que layout ausente
+ * cai no default sem dizer nada.
+ */
+export const LEGACY_LAYOUT_STORAGE_KEY = "p7m.workbench.layout";
+
+/**
+ * Lê o layout do armazenamento da casca, aceitando a chave herdada.
+ * `read` é injetado (localStorage no Electron) para manter o módulo puro (F1).
+ */
+export function restoreLayoutFrom(
+  layout: WorkbenchLayout,
+  read: (key: string) => string | null,
+): boolean {
+  for (const key of [LAYOUT_STORAGE_KEY, LEGACY_LAYOUT_STORAGE_KEY]) {
+    let raw: string | null;
+    try {
+      raw = read(key);
+    } catch {
+      return false; // armazenamento indisponível (modo privado)
+    }
+    if (raw === null) continue;
+    try {
+      if (layout.restore(JSON.parse(raw))) return true;
+    } catch {
+      // preferência ilegível não pode impedir o editor de abrir: tenta a próxima
+    }
+  }
+  return false;
+}
+
 export function clampArea(area: LayoutArea, size: number): number {
   const bounds = BOUNDS[area];
   if (!Number.isFinite(size)) return bounds.initial;

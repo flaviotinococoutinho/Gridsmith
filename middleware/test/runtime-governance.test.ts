@@ -49,7 +49,7 @@ test("perfis publicados são imutáveis (re-registro rejeitado) e versões orden
 
 const LIVE_MANIFEST: EngineManifest = {
   engine: {
-    name: "P7m.Engine.Runtime",
+    name: "Gridsmith.Engine.Runtime",
     version: "0.1.0",
     protocolVersion: "1.0",
     runtime: { family: "monogame", version: "3.8.2" },
@@ -158,7 +158,7 @@ async function connectFakeEngine(server: EnginePipeServer, calls: Array<{ method
     return { entityId: (params as { entityId: string }).entityId, status: "moved" };
   });
   await peer.request("engine/handshake", {
-    clientName: "P7m.Engine.Runtime",
+    clientName: "Gridsmith.Engine.Runtime",
     clientVersion: "0.1.0",
     protocolVersion: PROTOCOL_VERSION,
   });
@@ -166,7 +166,7 @@ async function connectFakeEngine(server: EnginePipeServer, calls: Array<{ method
 }
 
 test("orquestrador: filters → AST → actions → projeção no adapter MonoGame", async () => {
-  const server = new EnginePipeServer({ pipeName: `p7m-canon-${process.pid}-${pipeCounter++}`, requestTimeoutMs: 2000 });
+  const server = new EnginePipeServer({ pipeName: `gridsmith-canon-${process.pid}-${pipeCounter++}`, requestTimeoutMs: 2000 });
   const capabilities = new CapabilityRegistry(server);
   const adapter = new MonoGameAdapter(server, capabilities);
   const store = new BlueprintStore();
@@ -217,7 +217,7 @@ test("orquestrador: filters → AST → actions → projeção no adapter MonoGa
 });
 
 test("eventos sem suporte no runtime são pulados com razão; sem sessão, deferred", async () => {
-  const server = new EnginePipeServer({ pipeName: `p7m-canon-${process.pid}-${pipeCounter++}`, requestTimeoutMs: 2000 });
+  const server = new EnginePipeServer({ pipeName: `gridsmith-canon-${process.pid}-${pipeCounter++}`, requestTimeoutMs: 2000 });
   const capabilities = new CapabilityRegistry(server);
   const adapter = new MonoGameAdapter(server, capabilities);
   const store = new BlueprintStore();
@@ -255,7 +255,7 @@ test("eventos sem suporte no runtime são pulados com razão; sem sessão, defer
 
 test("reset de runtime desconectado é deferred com razão e reidratação não finge sucesso", async () => {
   const server = new EnginePipeServer({
-    pipeName: `p7m-canon-${process.pid}-${pipeCounter++}`,
+    pipeName: `gridsmith-canon-${process.pid}-${pipeCounter++}`,
     requestTimeoutMs: 2000,
   });
   const adapter = new MonoGameAdapter(server, new CapabilityRegistry(server));
@@ -419,7 +419,7 @@ test("rehydrateFrom mantém peer/epoch pinados e não envia a continuação para
 });
 
 test("spawn table (P0.6): definição com archetypeId spawna ator; remoção despawna", async () => {
-  const server = new EnginePipeServer({ pipeName: `p7m-canon-${process.pid}-${pipeCounter++}`, requestTimeoutMs: 2000 });
+  const server = new EnginePipeServer({ pipeName: `gridsmith-canon-${process.pid}-${pipeCounter++}`, requestTimeoutMs: 2000 });
   const capabilities = new CapabilityRegistry(server);
   const adapter = new MonoGameAdapter(server, capabilities);
   const store = new BlueprintStore();
@@ -486,7 +486,7 @@ test("spawn table (P0.6): definição com archetypeId spawna ator; remoção des
 });
 
 test("reidratação projeta entidades spawnáveis depois dos níveis", async () => {
-  const server = new EnginePipeServer({ pipeName: `p7m-canon-${process.pid}-${pipeCounter++}`, requestTimeoutMs: 2000 });
+  const server = new EnginePipeServer({ pipeName: `gridsmith-canon-${process.pid}-${pipeCounter++}`, requestTimeoutMs: 2000 });
   const adapter = new MonoGameAdapter(server, new CapabilityRegistry(server));
   const store = new BlueprintStore();
   await server.listen();

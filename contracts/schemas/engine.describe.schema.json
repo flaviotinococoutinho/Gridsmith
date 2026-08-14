@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/engine.describe",
+  "$id": "gridsmith://contracts/engine.describe",
   "title": "engine/describe",
   "description": "Manifesto de capacidades da engine (middleware → engine). A engine descreve seus subsistemas, limites e layouts binários; o middleware projeta isso como conceitos de edição visual para o editor Electron. Os offsets de vértice são gerados por reflexão real das structs — nunca hardcoded.",
   "type": "object",

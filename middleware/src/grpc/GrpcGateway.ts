@@ -1,8 +1,8 @@
 /**
  * Gateway gRPC do editor — o caminho QUENTE e PRIORITÁRIO do app (ADR-017).
  *
- * Fachada fina: o serviço p7m.editor.v1.EditorHotPath vem de
- * contracts/grpc/p7m_editor.proto (carregado em runtime via proto-loader;
+ * Fachada fina: o serviço gridsmith.editor.v1.EditorHotPath vem de
+ * contracts/grpc/gridsmith_editor.proto (carregado em runtime via proto-loader;
  * cópia em dist/ verificada por teste de paridade) e todo RPC delega na
  * EditorSurface. Eventos saem por SERVER STREAMING com catch-up via
  * EventJournal (`after_seq`) — o cliente nunca perde eventos dentro da
@@ -40,15 +40,15 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
  * src/ via tsx, direto da fonte contracts/ do repositório.
  */
 export const PROTO_CANDIDATE_PATHS = [
-  path.join(dirname, "../contracts/grpc/p7m_editor.proto"),
-  path.join(dirname, "../../../contracts/grpc/p7m_editor.proto"),
+  path.join(dirname, "../contracts/grpc/gridsmith_editor.proto"),
+  path.join(dirname, "../../../contracts/grpc/gridsmith_editor.proto"),
 ] as const;
 
 export function resolveProtoPath(): string {
   const found = PROTO_CANDIDATE_PATHS.find((p) => fs.existsSync(p));
   if (!found) {
     throw new Error(
-      `p7m_editor.proto not found (tried: ${PROTO_CANDIDATE_PATHS.join(", ")}) — run "npm run build"`,
+      `gridsmith_editor.proto not found (tried: ${PROTO_CANDIDATE_PATHS.join(", ")}) — run "npm run build"`,
     );
   }
   return found;
@@ -207,9 +207,9 @@ export class GrpcGateway {
     this.server = new grpc.Server();
 
     const pkg = loadEditorProto() as unknown as {
-      p7m: { editor: { v1: { EditorHotPath: { service: grpc.ServiceDefinition } } } };
+      gridsmith: { editor: { v1: { EditorHotPath: { service: grpc.ServiceDefinition } } } };
     };
-    this.server.addService(pkg.p7m.editor.v1.EditorHotPath.service, {
+    this.server.addService(pkg.gridsmith.editor.v1.EditorHotPath.service, {
       Health: this.health,
       Dispatch: this.dispatch,
       Query: this.query,

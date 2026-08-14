@@ -32,7 +32,13 @@ import {
 import { createPanelRegistry, defaultPanels } from "../src/core/workbench/panelRegistry.js";
 import { SelectionService } from "../src/core/workbench/selectionService.js";
 import { ToolRegistry } from "../src/core/workbench/toolRegistry.js";
-import { WorkbenchLayout, clampArea } from "../src/core/workbench/workbenchLayout.js";
+import {
+  LAYOUT_STORAGE_KEY,
+  LEGACY_LAYOUT_STORAGE_KEY,
+  WorkbenchLayout,
+  clampArea,
+  restoreLayoutFrom,
+} from "../src/core/workbench/workbenchLayout.js";
 import { WorkbenchModel } from "../src/core/workbench/workbenchShell.js";
 import { panelLabel } from "../src/core/vocabulary.js";
 
@@ -383,6 +389,43 @@ test("layout sobrevive ao round-trip; versão diferente e lixo voltam ao default
   const clampado = new WorkbenchLayout();
   clampado.restore({ version: 1, areas: { rail: { size: -50, visible: true } } });
   assert.equal(clampado.get("rail").size, 140);
+});
+
+test("o layout salvo antes do rebrand é lido pela chave herdada, e a nova tem precedência", () => {
+  // layout ausente cai no default SEM dizer nada — então perder a chave no
+  // rename seria uma perda silenciosa por construção
+  const salvo = (size: number): string =>
+    JSON.stringify({ version: 1, areas: { inspector: { size, visible: true } } });
+
+  const herdado = new WorkbenchLayout();
+  assert.equal(
+    restoreLayoutFrom(herdado, (key) => (key === LEGACY_LAYOUT_STORAGE_KEY ? salvo(420) : null)),
+    true,
+  );
+  assert.equal(herdado.get("inspector").size, 420);
+
+  const ambas = new WorkbenchLayout();
+  restoreLayoutFrom(ambas, (key) =>
+    key === LAYOUT_STORAGE_KEY ? salvo(340) : salvo(420),
+  );
+  assert.equal(ambas.get("inspector").size, 340, "a chave nova manda");
+
+  // armazenamento indisponível (modo privado) não derruba a casca
+  const semArmazenamento = new WorkbenchLayout();
+  assert.equal(
+    restoreLayoutFrom(semArmazenamento, () => {
+      throw new Error("SecurityError");
+    }),
+    false,
+  );
+  assert.equal(semArmazenamento.get("inspector").size, 300);
+
+  // valor ilegível na chave nova ainda deixa a herdada ser tentada
+  const corrompido = new WorkbenchLayout();
+  restoreLayoutFrom(corrompido, (key) =>
+    key === LAYOUT_STORAGE_KEY ? "{não é json" : salvo(400),
+  );
+  assert.equal(corrompido.get("inspector").size, 400);
 });
 
 // --------------------------------------------------------------- casca

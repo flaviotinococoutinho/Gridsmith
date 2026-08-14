@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/camera.methods",
+  "$id": "gridsmith://contracts/camera.methods",
   "title": "camera/* (Fase 3)",
   "description": "Métodos da câmera cinemática (middleware → engine): integrador massa-mola-amortecedor de segunda ordem com antecipação preditiva e screen shake procedural harmônico. Todos os métodos abaixo em $defs, indexados pelo nome JSON-RPC.",
   "$defs": {

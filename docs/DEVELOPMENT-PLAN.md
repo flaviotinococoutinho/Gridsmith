@@ -2,7 +2,7 @@
 
 > **Para quem é este documento.** Para qualquer pessoa ou IA que abra este
 > repositório sem contexto anterior e precise continuar o projeto. Ele diz o
-> que o P7M é, o que já está entregue, o que está decidido, o que falta e em
+> que o Gridsmith é, o que já está entregue, o que está decidido, o que falta e em
 > que ordem — com receitas executáveis para as partes mais complexas. Leia-o
 > junto de [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) (o diagnóstico com
 > evidência) e de [`GOVERNANCE.md`](GOVERNANCE.md) (as regras que o CI impõe).
@@ -11,7 +11,7 @@
 > vence — e o documento deve ser corrigido no mesmo PR que expôs o conflito.
 > Anti-drift é valor de primeira classe aqui (`npm run docs:verify` bloqueia).
 
-## 1. O que é o P7M, em um parágrafo
+## 1. O que é o Gridsmith, em um parágrafo
 
 Editor visual de jogos 2D como ecossistema local de três processos: um
 **frontend** Electron (shell fina; núcleos puros em `frontend/src/core/`), um
@@ -45,7 +45,7 @@ algo violando uma destas linhas está errando, não melhorando.
 |---|---|
 | Toda mutação passa pelo caminho canônico único (`dispatch` → filters → store → actions → projeção); as bordas (JSON-RPC, GraphQL, gRPC, MCP) são fachadas finas sobre a `EditorSurface` | P-1, R12, testes de gateway |
 | Dependências apontam para DENTRO; libs de borda são exclusivas dos seus diretórios (SDK MCP/`zod` em `mcp/`, `graphql` em `graphql/`, `@grpc/*` em `grpc/`; no frontend, SDKs de transporte só em `main/transport/`, `core/` puro) | R1, R10, R11, F1, F5 (testes de arquitetura das duas suítes) |
-| Na engine, `Runtime` NUNCA referencia `Graphics` — o host gráfico acopla por fora | E3/E4 em `engine/tests/P7m.Engine.Ipc.Tests/ArchitectureTests.cs` |
+| Na engine, `Runtime` NUNCA referencia `Graphics` — o host gráfico acopla por fora | E3/E4 em `engine/tests/Gridsmith.Engine.Ipc.Tests/ArchitectureTests.cs` |
 | `BlueprintStore` só importa validadores puros: a guarda estática de células é deliberada, e o limite REAL da engine chega à UI por `constraints`, não por import | R3; a norma é **mover a dependência, não relaxar a regra** |
 | Contratos vivem em `contracts/` e as cópias em `dist/` devem ser byte-idênticas (rode `npm run build` no middleware após editar SDL/proto) | teste de paridade em `middleware/test/transport-gateways.test.ts` |
 | Posição no mundo é em **pixels** (célula → pixel pelo centro da célula); o middleware repassa cru e a engine consome cru | `contracts/schemas/actors.methods.schema.json` + teste de unidade em `middleware/test/project-templates.test.ts` |
@@ -70,6 +70,7 @@ algo violando uma destas linhas está errando, não melhorando.
 | Lista de descarte | A UX do ex-PR que a `main` refez por outro desenho NÃO volta (tela inicial inline, wizard no renderer, catálogo por prefixo de mensagem…); reaproveitar apenas o que a tabela lista | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.3 |
 | Regime de curadoria (avaliação da "cebola") | Adotar como **vocabulário + linha de DoD**, sem reorganizar código e sem o termo "temperatura" (colide com "caminho quente"): todo vocabulário curado novo exige versão + proveniência, `reason` quando nega, e teste de consistência com quem o consome | §10 deste documento (ADR-021 pendente de redação) |
 | Medição Zero-GC | Tiered compilation desligada no csproj de teste; a garantia continua intacta | [`GOVERNANCE.md`](GOVERNANCE.md) |
+| Nome do produto | **Gridsmith**. O rebrand de P7M já foi aplicado em código, contratos, namespaces .NET, escopo npm, variáveis de ambiente e documentação. O **repositório no GitHub continua `p7m-design`** de propósito: renomeá-lo quebraria as nove URLs de issue do backlog Alpha 0.1. Ficaram preservados também `p7m-151` (testemunha de colisão de hash), `p7m.transport-benchmark/v1` (versão de FORMATO, travada no baseline congelado da ADR-019) e a leitura de `.p7m.json` | [`COMPATIBILITY.md`](COMPATIBILITY.md) §"Rebrand P7M → Gridsmith" |
 
 ## 5. Como trabalhar neste repositório (protocolo operacional)
 
@@ -146,7 +147,7 @@ correlação `lightId`↔slot da engine publicada em `Projection.detail`.
 **Onda 1 do fatiamento (E1–E3):** escrita durável (temporário → `flush` →
 `rename`, `.bak`, no-clobber no "Novo") nos três pontos de escrita; recovery de
 autosave com quatro saídas e ciclo de vida do sidecar; segunda instância e
-`argv` roteando `.p7m.json` com fila.
+`argv` roteando `.gridsmith.json` com fila.
 
 **Casca do workbench por contribuições (E10):** painel, comando, ferramenta e
 seção de inspector se DECLARAM em registros puros; a casca só materializa. A
@@ -687,7 +688,7 @@ vista de níveis, e por isso nada fora dela sabia o que o usuário tinha em mão
 | `inspectorRegistry.ts` | Seções por tipo de seleção, ordenadas e governadas |
 | `selectionService.ts` | Fonte única da seleção, observável |
 | `workbenchLayout.ts` | Tamanho/visibilidade por área, clamp e serialização versionada |
-| `editorContributions.ts` | As contribuições CONCRETAS do P7M (ferramentas do nível, seções do inspector) |
+| `editorContributions.ts` | As contribuições CONCRETAS do Gridsmith (ferramentas do nível, seções do inspector) |
 | `workbenchShell.ts` | Compõe tudo; substituiu o antigo `core/workbenchModel.ts` |
 
 **Armadilhas encontradas** (todas custaram um bug real durante a extração):
@@ -743,7 +744,7 @@ de arquitetura da engine.
    preview embutido só vira `enable` no perfil quando a onda B existir. Sem
    esse ADR a etapa não começa — é decisão arquitetural, e a regra da casa
    exige registro.
-2. Crie `engine/src/P7m.Engine.Host/` como projeto Exe referenciando Core, Ipc
+2. Crie `engine/src/Gridsmith.Engine.Host/` como projeto Exe referenciando Core, Ipc
    e Graphics. Ele instancia `Game` + `GraphicsDeviceManager` e constrói o
    renderer deferred com os efeitos que o pipeline de conteúdo já compila.
 3. O loop desenha os stores DOD **por referência**: eles já são propriedades
@@ -751,7 +752,7 @@ de arquitetura da engine.
    compartilham estado sem cópia nova. Respeite o Zero-GC: nada de alocação por
    frame no caminho de desenho.
 4. Acrescente a regra **E6** em
-   `engine/tests/P7m.Engine.Ipc.Tests/ArchitectureTests.cs`, no mesmo formato
+   `engine/tests/Gridsmith.Engine.Ipc.Tests/ArchitectureTests.cs`, no mesmo formato
    das existentes: **só** o Host referencia Graphics + Ipc. As regras E1–E5
    permanecem intactas — em particular, E4 continua exigindo que o Runtime NÃO
    veja Graphics.

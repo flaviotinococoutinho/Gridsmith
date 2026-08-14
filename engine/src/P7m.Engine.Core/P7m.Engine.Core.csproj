@@ -1,7 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <RootNamespace>P7m.Engine.Core</RootNamespace>
-    <Description>Núcleo Data-Oriented da engine P7M: SoA pré-alocada, Zero-GC nos hot loops</Description>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-  </PropertyGroup>
-</Project>

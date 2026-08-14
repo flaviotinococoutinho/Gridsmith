@@ -178,8 +178,8 @@ export function classifyTransportError(err: unknown): ClassifiedError {
   if (
     e?.code === 16 ||
     e?.code === 7 ||
-    e?.code === "P7M_AUTHENTICATION_FAILED" ||
-    e?.code === "P7M_AUTH_CONFIGURATION" ||
+    e?.code === "GRIDSMITH_AUTHENTICATION_FAILED" ||
+    e?.code === "GRIDSMITH_AUTH_CONFIGURATION" ||
     e?.statusCode === 401 ||
     e?.statusCode === 403
   ) {

@@ -8,7 +8,7 @@ cpSync("src/renderer/style.css", "dist/renderer/style.css");
 // como módulo único para o renderer/worker — preview usa o MESMO resolvedor
 // que a projeção no runtime.
 cpSync(
-  "node_modules/@p7m/middleware/dist/leveldesign/AutoTiler.js",
+  "node_modules/@gridsmith/middleware/dist/leveldesign/AutoTiler.js",
   "dist/renderer/vendor/AutoTiler.js",
 );
 console.log("static assets copied to dist/renderer (incl. vendored AutoTiler)");

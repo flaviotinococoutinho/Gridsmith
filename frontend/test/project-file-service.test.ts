@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { createPlatformer2DDocument } from "@p7m/middleware/dist/canonical/ProjectTemplates.js";
+import { createPlatformer2DDocument } from "@gridsmith/middleware/dist/canonical/ProjectTemplates.js";
 import { NodeProjectFileSystem } from "../src/main/project/NodeProjectFileSystem.js";
 import { ProjectFileService } from "../src/main/project/ProjectFileService.js";
 import { MemoryProjectFileSystem } from "./project-test-fakes.js";
@@ -12,17 +12,17 @@ test("escrita segura faz write → flush → close → rename e preserva backup"
   const fs = new MemoryProjectFileSystem();
   let id = 0;
   const service = new ProjectFileService(fs, () => `id-${++id}`);
-  fs.seed("/p/game.p7m.json", "old document");
+  fs.seed("/p/game.gridsmith.json", "old document");
 
-  await service.writeProject("/p/game.p7m.json", projectDocument("new"));
+  await service.writeProject("/p/game.gridsmith.json", projectDocument("new"));
 
-  assert.equal(fs.content("/p/game.p7m.json.bak"), "old document");
-  assert.match(fs.content("/p/game.p7m.json") ?? "", /"projectId": "new"/);
-  const temp = "/p/.game.p7m.json.id-1.tmp";
+  assert.equal(fs.content("/p/game.gridsmith.json.bak"), "old document");
+  assert.match(fs.content("/p/game.gridsmith.json") ?? "", /"projectId": "new"/);
+  const temp = "/p/.game.gridsmith.json.id-1.tmp";
   const write = fs.operations.indexOf(`write:${temp}`);
   const flush = fs.operations.indexOf(`flush:${temp}`);
   const close = fs.operations.indexOf(`close:${temp}`);
-  const rename = fs.operations.indexOf(`replace:${temp}->/p/game.p7m.json`);
+  const rename = fs.operations.indexOf(`replace:${temp}->/p/game.gridsmith.json`);
   assert.ok(write < flush && flush < close && close < rename);
 });
 
@@ -30,45 +30,45 @@ test("falha antes do rename final preserva documento válido e limpa temporário
   const fs = new MemoryProjectFileSystem();
   let id = 0;
   const service = new ProjectFileService(fs, () => `id-${++id}`);
-  fs.seed("/p/game.p7m.json", "valid bytes");
-  fs.failReplaceDestination = "/p/game.p7m.json";
+  fs.seed("/p/game.gridsmith.json", "valid bytes");
+  fs.failReplaceDestination = "/p/game.gridsmith.json";
 
-  await assert.rejects(service.writeProject("/p/game.p7m.json", projectDocument("broken")), /fault/);
+  await assert.rejects(service.writeProject("/p/game.gridsmith.json", projectDocument("broken")), /fault/);
 
-  assert.equal(fs.content("/p/game.p7m.json"), "valid bytes");
-  assert.equal(fs.content("/p/.game.p7m.json.id-1.tmp"), undefined);
-  assert.equal(fs.content("/p/game.p7m.json.bak"), "valid bytes");
+  assert.equal(fs.content("/p/game.gridsmith.json"), "valid bytes");
+  assert.equal(fs.content("/p/.game.gridsmith.json.id-1.tmp"), undefined);
+  assert.equal(fs.content("/p/game.gridsmith.json.bak"), "valid bytes");
 });
 
 test("criação exclusiva nunca sobrescreve destino que apareceu durante New", async () => {
   const fs = new MemoryProjectFileSystem();
   const service = new ProjectFileService(fs, () => "new-id");
-  fs.seed("/p/race.p7m.json", "created by another flow");
+  fs.seed("/p/race.gridsmith.json", "created by another flow");
 
   await assert.rejects(
-    service.createProject("/p/race.p7m.json", projectDocument("ours")),
+    service.createProject("/p/race.gridsmith.json", projectDocument("ours")),
     /destination exists/,
   );
 
-  assert.equal(fs.content("/p/race.p7m.json"), "created by another flow");
-  assert.equal(fs.content("/p/.race.p7m.json.new-id.tmp"), undefined);
+  assert.equal(fs.content("/p/race.gridsmith.json"), "created by another flow");
+  assert.equal(fs.content("/p/.race.gridsmith.json.new-id.tmp"), undefined);
 });
 
 test("documento inválido nunca alcança temporário nem substitui bytes válidos", async () => {
   const fs = new MemoryProjectFileSystem();
   const service = new ProjectFileService(fs, () => "invalid-id");
-  fs.seed("/p/valid.p7m.json", "last valid bytes");
+  fs.seed("/p/valid.gridsmith.json", "last valid bytes");
 
-  await assert.rejects(service.writeProject("/p/valid.p7m.json", undefined), /Blueprint completo/);
-  await assert.rejects(service.writeProject("/p/valid.p7m.json", null), /Blueprint completo/);
+  await assert.rejects(service.writeProject("/p/valid.gridsmith.json", undefined), /Blueprint completo/);
+  await assert.rejects(service.writeProject("/p/valid.gridsmith.json", null), /Blueprint completo/);
 
-  assert.equal(fs.content("/p/valid.p7m.json"), "last valid bytes");
+  assert.equal(fs.content("/p/valid.gridsmith.json"), "last valid bytes");
   assert.equal(fs.operations.some((operation) => operation.startsWith("write:")), false);
 });
 
 test("adapter Node restaura swap deixado por crash antes de ler o projeto", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "p7m-swap-recovery-"));
-  const destination = path.join(directory, "game.p7m.json");
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "gridsmith-swap-recovery-"));
+  const destination = path.join(directory, "game.gridsmith.json");
   const swap = `${destination}.replace-swap`;
   try {
     await fs.writeFile(swap, "last valid bytes", "utf8");
@@ -83,8 +83,8 @@ test("adapter Node restaura swap deixado por crash antes de ler o projeto", asyn
 });
 
 test("adapter Node publica New sem sobrescrever um destino real concorrente", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "p7m-new-no-clobber-"));
-  const destination = path.join(directory, "game.p7m.json");
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "gridsmith-new-no-clobber-"));
+  const destination = path.join(directory, "game.gridsmith.json");
   let id = 0;
   const service = new ProjectFileService(new NodeProjectFileSystem(), () => `id-${++id}`);
   try {
@@ -106,8 +106,8 @@ test("adapter Node publica New sem sobrescrever um destino real concorrente", as
 });
 
 test("adapter Node substitui documento real e preserva backup válido", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "p7m-save-backup-"));
-  const destination = path.join(directory, "game.p7m.json");
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "gridsmith-save-backup-"));
+  const destination = path.join(directory, "game.gridsmith.json");
   let id = 0;
   const service = new ProjectFileService(new NodeProjectFileSystem(), () => `id-${++id}`);
   try {
@@ -125,8 +125,8 @@ test("adapter Node substitui documento real e preserva backup válido", async ()
 });
 
 test("recovery só é oferecido quando o autosave real é estritamente mais recente", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "p7m-recovery-time-"));
-  const destination = path.join(directory, "game.p7m.json");
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "gridsmith-recovery-time-"));
+  const destination = path.join(directory, "game.gridsmith.json");
   const autosave = `${destination}.autosave`;
   let id = 0;
   const service = new ProjectFileService(new NodeProjectFileSystem(), () => `id-${++id}`);

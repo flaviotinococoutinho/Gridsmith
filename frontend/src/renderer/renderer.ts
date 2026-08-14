@@ -18,7 +18,12 @@ import {
   defaultInspectorSections,
   levelEditorTools,
 } from "../core/workbench/editorContributions.js";
-import { LAYOUT_AREAS, type LayoutArea } from "../core/workbench/workbenchLayout.js";
+import {
+  LAYOUT_AREAS,
+  LAYOUT_STORAGE_KEY,
+  restoreLayoutFrom,
+  type LayoutArea,
+} from "../core/workbench/workbenchLayout.js";
 import type { KeyStroke } from "../core/workbench/keybindings.js";
 import {
   historyActorLabel,
@@ -29,7 +34,7 @@ import {
 } from "../core/vocabulary.js";
 import { presentError } from "../core/errorCatalog.js";
 import type { ResolvedExperienceLike } from "../core/experienceGate.js";
-import type { P7mEditorApi, ProjectStatusPayload, ServiceStatusPayload } from "../main/preload.js";
+import type { GridsmithEditorApi, ProjectStatusPayload, ServiceStatusPayload } from "../main/preload.js";
 import type { HistoryStatus } from "../main/EditorClient.js";
 import { mountLevelEditor, type InspectorDataProvider } from "./levelEditorView.js";
 import { mountWelcome } from "./welcomeView.js";
@@ -38,7 +43,7 @@ import type { ProjectState, RecentProject } from "../core/projectLifecycle.js";
 
 declare global {
   interface Window {
-    p7m: P7mEditorApi;
+    gridsmith: GridsmithEditorApi;
   }
 }
 
@@ -113,7 +118,7 @@ function problemsEmptyHint(): string {
 
 /**
  * Comandos que falam com o DOCUMENTO. Vivem aqui, e não no núcleo, porque
- * atravessam a borda (`window.p7m`); os que só reorganizam a janela são puros
+ * atravessam a borda (`window.gridsmith`); os que só reorganizam a janela são puros
  * e ficam no `WorkbenchModel`.
  */
 function registerDocumentCommands(): void {
@@ -143,7 +148,7 @@ function registerDocumentCommands(): void {
 async function runHistory(action: "undo" | "redo"): Promise<void> {
   const cursor = history?.historyCursor;
   try {
-    await (action === "undo" ? window.p7m.undo(cursor) : window.p7m.redo(cursor));
+    await (action === "undo" ? window.gridsmith.undo(cursor) : window.gridsmith.redo(cursor));
     dismissError();
   } catch (error: unknown) {
     // conflito de CAS é o caso ESPERADO quando outra borda editou: releia e
@@ -161,7 +166,7 @@ async function refreshHistory(): Promise<void> {
     return;
   }
   try {
-    history = (await window.p7m.historyStatus(50)) as HistoryStatus;
+    history = (await window.gridsmith.historyStatus(50)) as HistoryStatus;
   } catch {
     // histórico indisponível não pode derrubar a casca; a aba mostra o vazio
     history = undefined;
@@ -172,10 +177,10 @@ async function refreshHistory(): Promise<void> {
 // ---------------------------------------------------------------- toolbar
 
 function wireProjectToolbar(): void {
-  const run = (command: Parameters<P7mEditorApi["projectCommand"]>[0]) => (): void => {
+  const run = (command: Parameters<GridsmithEditorApi["projectCommand"]>[0]) => (): void => {
     // Toda falha do ciclo de vida do projeto chega ao usuário com causa e
     // ação — antes virava unhandled rejection e sumia.
-    void window.p7m
+    void window.gridsmith
       .projectCommand(command)
       .then((status) => {
         dismissError();
@@ -313,7 +318,7 @@ function renderView(): void {
         },
         view,
         onNew: (templateId) => {
-          void window.p7m
+          void window.gridsmith
             .projectCommand("new", templateId ? { templateId } : undefined)
             .then((status) => {
               dismissError();
@@ -322,7 +327,7 @@ function renderView(): void {
             .catch((error: unknown) => showError(error));
         },
         onOpen: () => {
-          void window.p7m
+          void window.gridsmith
             .projectCommand("open")
             .then((status) => {
               dismissError();
@@ -331,7 +336,7 @@ function renderView(): void {
             .catch((error: unknown) => showError(error));
         },
         onOpenPath: (filePath) => {
-          void window.p7m
+          void window.gridsmith
             .projectCommand("openPath", { filePath })
             .then((status) => {
               dismissError();
@@ -595,15 +600,10 @@ function refreshProblemBadge(): void {
 
 // ------------------------------------------------------------------ layout
 
-const LAYOUT_STORAGE_KEY = "p7m.workbench.layout";
-
 function restoreLayout(): void {
-  try {
-    const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
-    if (raw) model.layout.restore(JSON.parse(raw));
-  } catch {
-    // preferência ilegível não pode impedir o editor de abrir: fica o default
-  }
+  // a política (incluindo o fallback para a chave anterior ao rebrand) é pura
+  // e testada em core/; aqui fica só o acesso ao armazenamento
+  restoreLayoutFrom(model.layout, (key) => window.localStorage.getItem(key));
 }
 
 function persistLayout(): void {
@@ -717,7 +717,7 @@ function renderServices(services: ServiceStatusPayload[]): void {
       retry.textContent = `Reiniciar ${service.displayName}`;
       retry.addEventListener("click", () => {
         retry.disabled = true;
-        void window.p7m.serviceRestart(service.id).finally(() => {
+        void window.gridsmith.serviceRestart(service.id).finally(() => {
           retry.disabled = false;
         });
       });
@@ -754,16 +754,16 @@ async function boot(): Promise<void> {
   model.onChange(renderAll);
   renderAll();
 
-  window.p7m.onProjectStatus(applyProjectStatus);
-  window.p7m.onMenuAction((action) => {
+  window.gridsmith.onProjectStatus(applyProjectStatus);
+  window.gridsmith.onMenuAction((action) => {
     // o menu nativo resolve pelo MESMO registro do teclado: quem responde ao
     // Ctrl+Z responde ao item de menu, por construção
     const stroke = { key: "z", ctrlKey: true, shiftKey: action === "redo" };
     const outcome = model.resolveKeyStroke(stroke);
     if (outcome.kind === "command") void execute(outcome.commandId);
   });
-  window.p7m.onServiceStatus(renderServices);
-  window.p7m.onBlueprintEvent((event, projection) => {
+  window.gridsmith.onServiceStatus(renderServices);
+  window.gridsmith.onBlueprintEvent((event, projection) => {
     // A projeção é o que faz o painel Problemas dizer a verdade: sem ela o
     // contador era estruturalmente zero.
     log.record(event as { kind: string } & Record<string, unknown>, narrowProjection(projection));
@@ -773,7 +773,7 @@ async function boot(): Promise<void> {
     // desfazer seria recusado por estar lendo um estado velho
     void refreshHistory();
   });
-  window.p7m.onProjectionResync(({ snapshot }) => {
+  window.gridsmith.onProjectionResync(({ snapshot }) => {
     projectionSnapshot = snapshot;
     // Mantém a reconstrução separada do dirty tracking/event log. Vistas que
     // consomem projeções leem esta referência no próximo render.
@@ -781,23 +781,23 @@ async function boot(): Promise<void> {
     renderView();
   });
 
-  renderServices(await window.p7m.serviceStatus());
+  renderServices(await window.gridsmith.serviceStatus());
 
   try {
-    await window.p7m.connect();
+    await window.gridsmith.connect();
     connected = true;
     $("connection-dot").className = "dot online";
     $("status-connection").textContent = "Conectado ao middleware";
     // templates antes do status: o primeiro render da tela inicial já sai com
     // os cards, em vez de aparecer vazio e piscar quando chegarem
     try {
-      lastTemplates = (await window.p7m.projectTemplates()).templates;
+      lastTemplates = (await window.gridsmith.projectTemplates()).templates;
     } catch {
       // sem templates a tela inicial ainda oferece Novo e Abrir
     }
-    applyProjectStatus(await window.p7m.projectStatus());
+    applyProjectStatus(await window.gridsmith.projectStatus());
 
-    const experience = (await window.p7m.experience()) as ResolvedExperienceLike;
+    const experience = (await window.gridsmith.experience()) as ResolvedExperienceLike;
     model.applyExperience(experience);
     $("runtime-label").textContent = model.runtimeLabel;
   } catch (err) {

@@ -1,6 +1,6 @@
 # Modelo Canônico e Governança de Runtimes
 
-O P7M é uma ferramenta visual de desenvolvimento de jogos **fortemente
+O Gridsmith é uma ferramenta visual de desenvolvimento de jogos **fortemente
 orientada a domínio**: o que o usuário edita é um modelo canônico próprio,
 independente de runtime. Runtimes concretos (MonoGame hoje; outros no futuro)
 recebem **projeções** desse modelo através de adapters, e a experiência visual

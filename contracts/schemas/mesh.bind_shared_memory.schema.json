@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/mesh.bind_shared_memory",
+  "$id": "gridsmith://contracts/mesh.bind_shared_memory",
   "title": "mesh/bind_shared_memory",
   "description": "Instrui a engine a mapear o memory-mapped file que contém os vértices da malha (posições, UVs e BoneWeights) em layout binário sequencial.",
   "type": "object",

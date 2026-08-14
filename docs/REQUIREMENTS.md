@@ -95,7 +95,7 @@ determinismo, contrato binário, imutabilidade, fail-safe) — e pelos quality g
 
 ```mermaid
 mindmap
-  root(("Fitness Functions P7M"))
+  root(("Fitness Functions Gridsmith"))
     Estruturais
       Middleware R1-R13 import-graph
       Frontend F1-F5

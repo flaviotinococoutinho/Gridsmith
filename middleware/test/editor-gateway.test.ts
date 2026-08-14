@@ -26,7 +26,7 @@ const AUTH_TOKEN = generateTransportAuthToken();
 
 const LIVE_MANIFEST: EngineManifest = {
   engine: {
-    name: "P7m.Engine.Runtime",
+    name: "Gridsmith.Engine.Runtime",
     version: "0.1.0",
     protocolVersion: "1.0",
     runtime: { family: "monogame", version: "3.8.2" },
@@ -59,7 +59,7 @@ interface SessionEventEnvelope {
 }
 
 async function makeHarness(): Promise<Harness> {
-  const pipeName = `p7m-edgw-${process.pid}-${pipeCounter++}`;
+  const pipeName = `gridsmith-edgw-${process.pid}-${pipeCounter++}`;
   const engineServer = new EnginePipeServer({ pipeName, requestTimeoutMs: 2000 });
   const capabilities = new CapabilityRegistry(engineServer);
   const adapter = new MonoGameAdapter(engineServer, capabilities);
@@ -158,7 +158,7 @@ async function makeHarness(): Promise<Harness> {
         return params;
       });
       await peer.request("engine/handshake", {
-        clientName: "P7m.Engine.Runtime",
+        clientName: "Gridsmith.Engine.Runtime",
         clientVersion: "0.1.0",
         protocolVersion: PROTOCOL_VERSION,
       });

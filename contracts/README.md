@@ -1,6 +1,6 @@
 # Contratos de fio do ecossistema
 
-Fonte única de verdade dos contratos trafegados entre os processos do P7M, em
+Fonte única de verdade dos contratos trafegados entre os processos do Gridsmith, em
 três famílias:
 
 1. **Plano de controle middleware ↔ engine** — JSON-RPC 2.0 sobre Named Pipes /
@@ -131,7 +131,7 @@ prioritário) — decisões em [`../docs/adr/`](../docs/adr/README.md)
 | Contrato | Arquivo | Papel | Operações |
 |---|---|---|---|
 | GraphQL SDL | [`graphql/editor.schema.graphql`](graphql/editor.schema.graphql) | baseline completa + fallback | queries de projeto/projeção/snapshot/eventos · mutations `projectCreate`, `projectOpenDocument`, `projectClose`, `dispatch` + aliases legados |
-| gRPC proto | [`grpc/p7m_editor.proto`](grpc/p7m_editor.proto) — `p7m.editor.v1.EditorHotPath` | caminho quente condicionado pela ADR-019 | `ProjectCreate`, `ProjectOpenDocument`, `ProjectClose`, `ProjectStatus`, dispatch/query/snapshot + `StreamEventsV2` |
+| gRPC proto | [`grpc/gridsmith_editor.proto`](grpc/gridsmith_editor.proto) — `gridsmith.editor.v1.EditorHotPath` | caminho quente condicionado pela ADR-019 | `ProjectCreate`, `ProjectOpenDocument`, `ProjectClose`, `ProjectStatus`, dispatch/query/snapshot + `StreamEventsV2` |
 
 Regras de evolução:
 
@@ -187,7 +187,7 @@ sequenceDiagram
   alt MAJOR de protocolVersion diverge
     M-->>E: erro ProtocolMismatch -32001
   else MAJOR compativel (PROTOCOL_VERSION 1.0)
-    M-->>E: {sessionId uuid v4, serverName p7m-middleware, acceptedCapabilities}
+    M-->>E: {sessionId uuid v4, serverName gridsmith-middleware, acceptedCapabilities}
     Note over M: emite evento session
     M->>E: welcome ping
     M->>E: engine/reset_session {}

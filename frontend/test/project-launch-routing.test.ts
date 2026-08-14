@@ -15,15 +15,15 @@ import {
 } from "../src/main/project/ProjectLaunchRouting.js";
 
 test("encontra o projeto entre as flags do Electron", () => {
-  const argv = ["/usr/bin/electron", ".", "--pipe", "p7m-engine", "/home/u/jogo.p7m.json"];
-  assert.equal(projectPathFromArgs(argv, "/tmp"), "/home/u/jogo.p7m.json");
+  const argv = ["/usr/bin/electron", ".", "--pipe", "gridsmith-engine", "/home/u/jogo.gridsmith.json"];
+  assert.equal(projectPathFromArgs(argv, "/tmp"), "/home/u/jogo.gridsmith.json");
 });
 
 test("caminho relativo resolve contra o diretório de quem chamou, não o do app", () => {
-  // é o caso do `p7m ./jogo.p7m.json` num terminal qualquer
+  // é o caso do `gridsmith ./jogo.gridsmith.json` num terminal qualquer
   assert.equal(
-    projectPathFromArgs(["electron", "./jogo.p7m.json"], "/home/u/projetos"),
-    path.resolve("/home/u/projetos", "./jogo.p7m.json"),
+    projectPathFromArgs(["electron", "./jogo.gridsmith.json"], "/home/u/projetos"),
+    path.resolve("/home/u/projetos", "./jogo.gridsmith.json"),
   );
 });
 
@@ -34,7 +34,7 @@ test("sem argumento de projeto devolve undefined", () => {
 
 test("só reconhece a extensão de projeto", () => {
   assert.equal(projectPathFromArgs(["electron", "/tmp/outro.json"], "/tmp"), undefined);
-  assert.equal(projectPathFromArgs(["electron", "/tmp/x.p7m.JSON"], "/tmp"), "/tmp/x.p7m.JSON");
+  assert.equal(projectPathFromArgs(["electron", "/tmp/x.gridsmith.JSON"], "/tmp"), "/tmp/x.gridsmith.JSON");
 });
 
 test("foco restaura a janela minimizada antes de focar", () => {

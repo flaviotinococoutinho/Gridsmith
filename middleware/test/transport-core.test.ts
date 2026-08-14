@@ -52,15 +52,15 @@ test("verbosidade: níveis são ordenados e silent suprime tudo", () => {
 test("logger emite somente até o nível ativo, com escopo herdado e detail JSON", () => {
   const lines: string[] = [];
   const records: LogRecord[] = [];
-  const log = createLogger("p7m", { level: "info", sink: (l, r) => (lines.push(l), records.push(r)) });
+  const log = createLogger("gridsmith", { level: "info", sink: (l, r) => (lines.push(l), records.push(r)) });
 
   log.info("gateway up", { endpoint: "unix:/tmp/x.sock" });
   log.debug("invisível neste nível");
   log.child("grpc").warn("fallback");
 
   assert.equal(lines.length, 2);
-  assert.match(lines[0]!, /^\[p7m\] INFO gateway up — \{"endpoint":"unix:\/tmp\/x\.sock"\}$/);
-  assert.match(lines[1]!, /^\[p7m:grpc\] WARN fallback$/);
+  assert.match(lines[0]!, /^\[gridsmith\] INFO gateway up — \{"endpoint":"unix:\/tmp\/x\.sock"\}$/);
+  assert.match(lines[1]!, /^\[gridsmith:grpc\] WARN fallback$/);
   assert.equal(records[0]?.level, "info");
 });
 
@@ -198,34 +198,34 @@ test("journal: troca de sessão substitui a partição e cursor antigo exige res
 // ---------- endpoints ----------
 
 test("endpoints: UDS no POSIX com sufixo por transporte; TCP determinístico no Windows", () => {
-  const graphql = resolveTransportEndpoint("p7m-x", "graphql", "linux");
-  const grpc = resolveTransportEndpoint("p7m-x", "grpc", "linux");
+  const graphql = resolveTransportEndpoint("gridsmith-x", "graphql", "linux");
+  const grpc = resolveTransportEndpoint("gridsmith-x", "grpc", "linux");
   assert.equal(graphql.family, "uds");
-  assert.match(graphql.address, /p7m-x-graphql\.sock$/);
-  assert.match(grpc.grpcTarget, /^unix:.*p7m-x-grpc\.sock$/);
+  assert.match(graphql.address, /gridsmith-x-graphql\.sock$/);
+  assert.match(grpc.grpcTarget, /^unix:.*gridsmith-x-grpc\.sock$/);
   assert.notEqual(graphql.address, grpc.address);
 
-  const win = resolveTransportEndpoint("p7m-x", "grpc", "win32");
+  const win = resolveTransportEndpoint("gridsmith-x", "grpc", "win32");
   assert.equal(win.family, "tcp");
   assert.equal(win.address, "127.0.0.1");
-  assert.equal(win.port, derivedPort("p7m-x", "grpc"));
+  assert.equal(win.port, derivedPort("gridsmith-x", "grpc"));
   assert.ok(win.port! >= 49152 && win.port! < 65536);
   // determinístico: mesma entrada, mesma porta; transports não colidem
-  assert.equal(derivedPort("p7m-x", "grpc"), derivedPort("p7m-x", "grpc"));
-  assert.notEqual(derivedPort("p7m-x", "grpc"), derivedPort("p7m-x", "graphql"));
+  assert.equal(derivedPort("gridsmith-x", "grpc"), derivedPort("gridsmith-x", "grpc"));
+  assert.notEqual(derivedPort("gridsmith-x", "grpc"), derivedPort("gridsmith-x", "graphql"));
   // Regressão: o hash de faixa única fazia estes dois transports colidirem.
   assert.notEqual(derivedPort("p7m-151", "grpc"), derivedPort("p7m-151", "graphql"));
-  assert.ok(derivedPort("p7m-x", "graphql") < 57344);
-  assert.ok(derivedPort("p7m-x", "grpc") >= 57344);
+  assert.ok(derivedPort("gridsmith-x", "graphql") < 57344);
+  assert.ok(derivedPort("gridsmith-x", "grpc") >= 57344);
 });
 
 test("endpoints: nome lógico bloqueia traversal e colisão de bind é tipada", () => {
-  assert.equal(validatePipeName("p7m-editor_1.0"), "p7m-editor_1.0");
+  assert.equal(validatePipeName("gridsmith-editor_1.0"), "gridsmith-editor_1.0");
   for (const invalid of ["", ".hidden", "../escape", "a/b", "x".repeat(81)]) {
     assert.throws(() => validatePipeName(invalid), TypeError);
   }
 
-  const endpoint = resolveTransportEndpoint("p7m-collision", "grpc", "win32");
+  const endpoint = resolveTransportEndpoint("gridsmith-collision", "grpc", "win32");
   const normalized = normalizeEndpointListenError(
     endpoint,
     Object.assign(new Error("listen EADDRINUSE: address already in use"), { code: "EADDRINUSE" }),
@@ -258,7 +258,7 @@ test("auth: gera token forte, carrega uma única fonte e compara sem expor segre
 });
 
 test("auth: arquivo de token POSIX precisa ser regular, privado e do usuário", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "p7m-auth-test-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gridsmith-auth-test-"));
   const file = path.join(dir, "token");
   const token = generateTransportAuthToken();
   try {
@@ -278,7 +278,7 @@ test("auth: arquivo de token POSIX precisa ser regular, privado e do usuário", 
 });
 
 test("endpoints: UDS recebe permissão 0600 antes de anunciar prontidão", () => {
-  const socketPath = "/runtime/p7m-mode.sock";
+  const socketPath = "/runtime/gridsmith-mode.sock";
   const endpoint: TransportEndpoint = {
     family: "uds",
     address: socketPath,

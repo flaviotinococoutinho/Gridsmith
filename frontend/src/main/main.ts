@@ -24,7 +24,7 @@ import {
   EDITOR_AUTH_TOKEN_FILE_ENV,
   generateTransportAuthToken,
   loadTransportAuthToken,
-} from "@p7m/middleware/dist/transport/auth.js";
+} from "@gridsmith/middleware/dist/transport/auth.js";
 import {
   ProjectLifecycle,
   parseRecents,
@@ -58,13 +58,27 @@ import {
   loadWindowState,
   trackWindowState,
 } from "./appConfig.js";
+import {
+  PROJECT_EXTENSIONS,
+  defaultProjectFileName,
+  projectNameFromPath,
+} from "../core/projectExtensions.js";
+
+// Nome do app EXPLÍCITO, e não derivado do `name` do package.json: é ele que
+// define `app.getPath("userData")`, onde moram os recentes e o estado da
+// janela. Amarrado ao pacote npm, um rename de escopo (@p7m → @gridsmith)
+// movia o diretório em silêncio e órfãva os dois.
+app.setName("Gridsmith");
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_FILTER = [{ name: "Projeto P7M", extensions: ["p7m.json"] }];
+// o filtro carrega TAMBÉM o sufixo herdado: com uma extensão só, todo projeto
+// `.p7m.json` já gravado ficaria inselecionável no diálogo Abrir — não há
+// entrada "Todos os arquivos" para escapar
+const PROJECT_FILTER = [{ name: "Projeto Gridsmith", extensions: [...PROJECT_EXTENSIONS] }];
 
 function pipeNameFromArgs(): string {
   const index = process.argv.indexOf("--pipe");
-  return index >= 0 ? process.argv[index + 1]! : "p7m-engine";
+  return index >= 0 ? process.argv[index + 1]! : "gridsmith-engine";
 }
 
 // ------------------------------------------------ supervisão de processos
@@ -174,16 +188,16 @@ function buildSupervisor(
   authToken: string,
 ): ProcessSupervisor {
   const repoRoot = path.join(dirname, "../../..");
-  const middlewareEntry = path.join(dirname, "../../node_modules/@p7m/middleware/dist/index.js");
+  const middlewareEntry = path.join(dirname, "../../node_modules/@gridsmith/middleware/dist/index.js");
   const engineDll = path.join(
     repoRoot,
-    "engine/src/P7m.Engine.Runtime/bin/Debug/net8.0/P7m.Engine.Runtime.dll",
+    "engine/src/Gridsmith.Engine.Runtime/bin/Debug/net8.0/Gridsmith.Engine.Runtime.dll",
   );
 
   return new ProcessSupervisor([
     {
       id: "middleware",
-      displayName: "Serviços P7M",
+      displayName: "Serviços Gridsmith",
       // o Electron roda o middleware como Node (ELECTRON_RUN_AS_NODE): um
       // único executável sobe o ecossistema inteiro
       launch: () =>
@@ -306,7 +320,7 @@ function requestExternalOpen(filePath: string | undefined): void {
 
 void app.whenReady().then(async () => {
   // instância única: a segunda sai, a primeira ganha foco — e o ARGUMENTO da
-  // segunda é roteado, para abrir um .p7m.json pelo gerenciador de arquivos
+  // segunda é roteado, para abrir um .gridsmith.json pelo gerenciador de arquivos
   if (
     !ensureSingleInstance(
       () => mainWindow,
@@ -343,7 +357,7 @@ void app.whenReady().then(async () => {
 
   supervisor?.onEvent(() => {
     if (window && !window.isDestroyed()) {
-      window.webContents.send("p7m:service-status", serviceStatusPayload());
+      window.webContents.send("gridsmith:service-status", serviceStatusPayload());
     }
   });
 
@@ -353,7 +367,7 @@ void app.whenReady().then(async () => {
       const notice = recoveryNotice;
       recoveryNotice = "";
       window.webContents.send(
-        "p7m:project-status",
+        "gridsmith:project-status",
         statusOf(lifecycle, client.activeProjectStatus?.runtimeState, notice),
       );
     }
@@ -431,9 +445,9 @@ void app.whenReady().then(async () => {
     let filePath = forceSaveAs ? undefined : descriptor.filePath;
     if (!filePath) {
       const picked = await dialog.showSaveDialog(window, {
-        title: "Salvar projeto P7M",
+        title: "Salvar projeto Gridsmith",
         filters: PROJECT_FILTER,
-        defaultPath: `${descriptor.name}.p7m.json`,
+        defaultPath: defaultProjectFileName(descriptor.name),
       });
       if (picked.canceled || !picked.filePath) return false;
       filePath = picked.filePath;
@@ -525,7 +539,7 @@ void app.whenReady().then(async () => {
         let filePath = payload?.filePath;
         if (command === "open") {
           const picked = await dialog.showOpenDialog(window, {
-            title: "Abrir projeto P7M",
+            title: "Abrir projeto Gridsmith",
             filters: PROJECT_FILTER,
             properties: ["openFile"],
           });
@@ -552,7 +566,7 @@ void app.whenReady().then(async () => {
         lifecycle.beginOpen();
         try {
           const result = await client.openProjectDocument(document);
-          const nome = path.basename(filePath).replace(/\.p7m\.json$/, "");
+          const nome = projectNameFromPath(filePath);
           lifecycle.opened(
             plan.bindToFile
               ? descriptorFromStatus(result.status, nome, filePath)
@@ -617,7 +631,7 @@ void app.whenReady().then(async () => {
   // Conexão idempotente: com supervisão, o próprio waitReady da engine já
   // conecta o cliente — reconectar criaria uma segunda sessão de editor.
   let session: { sessionId: string } | undefined;
-  ipcMain.handle("p7m:connect", async () => {
+  ipcMain.handle("gridsmith:connect", async () => {
     if (client.isConnected && session) return session;
     if (supervisionStarted) {
       // espera o middleware subir (ou falhar) antes da primeira tentativa
@@ -631,29 +645,29 @@ void app.whenReady().then(async () => {
       if (/protocol.*mismatch/i.test(message)) {
         // P0.1: versão incompatível com mensagem orientada à solução
         throw new Error(
-          `As versões do editor e dos serviços P7M são incompatíveis (${message}). ` +
-            `Atualize a instalação inteira do P7M e abra o aplicativo novamente.`,
+          `As versões do editor e dos serviços Gridsmith são incompatíveis (${message}). ` +
+            `Atualize a instalação inteira do Gridsmith e abra o aplicativo novamente.`,
         );
       }
       throw err;
     }
   });
-  ipcMain.handle("p7m:service-status", () => serviceStatusPayload());
-  ipcMain.handle("p7m:technical-diagnostics", () => client.technicalDiagnostics);
-  ipcMain.handle("p7m:service-restart", async (_event, serviceId: string) => {
+  ipcMain.handle("gridsmith:service-status", () => serviceStatusPayload());
+  ipcMain.handle("gridsmith:technical-diagnostics", () => client.technicalDiagnostics);
+  ipcMain.handle("gridsmith:service-restart", async (_event, serviceId: string) => {
     if (!supervisor) return false;
     const ok = await supervisor.restart(serviceId);
     // engine nova = sessão nova: o middleware reidrata o Blueprint sozinho
     return ok;
   });
-  ipcMain.handle("p7m:dispatch", (_event, kind: string, payload: Record<string, unknown>) =>
+  ipcMain.handle("gridsmith:dispatch", (_event, kind: string, payload: Record<string, unknown>) =>
     client.dispatch(kind, payload),
   );
-  ipcMain.handle("p7m:query", (_event, projection: string) => client.query(projection));
-  ipcMain.handle("p7m:experience", (_event, family?: string, version?: string) =>
+  ipcMain.handle("gridsmith:query", (_event, projection: string) => client.query(projection));
+  ipcMain.handle("gridsmith:experience", (_event, family?: string, version?: string) =>
     client.resolveExperience(family, version),
   );
-  ipcMain.handle("p7m:project-command", (_event, command, payload) =>
+  ipcMain.handle("gridsmith:project-command", (_event, command, payload) =>
     projectCommand(command, payload),
   );
 
@@ -663,11 +677,11 @@ void app.whenReady().then(async () => {
     void projectCommand("openPath", { filePath })
       .then((status) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send("p7m:project-status", status);
+          mainWindow.webContents.send("gridsmith:project-status", status);
         }
       })
       .catch((error: unknown) => {
-        console.error(`[p7m] falha ao abrir ${filePath}: ${String(error)}`);
+        console.error(`[gridsmith] falha ao abrir ${filePath}: ${String(error)}`);
       });
   };
   requestExternalOpen(projectPathFromArgs(process.argv));
@@ -678,17 +692,17 @@ void app.whenReady().then(async () => {
   // Ctrl+Z do editor local por este caminho canônico é da frente F6/E10 — a
   // vista ainda guarda estado no closure, e mover o atalho antes disso faria
   // o desfazer global brigar com o desfazer local do IntGrid.
-  ipcMain.handle("p7m:history-status", (_event, limit?: number) => client.historyStatus(limit));
-  ipcMain.handle("p7m:history-undo", (_event, historyCursor?: string) =>
+  ipcMain.handle("gridsmith:history-status", (_event, limit?: number) => client.historyStatus(limit));
+  ipcMain.handle("gridsmith:history-undo", (_event, historyCursor?: string) =>
     client.undo(historyCursor),
   );
-  ipcMain.handle("p7m:history-redo", (_event, historyCursor?: string) =>
+  ipcMain.handle("gridsmith:history-redo", (_event, historyCursor?: string) =>
     client.redo(historyCursor),
   );
-  ipcMain.handle("p7m:project-templates", async () => ({
+  ipcMain.handle("gridsmith:project-templates", async () => ({
     templates: await availableTemplates(),
   }));
-  ipcMain.handle("p7m:project-status", () =>
+  ipcMain.handle("gridsmith:project-status", () =>
     statusOf(lifecycle, client.activeProjectStatus?.runtimeState),
   );
 
@@ -702,7 +716,7 @@ void app.whenReady().then(async () => {
 
   // Menu nativo com atalhos (ALPHA-0.1 P0.3): projeto no main, edição no renderer
   const sendMenuAction = (action: "undo" | "redo") => (): void => {
-    if (!window.isDestroyed()) window.webContents.send("p7m:menu-action", action);
+    if (!window.isDestroyed()) window.webContents.send("gridsmith:menu-action", action);
   };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -748,7 +762,7 @@ void app.whenReady().then(async () => {
     if (!window.isDestroyed()) {
       // A projeção acompanha o evento: o renderer precisa dela para saber se
       // o comando chegou ao runtime ou ficou pendente com razão.
-      window.webContents.send("p7m:blueprint-event", event, projection);
+      window.webContents.send("gridsmith:blueprint-event", event, projection);
       broadcast();
     }
   });
@@ -781,13 +795,13 @@ void app.whenReady().then(async () => {
     };
     reconcileProjectSession();
     if (!window.isDestroyed()) {
-      window.webContents.send("p7m:projection-resync", { snapshot, record });
+      window.webContents.send("gridsmith:projection-resync", { snapshot, record });
     }
   });
 
   await window.loadFile(path.join(dirname, "../renderer/index.html"));
   broadcast();
-  window.webContents.send("p7m:service-status", serviceStatusPayload());
+  window.webContents.send("gridsmith:service-status", serviceStatusPayload());
 
   app.on("window-all-closed", () => {
     client.close();

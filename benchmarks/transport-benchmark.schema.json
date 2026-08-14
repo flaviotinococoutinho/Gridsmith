@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://p7m.dev/schemas/transport-benchmark-v1.json",
-  "title": "P7M transport benchmark report",
+  "$id": "https://gridsmith.dev/schemas/transport-benchmark-v1.json",
+  "title": "Gridsmith transport benchmark report",
   "type": "object",
   "additionalProperties": false,
   "required": [

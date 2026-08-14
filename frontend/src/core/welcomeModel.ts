@@ -1,7 +1,7 @@
 /**
  * Tela inicial do editor (frente F8) — o NÚCLEO da decisão.
  *
- * Enquanto não há projeto aberto, o P7M deve oferecer um ponto de partida em
+ * Enquanto não há projeto aberto, o Gridsmith deve oferecer um ponto de partida em
  * vez de um canvas editável que não pertence a lugar nenhum: criar a partir de
  * um template, abrir um projeto, retomar um recente ou abrir o exemplo.
  *
@@ -57,7 +57,7 @@ export interface WelcomeInput {
 }
 
 const DAY_MS = 86_400_000;
-const OFFLINE_REASON = "Aguardando os serviços do P7M ficarem prontos.";
+const OFFLINE_REASON = "Aguardando os serviços do Gridsmith ficarem prontos.";
 
 /** "há 2 dias", "há 3 horas", "agora há pouco" — sem dependência de i18n. */
 export function relativeTime(fromUnixMs: number, nowUnixMs: number): string {
@@ -144,9 +144,9 @@ export function describeWelcome(input: WelcomeInput): WelcomeView {
 
   return {
     visible,
-    title: "Bem-vindo ao P7M",
+    title: "Bem-vindo ao Gridsmith",
     subtitle: offline
-      ? "Iniciando os serviços do P7M…"
+      ? "Iniciando os serviços do Gridsmith…"
       : "Crie um projeto a partir de um template, abra um existente ou retome um recente.",
     actions,
     templates,

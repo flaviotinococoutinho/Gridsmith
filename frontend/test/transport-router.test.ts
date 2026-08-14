@@ -101,8 +101,8 @@ test("autenticação é categoria própria e o router recusa fallback por constr
   for (const error of [
     { code: 16, message: "UNAUTHENTICATED" },
     { code: 7, message: "PERMISSION_DENIED" },
-    { code: "P7M_AUTHENTICATION_FAILED", statusCode: 401 },
-    { code: "P7M_AUTH_CONFIGURATION" },
+    { code: "GRIDSMITH_AUTHENTICATION_FAILED", statusCode: 401 },
+    { code: "GRIDSMITH_AUTH_CONFIGURATION" },
   ]) {
     const classified = classifyTransportError(error);
     assert.equal(classified.category, "authentication");

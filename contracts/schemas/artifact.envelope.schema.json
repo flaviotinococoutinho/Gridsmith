@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/artifact.envelope",
+  "$id": "gridsmith://contracts/artifact.envelope",
   "title": "Envelope de artefato canônico",
   "description": "Artefato versionável do modelo canônico (docs/CANONICAL-MODEL.md §1): revisões append-only, hash de conteúdo estável (chaves ordenadas + FNV-1a) e proveniência obrigatória. Payloads idênticos não geram revisão nova.",
   "type": "object",

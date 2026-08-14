@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Verificação automática da documentação (P7M).
+ * Verificação automática da documentação (Gridsmith).
  *
  * Reduz o drift entre docs e repositório validando, sem julgamento humano:
  *  - links Markdown internos e arquivos relativos citados existem;
@@ -25,7 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const root = process.cwd();
-const IGNORE = new Set(["node_modules", ".git", "obj", "bin", "dist", ".p7m-build"]);
+const IGNORE = new Set(["node_modules", ".git", "obj", "bin", "dist", ".gridsmith-build"]);
 
 function walk(dir, acc = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -58,7 +58,7 @@ const REQUIRED = [
   "contracts/schemas/engine.reset_session.schema.json",
   "contracts/schemas/blueprint.commands.schema.json",
   "contracts/graphql/editor.schema.graphql",
-  "contracts/grpc/p7m_editor.proto",
+  "contracts/grpc/gridsmith_editor.proto",
   ".github/workflows/ci.yml",
   "scripts/verify-phase1.sh",
   "scripts/verify-phase2.sh",

@@ -55,7 +55,7 @@ export function createMcpServer(
   canonical?: CanonicalServices,
 ): McpServer {
   const server = new McpServer({
-    name: "p7m-middleware",
+    name: "gridsmith-middleware",
     version: "0.1.0",
   });
 

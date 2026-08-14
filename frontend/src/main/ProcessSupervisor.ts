@@ -41,7 +41,7 @@ export interface ServiceReadiness {
 
 export interface ServiceSpec {
   readonly id: string;
-  /** Nome humano para a UI ("Middleware P7M", "MonoGame Runtime"). */
+  /** Nome humano para a UI ("Middleware Gridsmith", "MonoGame Runtime"). */
   readonly displayName: string;
   /** Sinal de prontidão: resolve true quando o serviço responde (health check). */
   readonly waitReady: () => Promise<boolean | ServiceReadiness>;

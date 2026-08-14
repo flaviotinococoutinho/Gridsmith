@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/level.methods",
+  "$id": "gridsmith://contracts/level.methods",
   "title": "tilemap/* (subsistema de níveis)",
   "description": "Métodos do subsistema de níveis (middleware → engine), inspirados em LDtk/Tiled (docs/RESEARCH-EDITOR-LANDSCAPE.md). O auto-tiling (IntGrid + regras → tiles) é resolvido no MIDDLEWARE como função pura determinística com seed; a engine recebe os tiles prontos e os consolida em buffer estático único. Grids são linha-maior; limite de 65536 células por tilemap (mapas maiores entram por chunks via shared memory na Fase 5). Métodos em $defs.",
   "$defs": {

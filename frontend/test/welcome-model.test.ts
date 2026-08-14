@@ -52,15 +52,15 @@ test("recentes ganham linha secundária com tempo relativo determinístico", () 
   const view = describeWelcome({
     ...base,
     recents: [
-      { filePath: "/home/u/jogos/plataforma.p7m.json", name: "Plataforma", lastOpenedUnixMs: NOW - 2 * 86_400_000 },
-      { filePath: "/home/u/jogos/antigo.p7m.json", name: "Antigo", lastOpenedUnixMs: NOW - 90 * 86_400_000 },
+      { filePath: "/home/u/jogos/plataforma.gridsmith.json", name: "Plataforma", lastOpenedUnixMs: NOW - 2 * 86_400_000 },
+      { filePath: "/home/u/jogos/antigo.gridsmith.json", name: "Antigo", lastOpenedUnixMs: NOW - 90 * 86_400_000 },
     ],
   });
   assert.equal(view.emptyHint, "");
   assert.match(view.recents[0]!.secondary, /há 2 dias/);
   assert.match(view.recents[1]!.secondary, /há 3 meses/);
   // o caminho continua identificável na linha secundária
-  assert.match(view.recents[0]!.secondary, /plataforma\.p7m\.json/);
+  assert.match(view.recents[0]!.secondary, /plataforma\.gridsmith\.json/);
 });
 
 test("offline: as ações desabilitam com razão em vez de falhar ao clicar", () => {
@@ -103,9 +103,9 @@ test("tempo relativo cobre as faixas e não inventa futuro", () => {
 });
 
 test("caminho longo é encurtado pelo começo, preservando o arquivo", () => {
-  const longo = "/home/usuario/projetos/muito/fundo/na/arvore/meu-jogo.p7m.json";
+  const longo = "/home/usuario/projetos/muito/fundo/na/arvore/meu-jogo.gridsmith.json";
   const curto = shortenPath(longo, 30);
   assert.ok(curto.length <= 30);
-  assert.ok(curto.endsWith("meu-jogo.p7m.json"), "o nome do arquivo precisa sobreviver");
+  assert.ok(curto.endsWith("meu-jogo.gridsmith.json"), "o nome do arquivo precisa sobreviver");
   assert.equal(shortenPath("/curto.json", 30), "/curto.json");
 });

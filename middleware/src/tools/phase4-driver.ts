@@ -40,7 +40,7 @@ interface Experience {
 
 async function main(): Promise<void> {
   const pipeIdx = process.argv.indexOf("--pipe");
-  const pipeName = pipeIdx >= 0 ? process.argv[pipeIdx + 1]! : "p7m-engine";
+  const pipeName = pipeIdx >= 0 ? process.argv[pipeIdx + 1]! : "gridsmith-engine";
   const authToken = loadTransportAuthToken();
   const editorPath = resolvePipePath(`${pipeName}-editor`);
 

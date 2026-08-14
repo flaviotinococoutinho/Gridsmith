@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Gridsmith.Engine.Core</RootNamespace>
+    <Description>Núcleo Data-Oriented da engine Gridsmith: SoA pré-alocada, Zero-GC nos hot loops</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+</Project>

@@ -4,7 +4,7 @@
  *
  * Consome o JSON gerado por `aseprite -b sprite.ase --sheet out.png --data
  * out.json --list-tags --list-slices` nos DOIS formatos (`json-hash`, com
- * frames como objeto, e `json-array`) e o normaliza para o modelo P7M:
+ * frames como objeto, e `json-array`) e o normaliza para o modelo Gridsmith:
  *
  * - `meta.frameTags` → clipes de animação (com a direção pingpong/reverse
  *   EXPANDIDA deterministicamente para a sequência de playback);
@@ -66,7 +66,7 @@ export class AsepriteImportError extends Error {
   }
 }
 
-/** Normaliza o JSON do Aseprite (objeto já parseado) para o modelo P7M. */
+/** Normaliza o JSON do Aseprite (objeto já parseado) para o modelo Gridsmith. */
 export function importAseprite(data: unknown): SpriteDocument {
   const root = data as {
     frames?: unknown;

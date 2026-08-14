@@ -56,7 +56,7 @@ export interface EnginePipeServerOptions {
   requestTimeoutMs?: number;
 }
 
-const SERVER_NAME = "p7m-middleware";
+const SERVER_NAME = "gridsmith-middleware";
 
 /**
  * Endpoint do plano de controle: aceita conexões da engine via Named Pipe

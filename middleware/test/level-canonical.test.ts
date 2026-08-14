@@ -80,7 +80,7 @@ test("level/update substitui um nível existente; inexistente aponta para level/
 
 test("projeção resolve o auto-tiling na fronteira do runtime, determinística por seed", async () => {
   const server = new EnginePipeServer({
-    pipeName: `p7m-lvl-${process.pid}-${pipeCounter++}`,
+    pipeName: `gridsmith-lvl-${process.pid}-${pipeCounter++}`,
     requestTimeoutMs: 2000,
   });
   const store = new BlueprintStore();
@@ -106,7 +106,7 @@ test("projeção resolve o auto-tiling na fronteira do runtime, determinística 
       return { removed: true };
     });
     await engine.request("engine/handshake", {
-      clientName: "P7m.Engine.Runtime",
+      clientName: "Gridsmith.Engine.Runtime",
       clientVersion: "0.1.0",
       protocolVersion: PROTOCOL_VERSION,
     });

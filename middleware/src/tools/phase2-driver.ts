@@ -49,7 +49,7 @@ function quad(scale: number): VertexData[] {
 
 async function main(): Promise<void> {
   const pipeIdx = process.argv.indexOf("--pipe");
-  const pipeName = pipeIdx >= 0 ? process.argv[pipeIdx + 1]! : "p7m-phase2";
+  const pipeName = pipeIdx >= 0 ? process.argv[pipeIdx + 1]! : "gridsmith-phase2";
   const mapName = `${pipeName}-mesh`;
 
   const server = new EnginePipeServer({

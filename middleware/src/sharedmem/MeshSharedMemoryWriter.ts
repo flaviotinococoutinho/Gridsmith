@@ -9,7 +9,7 @@ import {
 } from "./vertexLayout.js";
 
 export const HEADER_BYTES = 64;
-export const MESH_MAGIC = 0x4d4d3750; // "P7MM" em little-endian
+export const MESH_MAGIC = 0x4d4d5347; // "GSMM" em little-endian
 
 const OFF_MAGIC = 0;
 const OFF_LAYOUT_VERSION = 4;

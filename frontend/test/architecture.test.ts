@@ -45,7 +45,7 @@ test("F1: núcleos de domínio (core/) são puros — sem Electron, Node ou midd
       const external =
         specifier === "electron" ||
         specifier.startsWith("node:") ||
-        specifier.startsWith("@p7m/") ||
+        specifier.startsWith("@gridsmith/") ||
         (!specifier.startsWith(".") && !specifier.startsWith("node:"));
       if (external) offenders.push(`${module_.file} → ${specifier}`);
     }
@@ -60,7 +60,7 @@ test("F2: o renderer nunca importa Electron nem Node — só core/ e tipos do pr
       if (specifier === "electron" || specifier.startsWith("node:")) {
         offenders.push(`${module_.file} → ${specifier}`);
       }
-      // imports de main/ só como type (contrato da API window.p7m)
+      // imports de main/ só como type (contrato da API window.gridsmith)
       if (specifier.includes("/main/") && !isTypeOnly) {
         offenders.push(`${module_.file} → ${specifier} (runtime import from main)`);
       }
@@ -85,7 +85,7 @@ test("F4: o frontend nunca reimplementa protocolo — JSON-RPC/framing vêm do m
     const source = fs.readFileSync(path.join(SRC, module_.file), "utf8");
     assert.ok(
       !/writeUInt32LE|readUInt32LE/.test(source),
-      `${module_.file} must not hand-roll wire framing (use @p7m/middleware peers)`,
+      `${module_.file} must not hand-roll wire framing (use @gridsmith/middleware peers)`,
     );
   }
 });

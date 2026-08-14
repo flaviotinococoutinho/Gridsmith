@@ -2,7 +2,7 @@
  * Transporte GraphQL do app — a superfície COMPLETA (baseline) do editor
  * (ADR-016) e o fallback do caminho quente. HTTP/1.1 sobre UDS (POSIX) ou
  * 127.0.0.1 (Windows); endpoints resolvidos pelo MESMO módulo do middleware
- * (`@p7m/middleware/dist/transport/endpoints.js`) — nenhuma convenção
+ * (`@gridsmith/middleware/dist/transport/endpoints.js`) — nenhuma convenção
  * duplicada. Sem Electron aqui (portável a drivers e testes headless).
  */
 
@@ -10,12 +10,12 @@ import http from "node:http";
 import {
   resolveTransportEndpoint,
   type TransportEndpoint,
-} from "@p7m/middleware/dist/transport/endpoints.js";
+} from "@gridsmith/middleware/dist/transport/endpoints.js";
 import {
   AUTHENTICATION_ERROR_CODE,
   bearerAuthorization,
   loadTransportAuthToken,
-} from "@p7m/middleware/dist/transport/auth.js";
+} from "@gridsmith/middleware/dist/transport/auth.js";
 import type { Logger } from "../../core/logging.js";
 
 export interface GraphQlErrorShape {

@@ -6,7 +6,7 @@
 
 ## Definição do produto
 
-**P7M Alpha 0.1** — Um editor visual desktop para criar um pequeno jogo 2D em
+**Gridsmith Alpha 0.1** — Um editor visual desktop para criar um pequeno jogo 2D em
 MonoGame usando níveis IntGrid, assets Aseprite, entidades tipadas, iluminação
 e câmera, com preview embutido e projeto versionável.
 
@@ -162,7 +162,7 @@ O editor começa pelo projeto, não pela conexão a um pipe.
 - [x] Máquina de estados do documento (sem projeto → aberto → modificado → salvando → fechado), dirty tracking por eventos, política de autosave, lista de recentes — `frontend/src/core/projectLifecycle.ts`, testada
 - [x] `EditorClient.saveDocument()/loadDocument()` expostos (gap apontado no diagnóstico) + preload com `saveProject/openProject`
 - [x] Diálogos nativos e escrita em disco no `main`: Abrir/Salvar/Salvar como via
-  `dialog.showOpenDialog/showSaveDialog/showMessageBox`, leitura/escrita `.p7m.json`
+  `dialog.showOpenDialog/showSaveDialog/showMessageBox`, leitura/escrita `.gridsmith.json`
   (`fs`) e autosave `.autosave` — `frontend/src/main/main.ts`. **Caveat:** `main.ts`
   é cola Electron **sem cobertura de teste automatizado nem e2e** (issue #2 marca este
   critério; a prova de produto virá com o e2e da jornada — P0.9)
@@ -252,7 +252,7 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
 - [x] Falha de conexão com ação corretiva (botão "Tentar reconectar")
 - [x] Menu nativo (Arquivo/Editar/Exibir) com atalhos: Ctrl+N/O/S/Shift+S/W
   no main; Ctrl+Z/Shift+Z resolvidos pelo MESMO registro do teclado, via
-  `p7m:menu-action`
+  `gridsmith:menu-action`
 - [x] Painéis redimensionáveis e layouts salvos — `core/workbench/
   workbenchLayout.ts` (tamanho e visibilidade por área, clamp por limites,
   serialização versionada com fail-safe) + alças de arrasto e persistência

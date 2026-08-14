@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/actors.methods",
+  "$id": "gridsmith://contracts/actors.methods",
   "title": "entity/* (spawn table de atores)",
   "description": "Métodos do subsistema de atores (middleware → engine), ALPHA-0.1 P0.6. O modelo canônico mantém definições e instâncias de entidade; instâncias cuja definição aponta um archetypeId são projetadas como atores vivos. O entityId canônico é a referência estável editor↔runtime (seleção cruzada, live edit, despawn incremental). Métodos em $defs.",
   "$defs": {

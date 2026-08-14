@@ -2,8 +2,8 @@
 
 - **Status:** Accepted · **Data:** 2026-07-19
 - **Código:** [`ProjectSessionManager.ts`](../../middleware/src/canonical/ProjectSessionManager.ts), [`EditorSurface.ts`](../../middleware/src/canonical/EditorSurface.ts), [`RuntimeAdapter.ts`](../../middleware/src/runtime/RuntimeAdapter.ts), [`EventJournal.ts`](../../middleware/src/transport/EventJournal.ts)
-- **Contratos:** [`editor.schema.graphql`](../../contracts/graphql/editor.schema.graphql), [`p7m_editor.proto`](../../contracts/grpc/p7m_editor.proto), [`engine.reset_session.schema.json`](../../contracts/schemas/engine.reset_session.schema.json)
-- **Testes:** [`project-session-manager.test.ts`](../../middleware/test/project-session-manager.test.ts), [`transport-gateways.test.ts`](../../middleware/test/transport-gateways.test.ts), [`editor-client.integration.test.ts`](../../frontend/test/editor-client.integration.test.ts), [`EngineSessionResetTests.cs`](../../engine/tests/P7m.Engine.Ipc.Tests/EngineSessionResetTests.cs)
+- **Contratos:** [`editor.schema.graphql`](../../contracts/graphql/editor.schema.graphql), [`gridsmith_editor.proto`](../../contracts/grpc/gridsmith_editor.proto), [`engine.reset_session.schema.json`](../../contracts/schemas/engine.reset_session.schema.json)
+- **Testes:** [`project-session-manager.test.ts`](../../middleware/test/project-session-manager.test.ts), [`transport-gateways.test.ts`](../../middleware/test/transport-gateways.test.ts), [`editor-client.integration.test.ts`](../../frontend/test/editor-client.integration.test.ts), [`EngineSessionResetTests.cs`](../../engine/tests/Gridsmith.Engine.Ipc.Tests/EngineSessionResetTests.cs)
 
 ## Contexto
 

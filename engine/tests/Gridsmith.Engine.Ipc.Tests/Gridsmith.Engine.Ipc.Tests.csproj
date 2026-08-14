@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!--
+      Tiered compilation DESLIGADA por causa dos testes `*_is_allocation_free`.
+
+      Eles medem `GC.GetAllocatedBytesForCurrentThread()` antes e depois de um
+      laço e exigem ZERO byte (RNF-01). Com tiered compilation, o runtime pode
+      promover um método a tier1 DENTRO da janela de medição, e a alocação
+      dessa recompilação entra na conta — o teste falha sem que o código de
+      produção tenha alocado nada.
+
+      ESTA DEFESA É NECESSÁRIA MAS NÃO SUFICIENTE: o flake voltou a ocorrer com
+      a tiered compilation já desligada. A causa residual é o paralelismo de
+      coleções do xUnit — um GC disparado por outra coleção reajusta o contexto
+      de alocação da thread que mede. A defesa decisiva é o `AllocationProbe`
+      (melhor-de-N rodadas); ver a nota em docs/GOVERNANCE.md.
+
+      Nenhuma das duas afrouxa a garantia: o assert continua exigindo zero.
+      Não reverter sem substituir por outro mecanismo determinístico.
+    -->
+    <TieredCompilation>false</TieredCompilation>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Gridsmith.Engine.Core/Gridsmith.Engine.Core.csproj" />
+    <ProjectReference Include="../../src/Gridsmith.Engine.Graphics/Gridsmith.Engine.Graphics.csproj" />
+    <ProjectReference Include="../../src/Gridsmith.Engine.Ipc/Gridsmith.Engine.Ipc.csproj" />
+    <ProjectReference Include="../../src/Gridsmith.Engine.Runtime/Gridsmith.Engine.Runtime.csproj" />
+  </ItemGroup>
+</Project>

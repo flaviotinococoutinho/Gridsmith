@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/runtime.profile",
+  "$id": "gridsmith://contracts/runtime.profile",
   "title": "Perfil versionado de runtime",
   "description": "Governança da experiência por runtime (docs/CANONICAL-MODEL.md §3): a família define o grupo tecnológico, a versão define o perfil concreto de compatibilidade, e capabilities + editorRules determinam quais recursos da ferramenta visual existem para a combinação. Perfis publicados são imutáveis — mudanças entram como nova versão. Resolução: match exato, senão o perfil mais alto ≤ versão pedida.",
   "type": "object",

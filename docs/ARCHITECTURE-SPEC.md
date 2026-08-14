@@ -1,4 +1,4 @@
-# P7M Design — Especificação Técnica Normativa (Constituição de Engenharia)
+# Gridsmith Design — Especificação Técnica Normativa (Constituição de Engenharia)
 
 > **Natureza deste documento.** Especificação **normativa** construída a partir do
 > código, contratos, testes e documentação **efetivamente existentes** no
@@ -50,7 +50,7 @@ As palavras-chave só têm força normativa quando **em maiúsculas**.
 
 ## 1. Resumo executivo
 
-O P7M é um **ecossistema Engine-as-a-Service local** de três processos
+O Gridsmith é um **ecossistema Engine-as-a-Service local** de três processos
 desacoplados — editor Electron/TypeScript, middleware Node.js/TypeScript e engine
 .NET 8/MonoGame — mediados por um **modelo canônico** independente de runtime e por
 **contratos versionados** (JSON Schema, layouts binários, perfis de runtime). A
@@ -91,14 +91,14 @@ sobre as fronteiras atuais.
 processos locais.
 
 - **Frontend** (`frontend/`, Electron + TS): `main/` (processo Node privilegiado),
-  `preload/` (ponte `window.p7m` com contextIsolation), `renderer/` (UI pura sobre
+  `preload/` (ponte `window.gridsmith` com contextIsolation), `renderer/` (UI pura sobre
   `core/`), `core/` (12 módulos puros e testáveis fora do Electron).
 - **Middleware** (`middleware/`, Node + TS): módulos `protocol/`, `ipc/`, `domain/`,
   `canonical/`, `runtime/` (+`runtime/profiles/`), `mcp/`, `assets/`, `leveldesign/`,
   `sharedmem/`, `util/`, `tools/`, e a raiz de composição `index.ts`.
-- **Engine** (`engine/`, .NET 8): quatro assemblies — `P7m.Engine.Core` (DOD/Zero-GC),
-  `P7m.Engine.Ipc` (plano de controle), `P7m.Engine.Graphics` (MonoGame),
-  `P7m.Engine.Runtime` (serviço headless que orquestra Core+Ipc).
+- **Engine** (`engine/`, .NET 8): quatro assemblies — `Gridsmith.Engine.Core` (DOD/Zero-GC),
+  `Gridsmith.Engine.Ipc` (plano de controle), `Gridsmith.Engine.Graphics` (MonoGame),
+  `Gridsmith.Engine.Runtime` (serviço headless que orquestra Core+Ipc).
 - **Contratos** (`contracts/`): JSON Schema dos métodos JSON-RPC, `error-codes.md`,
   `shared-memory-layout.md`, envelope de artefato, perfil de runtime.
 
@@ -168,7 +168,7 @@ preferência estética (ver Apêndice H).
 | I-1 | `RuntimeAdapter` não declarava limpeza/reidratação de sessão | `RuntimeAdapter.ts` agora exige `resetSession` e `rehydrateFrom`; `MonoGameAdapter` implementa ambos | **CONFIRMADO** (resolvida pela ADR-020) | Manter testes de contrato e rollback de runtime |
 | I-2 | `GOVERNANCE.md` fixava contagens de teste no próprio texto (propensas a drift) | `GOVERNANCE.md` | **DIVERGÊNCIA** (drift) | ✅ corrigido: contagens não são mais fixadas no texto — derivadas e validadas pelo CI (ver `GOVERNANCE.md` §4) |
 | I-3 | `REQUIREMENTS.md` falava em "6 hot loops cobertos"; há **8** métodos `*_is_allocation_free` em 7 arquivos (`SkeletonStoreTests`, `MeshSharedMemoryReaderTests`, `SkinningPipelineTests`, `CameraDynamicsTests` ×2, `ActorTests`, `LightingTests`, `TilemapTests`) | `REQUIREMENTS.md:44` | **DIVERGÊNCIA** (subcontagem) | ✅ corrigido nesta revisão |
-| I-4 | `ARCHITECTURE.md` listava `engine/heartbeat` como notification; o heartbeat real é um `engine/ping` com payload `"heartbeat"` | `ARCHITECTURE.md:76`; `engine/src/P7m.Engine.Runtime/Program.cs:68` | **DIVERGÊNCIA** | ✅ corrigido nesta revisão |
+| I-4 | `ARCHITECTURE.md` listava `engine/heartbeat` como notification; o heartbeat real é um `engine/ping` com payload `"heartbeat"` | `ARCHITECTURE.md:76`; `engine/src/Gridsmith.Engine.Runtime/Program.cs:68` | **DIVERGÊNCIA** | ✅ corrigido nesta revisão |
 | I-5 | `ARCHITECTURE.md` §capacidades dizia "Quando a Fase 3 adicionar câmera e iluminação…" (tempo futuro) — Fase 3 concluída | `ARCHITECTURE.md:44-45` | **DIVERGÊNCIA** (drift) | ✅ corrigido nesta revisão |
 | I-6 | Tabela de códigos de erro nomeia em SCREAMING_SNAKE (`ENGINE_NOT_READY`); o código usa PascalCase (`EngineNotReady`) | `contracts/schemas/error-codes.md` vs `jsonrpc.ts:42-56` e `JsonRpcProtocol.cs:16-31` | **DIVERGÊNCIA** (cosmética; valores idênticos) | Nota de mapeamento no contrato |
 
@@ -224,7 +224,7 @@ graph TD
   subgraph FE["Frontend (Electron/TS)"]
     direction TB
     FEmain["main (supervisor, ciclo de projeto)"]
-    FEpre["preload (window.p7m, contextIsolation)"]
+    FEpre["preload (window.gridsmith, contextIsolation)"]
     FErnd["renderer (UI pura)"]
     FEcore["core/ (nucleos puros)"]
     FEmain --> FEpre --> FErnd --> FEcore
@@ -301,10 +301,10 @@ graph TD
 **Engine — grafo permitido (imposto por reflexão de assembly,
 `ArchitectureTests.cs`):**
 
-| Assembly | Referencia (P7m.*) | Regra |
+| Assembly | Referencia (Gridsmith.*) | Regra |
 |---|---|---|
-| `Core` | **nenhum** P7m; **nenhum** MonoGame | E1, E5 |
-| `Ipc` | **nenhum** P7m | E2 |
+| `Core` | **nenhum** Gridsmith; **nenhum** MonoGame | E1, E5 |
+| `Ipc` | **nenhum** Gridsmith | E2 |
 | `Graphics` | exatamente `{Core}` | E3 |
 | `Runtime` | exatamente `{Core, Ipc}` (não Graphics) | E4 |
 
@@ -312,7 +312,7 @@ graph TD
 
 | Camada | Regra |
 |---|---|
-| `core/` só importa relativo (sem Electron/Node/`@p7m/*`) | F1 |
+| `core/` só importa relativo (sem Electron/Node/`@gridsmith/*`) | F1 |
 | `renderer/` sem Electron/Node; `main/` só como *type* | F2 |
 | `electron` só em `main/` | F3 |
 | nenhuma reimplementação de framing (`writeUInt32LE`/`readUInt32LE` proibido no source) | F4 |
@@ -400,7 +400,7 @@ Cada um orquestra o domínio; nenhum o substitui.
 | Caso de uso | Entrada | Efeito / Evento | Offline (engine caída) | Sem capacidade | Evidência |
 |---|---|---|---|---|---|
 | **Criar projeto (vazio/template)** | `projectId?`, `templateId?`, `expectedProjectSessionId?` | `ProjectSessionManager` prepara e substitui a sessão por CAS; `project/create` em todas as bordas | sessão ativa com runtime `deferred` | idem | `ProjectSessionManager.ts`; `EditorSurface.ts` |
-| **Abrir projeto** | documento `.p7m.json`, `expectedProjectSessionId?` | parse → migração → validação → sessão temporária → replay → semântica → reset/rehydrate → commit por CAS | commit com runtime `deferred`; reconexão usa apenas a sessão ativa | idem | `project/openDocument`; `ProjectSessionManager.ts`; ADR-020 |
+| **Abrir projeto** | documento `.gridsmith.json`, `expectedProjectSessionId?` | parse → migração → validação → sessão temporária → replay → semântica → reset/rehydrate → commit por CAS | commit com runtime `deferred`; reconexão usa apenas a sessão ativa | idem | `project/openDocument`; `ProjectSessionManager.ts`; ADR-020 |
 | **Fechar projeto** | `expectedProjectSessionId?` | reset de runtime e remoção atômica da referência ativa | fecha a sessão; engine nova nasce limpa | N/A | `project/close`; `engine/reset_session` |
 | **Consultar projeto** | — | `project/status` retorna ids, sequência e `runtimeState: synchronized\|deferred\|failed` | explicita degradação sem alterar sessão | N/A | `EditorSurface.projectStatus`; quatro bordas |
 | **Salvar projeto** | — | `exportBlueprint` → snapshot declarativo | funciona (verdade é o store) | N/A | `EditorClient.saveDocument` |
@@ -578,7 +578,7 @@ simples, benefício, custo e condição de rejeição.
 `contracts/README.md` mapeia método → schema.
 
 **JSON Schema (CONFIRMADO):** draft **2020-12** declarado por `$schema` em cada arquivo;
-`$id` no formato `p7m://contracts/<nome>`; métodos em `$defs`. **NÃO DEVE** misturar
+`$id` no formato `gridsmith://contracts/<nome>`; métodos em `$defs`. **NÃO DEVE** misturar
 keywords de drafts diferentes.
 
 **Regras normativas de alteração de contrato (DoD, `GOVERNANCE.md:91`):** toda mudança
@@ -630,18 +630,18 @@ lacuna de contrato.
   do lado engine com backoff exponencial **2s/4s/8s** (`ConnectWithRetryAsync`).
 
 **Plano de dados — protocolo de shared memory (CONFIRMADO — `shared-memory-layout.md`):**
-header 64 bytes (`magic 0x4D4D3750`, `layoutVersion`, `vertexCount`, `strideInBytes`,
+header 64 bytes (`magic 0x4D4D5347`, `layoutVersion`, `vertexCount`, `strideInBytes`,
 `sequence`, `frameIndex`), seqlock (ímpar=escrevendo), FNV-1a sobre a região de
 vértices. **É protocolo distinto** do JSON-RPC — não confundir os dois planos (§40).
 
 **Regra normativa:** o frontend **NÃO DEVE** reimplementar framing (F4); qualquer peer
-vem de `@p7m/middleware`.
+vem de `@gridsmith/middleware`.
 
 **Transports do app — GraphQL + gRPC (CONFIRMADO — ADR-016/017/018/019,
 `docs/adr/`):** a borda app (Electron) ↔ middleware **não** usa o plano JSON-RPC
 acima. GraphQL (`contracts/graphql/editor.schema.graphql`) é a superfície
 baseline completa e o destino do fallback; gRPC
-(`contracts/grpc/p7m_editor.proto`, package `p7m.editor.v1`) serve o caminho
+(`contracts/grpc/gridsmith_editor.proto`, package `gridsmith.editor.v1`) serve o caminho
 quente (`Dispatch`/`Query`/`StreamEventsV2`/`Health`) com **prioridade** — falha
 DE TRANSPORTE cai imediatamente para GraphQL e a repromoção exige histerese de
 sondas Health (`frontend/src/core/transportRouter.ts`). Ambas as bordas delegam
@@ -658,7 +658,7 @@ alegação de ganho. A continuidade usa cursor
 `EventJournal` e snapshot completo em restart/gap/troca de projeto. Payloads de
 comando viajam como JSON validado na fonte única (`BlueprintStore` +
 `contracts/schemas/`) — os transports **NÃO DEVEM** introduzir segunda fonte
-de validação. Verbosidade dos processos: `P7M_VERBOSITY` (§24).
+de validação. Verbosidade dos processos: `GRIDSMITH_VERBOSITY` (§24).
 
 ## 17. RFCs aplicáveis
 
@@ -776,7 +776,7 @@ registro encadeável; resta apenas manter uma migração por incremento de vers�
 
 ```mermaid
 mindmap
-  root(("Taxonomia de erros P7M"))
+  root(("Taxonomia de erros Gridsmith"))
     JsonRpcError dominio
       Reservados JSON-RPC
         -32700 ParseError
@@ -809,7 +809,7 @@ mindmap
         deferred com reason
 ```
 
-*Mostra a taxonomia de erros do P7M: 15 códigos no TypeScript, dos quais 12 são compartilhados em nome PascalCase e valor com C# e três protegem somente autenticação/sessão no middleware; também mostra falhas de ferramenta, framing, infraestrutura e projeção esperada.*
+*Mostra a taxonomia de erros do Gridsmith: 15 códigos no TypeScript, dos quais 12 são compartilhados em nome PascalCase e valor com C# e três protegem somente autenticação/sessão no middleware; também mostra falhas de ferramenta, framing, infraestrutura e projeção esperada.*
 
 **Resultados tipados para falhas *esperadas de projeção*:** `ProjectionResult` é união
 discriminada por `status`: `projected` não aceita `reason`; `skipped` e `deferred`
@@ -898,7 +898,7 @@ risco conhecido e aceito.
 - **Captura de stdout/stderr por serviço** — `main.ts` (ring das últimas 50 linhas; 5
   no status) com diagnóstico acionável (P0.1).
 - **`engine/log`** notification (níveis/categoria) e ping de heartbeat.
-- **Verbosidade controlada** — `P7M_VERBOSITY` (`silent|error|warn|info|debug|trace`,
+- **Verbosidade controlada** — `GRIDSMITH_VERBOSITY` (`silent|error|warn|info|debug|trace`,
   default `info`) governa os loggers estruturados puros (`middleware/src/util/log.ts`,
   `frontend/src/core/logging.ts`): escopo hierárquico, sink injetável (testado),
   stderr apenas — stdout do middleware pertence ao MCP (ADR-018). Transições de
@@ -972,7 +972,7 @@ graph TD
   N5 --> N4 --> N3 --> N2 --> N1
 ```
 
-*Mostra a piramide de testes do P7M com o estado observado por nivel: base solida de unidade e topo vazio — componentes e e2e visual ausentes, integracao fina. O desequilibrio espelha o gap plataforma-madura x produto-embrionario.*
+*Mostra a piramide de testes do Gridsmith com o estado observado por nivel: base solida de unidade e topo vazio — componentes e e2e visual ausentes, integracao fina. O desequilibrio espelha o gap plataforma-madura x produto-embrionario.*
 
 **RISCO estrutural:** `renderer.ts` (738 linhas) e o wire de `main.ts` (440) não têm
 teste automatizado — toda a máquina de ferramentas, hit-test, drag, hidratação, chips
@@ -1039,14 +1039,14 @@ continuam fora deste benchmark.
   maiores por chunks na Fase 5, ainda não implementado — HIPÓTESE de extensão via MMF).
 - **Operacional** — builds/distribuição ainda abertos (P0.9 empacotamento).
 
-**Regra normativa:** **NÃO DEVE** confundir escalabilidade com microsserviços; o P7M é
+**Regra normativa:** **NÃO DEVE** confundir escalabilidade com microsserviços; o Gridsmith é
 um ecossistema de **processos locais**. Distribuição em rede só **PODE** ser proposta
 mediante requisito concreto (§38).
 
 ## 29. Arquitetura do frontend
 
 **Separação (CONFIRMADO — F1-F5):** `main` (Node privilegiado: supervisor, ciclo de
-projeto, diálogos) → `preload` (contrato `window.p7m` com contextIsolation) →
+projeto, diálogos) → `preload` (contrato `window.gridsmith` com contextIsolation) →
 `renderer` (UI) → `core/` (núcleos puros, executáveis fora do Electron e aptos a
 workers). O renderer **NÃO importa** Electron/Node (F2/F3); `main` só entra como *type*.
 
@@ -1082,7 +1082,7 @@ Nenhuma seta aponta de dentro para fora. **CONFIRMADO** por R1–R13.
 
 **Separação (CONFIRMADO — E1-E5):**
 
-- **`Core`** — DOD/Zero-GC, **sem** dependência P7m e **sem** MonoGame (E1, E5);
+- **`Core`** — DOD/Zero-GC, **sem** dependência Gridsmith e **sem** MonoGame (E1, E5);
   testável headless; estruturas e algoritmos (stores, câmera, skinning, lighting, LUT,
   tilemap, actors).
 - **`Ipc`** — plano de controle independente do domínio (E2): `FrameCodec`,
@@ -1294,7 +1294,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 
 ## B. Catálogo de padrões
 
-| Padrão | Onde usar | Onde NÃO usar | Exemplo no P7M | Risco | Teste associado |
+| Padrão | Onde usar | Onde NÃO usar | Exemplo no Gridsmith | Risco | Teste associado |
 |---|---|---|---|---|---|
 | Ports & Adapters | isolar runtime/ferramentas/IPC do núcleo | esconder chamada trivial | `RuntimeAdapter`/`MonoGameAdapter`; `ToolRunner`/`ExecToolRunner` | over-abstração de porta única | R2, R7 |
 | Adapter (gordo) | traduzir conceitos entre domínios | repassar 1:1 | auto-tiling + remapeamento de id na projeção | virar passthrough | testes do adapter |
@@ -1309,7 +1309,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 
 ## C. Matriz de paradigmas
 
-| Contexto | Paradigma preferencial | Evidência no P7M |
+| Contexto | Paradigma preferencial | Evidência no Gridsmith |
 |---|---|---|
 | Modelo canônico | **OO + comandos/eventos** (invariantes encapsuladas) | `BlueprintStore`, `CanonicalOrchestrator` |
 | Validação, conversão, matemática, hashing, AutoTiler, easing, projeção | **Funções puras** | `AutoTiler`, `fnv1a`, `stableStringify`, `reshapeCommand`, curvas Bézier, referências de CPU de shader |
@@ -1429,7 +1429,7 @@ qualquer P-x exige ADR de revogação** — não basta editar texto.
 ## Nota de encerramento
 
 Esta especificação é **descritiva do que existe** e **normativa sobre como evoluir**.
-Sua tese: o P7M já acertou as fronteiras difíceis (modelo canônico, dois planos,
+Sua tese: o Gridsmith já acertou as fronteiras difíceis (modelo canônico, dois planos,
 contratos cruzados, Zero-GC, governança executável) — a disciplina agora é **não
 diluí-las** e manter fechadas por tipo/teste as garantias de sessão já entregues
 (reset/reidratação na porta e `reason` obrigatório), além de fechar contract tests de schema,

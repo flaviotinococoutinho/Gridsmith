@@ -56,7 +56,7 @@ interface Harness {
 }
 
 function makeHarness(): Harness {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "p7m-assets-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "gridsmith-assets-"));
   const assetsRoot = path.join(root, "catalog");
   const outputRoot = path.join(root, "out");
   fs.mkdirSync(path.join(assetsRoot, "characters", "boss"), { recursive: true });

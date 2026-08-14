@@ -7,7 +7,7 @@ import {
   defaultLevelRules,
 } from "../src/core/levelPresets.js";
 // Contrato real do middleware: as regras default DEVEM validar contra ele.
-import { resolveAutoTiles, validateRules } from "@p7m/middleware/dist/leveldesign/AutoTiler.js";
+import { resolveAutoTiles, validateRules } from "@gridsmith/middleware/dist/leveldesign/AutoTiler.js";
 
 test("regras default validam contra o contrato AutoTileRule do middleware", () => {
   validateRules(defaultLevelRules() as never); // lança se o shape divergir

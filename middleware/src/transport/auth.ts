@@ -9,15 +9,15 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 
-export const EDITOR_AUTH_TOKEN_ENV = "P7M_EDITOR_AUTH_TOKEN";
-export const EDITOR_AUTH_TOKEN_FILE_ENV = "P7M_EDITOR_AUTH_TOKEN_FILE";
-export const AUTHENTICATION_ERROR_CODE = "P7M_AUTHENTICATION_FAILED";
+export const EDITOR_AUTH_TOKEN_ENV = "GRIDSMITH_EDITOR_AUTH_TOKEN";
+export const EDITOR_AUTH_TOKEN_FILE_ENV = "GRIDSMITH_EDITOR_AUTH_TOKEN_FILE";
+export const AUTHENTICATION_ERROR_CODE = "GRIDSMITH_AUTHENTICATION_FAILED";
 
 const TOKEN_BYTES = 32;
 const MIN_TOKEN_CHARS = 32;
 
 export class TransportAuthConfigurationError extends Error {
-  readonly code = "P7M_AUTH_CONFIGURATION";
+  readonly code = "GRIDSMITH_AUTH_CONFIGURATION";
 
   constructor(message: string) {
     super(message);

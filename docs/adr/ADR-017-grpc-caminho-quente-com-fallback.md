@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Data:** 2026-07-16
 - **Código:** `middleware/src/grpc/GrpcGateway.ts`, `frontend/src/main/transport/GrpcTransport.ts`, `frontend/src/core/transportRouter.ts`, `frontend/src/main/EditorClient.ts`
-- **Contrato:** [`contracts/grpc/p7m_editor.proto`](../../contracts/grpc/p7m_editor.proto) (`p7m.editor.v1.EditorHotPath`)
+- **Contrato:** [`contracts/grpc/gridsmith_editor.proto`](../../contracts/grpc/gridsmith_editor.proto) (`gridsmith.editor.v1.EditorHotPath`)
 - **Testes:** política em `frontend/test/transport-router.test.ts`; integração com fallback AO VIVO em `frontend/test/editor-client.integration.test.ts`; e2e `scripts/verify-transports.sh`
 
 ## Contexto
@@ -80,7 +80,7 @@ stateDiagram-v2
   o plano de dados permanece MMF (ADR-006) — esta decisão é do contrato
   app ↔ middleware.
 - Falha de DOMÍNIO nunca cai de transporte (o erro pertence ao chamador).
-- Novo eixo de compatibilidade (package `p7m.editor.v1`) em
+- Novo eixo de compatibilidade (package `gridsmith.editor.v1`) em
   [`../COMPATIBILITY.md`](../COMPATIBILITY.md).
 - As quatro bordas consultam a mesma sessão ativa da `EditorSurface`; nenhuma
   mantém `BlueprintStore` ou orquestrador próprios (ADR-020).

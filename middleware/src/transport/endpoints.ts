@@ -6,7 +6,7 @@
  *   Windows → `127.0.0.1:<porta determinística derivada do nome>` (o grpc-js
  *             não suporta named pipes; a porta deriva de um hash FNV-1a do
  *             nome, na faixa dinâmica 49152–65535 — determinística e
- *             documentada em contracts/grpc/p7m_editor.proto)
+ *             documentada em contracts/grpc/gridsmith_editor.proto)
  *
  * A resolução é determinística. Helpers adjacentes impõem as invariantes de
  * bind: nome lógico seguro, TCP somente em loopback, colisão explícita e UDS
@@ -92,7 +92,7 @@ export function resolveTransportEndpoint(
 }
 
 export class TransportEndpointCollisionError extends Error {
-  readonly code = "P7M_ENDPOINT_COLLISION";
+  readonly code = "GRIDSMITH_ENDPOINT_COLLISION";
 
   constructor(
     readonly endpoint: TransportEndpoint,

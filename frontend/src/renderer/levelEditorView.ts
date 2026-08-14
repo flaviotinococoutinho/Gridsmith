@@ -32,7 +32,7 @@ import type { KeyStroke } from "../core/workbench/keybindings.js";
 import type { Selection } from "../core/workbench/selectionService.js";
 import type { WorkbenchModel } from "../core/workbench/workbenchShell.js";
 // type-only (apagado na compilação): o módulo real é vendorizado pelo build
-import type { resolveAutoTiles as ResolveAutoTilesFn } from "@p7m/middleware/dist/leveldesign/AutoTiler.js";
+import type { resolveAutoTiles as ResolveAutoTilesFn } from "@gridsmith/middleware/dist/leveldesign/AutoTiler.js";
 
 /** AutoTiler vendorizado (zero dependências — regra R5): mesmo resolvedor da projeção. */
 let resolveAutoTiles: typeof ResolveAutoTilesFn | undefined;
@@ -347,7 +347,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   async function ensureEntityDef(): Promise<void> {
     if (entityDefEnsured) return;
     try {
-      await window.p7m.dispatch("entitydef/define", { ...entityDef, fields: [] });
+      await window.gridsmith.dispatch("entitydef/define", { ...entityDef, fields: [] });
     } catch {
       // já definida (projeto reaberto): a definição vive no Blueprint
     }
@@ -370,7 +370,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   async function placeEntityAt(position: [number, number]): Promise<void> {
     await ensureEntityDef();
     const entityId = nextEntityId(entities, entityDef.entityDefId);
-    const outcome = await window.p7m.dispatch("entity/place", {
+    const outcome = await window.gridsmith.dispatch("entity/place", {
       entityId,
       entityDefId: entityDef.entityDefId,
       position,
@@ -386,7 +386,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   }
 
   async function moveEntity(marker: EntityMarker, position: [number, number]): Promise<void> {
-    const outcome = await window.p7m.dispatch("entity/move", {
+    const outcome = await window.gridsmith.dispatch("entity/move", {
       entityId: marker.entityId,
       position,
     });
@@ -399,7 +399,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   async function removeSelectedEntity(): Promise<void> {
     const entityId = selectedEntityId();
     if (!entityId) return;
-    const outcome = await window.p7m.dispatch("entity/remove", { entityId });
+    const outcome = await window.gridsmith.dispatch("entity/remove", { entityId });
     entities.delete(entityId);
     selectEntity(undefined);
     status.textContent = withProjection("Jogador removido.", outcome);
@@ -617,7 +617,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     // as MESMAS regras do preview ("Ver arte"): preview ≡ publicação
     const payload = doc.toLevelPayload({ levelId, tileSize, seed, rules });
     try {
-      const outcome = await window.p7m.dispatch(
+      const outcome = await window.gridsmith.dispatch(
         levelInBlueprint ? "level/update" : "level/define",
         payload,
       );
@@ -640,7 +640,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   // para o canvas
   void (async () => {
     try {
-      const result = (await window.p7m.query("levels")) as {
+      const result = (await window.gridsmith.query("levels")) as {
         levels?: Array<{
           levelId: string;
           width: number;
@@ -668,7 +668,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         status.textContent = "Nível carregado do projeto.";
       }
 
-      const placed = (await window.p7m.query("entities")) as {
+      const placed = (await window.gridsmith.query("entities")) as {
         entities?: Array<{ entityId: string; entityDefId: string; position: [number, number] }>;
       };
       for (const entity of placed.entities ?? []) {
@@ -678,7 +678,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
           position: [...entity.position],
         });
       }
-      const defs = (await window.p7m.query("entityDefs")) as {
+      const defs = (await window.gridsmith.query("entityDefs")) as {
         entityDefs?: Array<{ entityDefId: string; archetypeId?: string }>;
       };
       const chosen = pickEntityDef(defs.entityDefs ?? []);

@@ -139,7 +139,7 @@ export class EditorGateway extends EventEmitter {
       this.emit("session", session);
       return {
         sessionId: session.sessionId,
-        serverName: "p7m-middleware",
+        serverName: "gridsmith-middleware",
         protocolVersion: PROTOCOL_VERSION,
         project: this.surface.projectStatus(),
       };

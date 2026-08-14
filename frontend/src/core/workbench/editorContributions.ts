@@ -1,5 +1,5 @@
 /**
- * Contribuições concretas do editor P7M (E10).
+ * Contribuições concretas do editor Gridsmith (E10).
  *
  * Separadas do framework de propósito: `panelRegistry`/`commandRegistry`/…
  * não conhecem pincel nem entidade, e este módulo não conhece a mecânica de

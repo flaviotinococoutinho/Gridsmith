@@ -1,7 +1,7 @@
 {
-  "name": "@p7m/frontend",
+  "name": "@gridsmith/frontend",
   "version": "0.1.0",
-  "description": "Editor visual Electron do ecossistema P7M EaaS: núcleos de domínio do editor (FABRIK, easing Bézier, máquina de estados Gum-like, gate de experiência) e o shell Electron conectado ao gateway do middleware",
+  "description": "Editor visual Electron do ecossistema Gridsmith EaaS: núcleos de domínio do editor (FABRIK, easing Bézier, máquina de estados Gum-like, gate de experiência) e o shell Electron conectado ao gateway do middleware",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -23,7 +23,7 @@
   "dependencies": {
     "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.8.1",
-    "@p7m/middleware": "file:../middleware"
+    "@gridsmith/middleware": "file:../middleware"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
