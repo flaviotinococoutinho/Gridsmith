@@ -20,14 +20,14 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { JsonRpcPeer } from "@p7m/middleware/dist/ipc/JsonRpcPeer.js";
-import { resolvePipePath } from "@p7m/middleware/dist/ipc/PipeEndpoint.js";
-import { PROTOCOL_VERSION } from "@p7m/middleware/dist/protocol/jsonrpc.js";
+import { JsonRpcPeer } from "@gridsmith/middleware/dist/ipc/JsonRpcPeer.js";
+import { resolvePipePath } from "@gridsmith/middleware/dist/ipc/PipeEndpoint.js";
+import { PROTOCOL_VERSION } from "@gridsmith/middleware/dist/protocol/jsonrpc.js";
 import {
   EDITOR_AUTH_TOKEN_ENV,
   EDITOR_AUTH_TOKEN_FILE_ENV,
   validateTransportAuthToken,
-} from "@p7m/middleware/dist/transport/auth.js";
+} from "@gridsmith/middleware/dist/transport/auth.js";
 import { createLogger } from "../core/logging.js";
 import { GraphQlTransport } from "../main/transport/GraphQlTransport.js";
 import { GrpcTransport } from "../main/transport/GrpcTransport.js";
@@ -110,19 +110,19 @@ function readPositiveInt(name: string, fallback: number): number {
 
 function readConfig(): BenchmarkConfig {
   return Object.freeze({
-    warmups: readPositiveInt("P7M_BENCH_WARMUPS", 20),
-    samples: readPositiveInt("P7M_BENCH_SAMPLES", 100),
-    forks: readPositiveInt("P7M_BENCH_FORKS", 3),
-    concurrency: readPositiveInt("P7M_BENCH_CONCURRENCY", 1),
-    eventCount: readPositiveInt("P7M_BENCH_EVENT_COUNT", 1_000),
-    graphqlPollIntervalMs: readPositiveInt("P7M_BENCH_GRAPHQL_POLL_MS", 10),
-    requestTimeoutMs: readPositiveInt("P7M_BENCH_REQUEST_TIMEOUT_MS", 10_000),
-    flowTimeoutMs: readPositiveInt("P7M_BENCH_FLOW_TIMEOUT_MS", 30_000),
+    warmups: readPositiveInt("GRIDSMITH_BENCH_WARMUPS", 20),
+    samples: readPositiveInt("GRIDSMITH_BENCH_SAMPLES", 100),
+    forks: readPositiveInt("GRIDSMITH_BENCH_FORKS", 3),
+    concurrency: readPositiveInt("GRIDSMITH_BENCH_CONCURRENCY", 1),
+    eventCount: readPositiveInt("GRIDSMITH_BENCH_EVENT_COUNT", 1_000),
+    graphqlPollIntervalMs: readPositiveInt("GRIDSMITH_BENCH_GRAPHQL_POLL_MS", 10),
+    requestTimeoutMs: readPositiveInt("GRIDSMITH_BENCH_REQUEST_TIMEOUT_MS", 10_000),
+    flowTimeoutMs: readPositiveInt("GRIDSMITH_BENCH_FLOW_TIMEOUT_MS", 30_000),
   });
 }
 
 function benchmarkRoot(): string {
-  const configured = process.env["P7M_BENCH_ROOT"];
+  const configured = process.env["GRIDSMITH_BENCH_ROOT"];
   if (configured) return path.resolve(configured);
   const dirname = path.dirname(fileURLToPath(import.meta.url));
   return path.resolve(dirname, "../../..");
@@ -485,7 +485,7 @@ async function connectLegacy(
     requestTimeoutMs: timeoutMs,
   });
   await peer.request("editor/handshake", {
-    clientName: "p7m-transport-benchmark",
+    clientName: "gridsmith-transport-benchmark",
     protocolVersion: PROTOCOL_VERSION,
     authToken,
   });
@@ -502,7 +502,7 @@ function startMiddleware(root: string, pipeName: string, authToken: string): Mid
   const childEnvironment: NodeJS.ProcessEnv = {
     ...process.env,
     [EDITOR_AUTH_TOKEN_ENV]: authToken,
-    P7M_VERBOSITY: "silent",
+    GRIDSMITH_VERBOSITY: "silent",
   };
   delete childEnvironment[EDITOR_AUTH_TOKEN_FILE_ENV];
   const child = spawn(process.execPath, [entry, "--pipe", pipeName, "--no-mcp"], {
@@ -662,7 +662,7 @@ async function runFork(
   config: BenchmarkConfig,
   authToken: string,
 ): Promise<RunMeasurement[]> {
-  const pipeName = `p7m-bench-${process.pid}-${fork}-${Date.now().toString(36)}`;
+  const pipeName = `gridsmith-bench-${process.pid}-${fork}-${Date.now().toString(36)}`;
   const middleware = startMiddleware(root, pipeName, authToken);
   const grpcTransport = new GrpcTransport(pipeName, silentLog, config.requestTimeoutMs, authToken);
   const graphQlTransport = new GraphQlTransport(pipeName, silentLog, config.requestTimeoutMs, authToken);

@@ -1,6 +1,6 @@
-# @p7m/middleware
+# @gridsmith/middleware
 
-Camada de orquestração do ecossistema P7M EaaS (Node.js ≥ 22, TypeScript).
+Camada de orquestração do ecossistema Gridsmith EaaS (Node.js ≥ 22, TypeScript).
 
 ## Responsabilidades
 
@@ -106,7 +106,7 @@ graph TD
     alt MAJOR de protocolVersion diverge
       M-->>E: erro ProtocolMismatch -32001
     else MAJOR compativel (PROTOCOL_VERSION 1.0)
-      M-->>E: {sessionId uuid v4, serverName p7m-middleware, acceptedCapabilities}
+      M-->>E: {sessionId uuid v4, serverName gridsmith-middleware, acceptedCapabilities}
       Note over M: emite evento session
       M->>E: welcome ping
       M->>E: engine/reset_session {}
@@ -222,8 +222,8 @@ npm install
 npm run build     # tsc → dist/
 npm test          # node:test — framing, peer, integração via socket real
 npm start         # pipe server + MCP em stdio
-npm run dev -- --pipe p7m-engine --no-mcp   # apenas o plano de controle
-npm run dev -- --pipe p7m-engine --no-grpc  # desliga o gateway gRPC (fica só GraphQL)
+npm run dev -- --pipe gridsmith-engine --no-mcp   # apenas o plano de controle
+npm run dev -- --pipe gridsmith-engine --no-grpc  # desliga o gateway gRPC (fica só GraphQL)
 ```
 
 Flags dos transports do app: `--no-grpc` e `--no-graphql` desligam os gateways
@@ -232,7 +232,7 @@ individualmente (ambos sobem por padrão).
 ## Convenções
 
 - stdout pertence ao transporte MCP; logs operacionais vão para **stderr**,
-  com verbosidade controlada por `P7M_VERBOSITY`
+  com verbosidade controlada por `GRIDSMITH_VERBOSITY`
   (`silent|error|warn|info|debug|trace`, default `info`) — logger puro em
   `src/util/log.ts` com sink injetável para testes.
 - Nenhuma lógica de domínio na camada MCP — apenas fachadas sobre o barramento

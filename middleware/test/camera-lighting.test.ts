@@ -12,7 +12,7 @@ import { JsonRpcError, PROTOCOL_VERSION, RpcErrorCode } from "../src/protocol/js
 
 let pipeCounter = 0;
 function uniquePipeName(): string {
-  return `p7m-test-cam-${process.pid}-${pipeCounter++}`;
+  return `gridsmith-test-cam-${process.pid}-${pipeCounter++}`;
 }
 
 interface FakeEngineState {
@@ -48,7 +48,7 @@ async function connectFakeEngine(
     return { removed: lightId };
   });
   await peer.request("engine/handshake", {
-    clientName: "P7m.Engine.Runtime",
+    clientName: "Gridsmith.Engine.Runtime",
     clientVersion: "0.1.0",
     protocolVersion: PROTOCOL_VERSION,
   });

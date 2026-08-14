@@ -24,7 +24,7 @@ de sessão (`-32007..-32009`) existem somente no middleware.
 
 ```mermaid
 mindmap
-  root(("Codigos de erro P7M"))
+  root(("Codigos de erro Gridsmith"))
     Reservados JSON-RPC 2.0
       c700["-32700 ParseError"]
         p700["JSON malformado no corpo"]
@@ -36,7 +36,7 @@ mindmap
         p602["Parametros invalidos"]
       c603["-32603 InternalError"]
         p603["Falha interna do servidor"]
-    Dominio P7M -32000 a -32009
+    Dominio Gridsmith -32000 a -32009
       d000["-32000 EngineNotReady"]
         q000["Sem handshake ou reidratando"]
       d001["-32001 ProtocolMismatch"]
@@ -59,7 +59,7 @@ mindmap
         q009["identidade esperada divergiu"]
 ```
 
-*Mostra a taxonomia dos códigos de erro separando os reservados do JSON-RPC 2.0 (`-327xx`/`-326xx`) dos de domínio P7M (`-32000..-32009`). Os códigos compartilhados com a engine permanecem idênticos em TypeScript e C#; os códigos de autenticação e sessão de projeto pertencem às bordas do editor no middleware.*
+*Mostra a taxonomia dos códigos de erro separando os reservados do JSON-RPC 2.0 (`-327xx`/`-326xx`) dos de domínio Gridsmith (`-32000..-32009`). Os códigos compartilhados com a engine permanecem idênticos em TypeScript e C#; os códigos de autenticação e sessão de projeto pertencem às bordas do editor no middleware.*
 
 ## Origem dos erros de sessão (`-32000` / `-32001`)
 

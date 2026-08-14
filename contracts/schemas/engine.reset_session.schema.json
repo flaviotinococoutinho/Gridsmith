@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/engine.reset_session",
+  "$id": "gridsmith://contracts/engine.reset_session",
   "title": "engine/reset_session",
   "description": "Remove atomicamente da engine todo estado materializado pela sessão de projeto anterior antes da reidratação da seguinte.",
   "type": "object",

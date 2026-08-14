@@ -6,7 +6,7 @@ import { HEADER_BYTES, MESH_MAGIC, MeshSharedMemoryWriter } from "../src/sharedm
 import { SKINNED_VERTEX_2D, fnv1a, validateLayout, type VertexData } from "../src/sharedmem/vertexLayout.js";
 
 function uniqueName(): string {
-  return `p7m-test-writer-${randomUUID()}`;
+  return `gridsmith-test-writer-${randomUUID()}`;
 }
 
 function makeVertex(px: number, py: number): VertexData {
@@ -31,7 +31,7 @@ test("create grava o header conforme contracts/shared-memory-layout.md", () => {
   withWriter(3, (writer) => {
     const raw = fs.readFileSync(writer.path);
     assert.equal(raw.length, HEADER_BYTES + 3 * 36);
-    assert.equal(raw.readUInt32LE(0), MESH_MAGIC);       // magic "P7MM"
+    assert.equal(raw.readUInt32LE(0), MESH_MAGIC);       // magic "GSMM"
     assert.equal(raw.readUInt32LE(4), 1);                // layoutVersion
     assert.equal(raw.readUInt32LE(8), 3);                // vertexCount
     assert.equal(raw.readUInt32LE(12), 36);              // strideInBytes

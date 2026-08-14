@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/lighting.methods",
+  "$id": "gridsmith://contracts/lighting.methods",
   "title": "lighting/* (Fase 3)",
   "description": "Métodos do pipeline de iluminação deferred 2D (middleware → engine). As equações do Light Pass são espelhadas na referência de CPU (Lighting2D.cs ↔ DeferredLight.fx); lighting/evaluate expõe essa referência via RPC para asserções sem GPU. Métodos em $defs, indexados pelo nome JSON-RPC.",
   "$defs": {

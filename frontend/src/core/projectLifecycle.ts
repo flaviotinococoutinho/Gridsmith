@@ -22,7 +22,7 @@ export type ProjectState =
   | "closing"; // aguardando confirmação/descarte
 
 export interface ProjectDescriptor {
-  /** Caminho do arquivo .p7m (ou undefined para projeto novo não salvo). */
+  /** Caminho do arquivo .gridsmith (ou undefined para projeto novo não salvo). */
   readonly filePath?: string;
   readonly name: string;
   /** Identidade imutável da sessão ativa no middleware. */
@@ -136,10 +136,10 @@ export class ProjectLifecycle {
     return this.descriptor;
   }
 
-  /** Título de janela pronto: "nome — P7M" com marcador de sujo. */
+  /** Título de janela pronto: "nome — Gridsmith" com marcador de sujo. */
   get windowTitle(): string {
-    if (!this.descriptor) return "P7M";
-    return `${this.isDirty ? "● " : ""}${this.descriptor.name} — P7M`;
+    if (!this.descriptor) return "Gridsmith";
+    return `${this.isDirty ? "● " : ""}${this.descriptor.name} — Gridsmith`;
   }
 
   get recentProjects(): readonly RecentProject[] {

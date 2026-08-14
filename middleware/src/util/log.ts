@@ -1,9 +1,9 @@
 /**
- * Logger estruturado com CONTROLE DE VERBOSIDADE (P7M_VERBOSITY).
+ * Logger estruturado com CONTROLE DE VERBOSIDADE (GRIDSMITH_VERBOSITY).
  *
  * Zero dependências (portável a workers, como fnv1a — regra R5-friendly).
  * Níveis: silent < error < warn < info < debug < trace. O nível ativo vem de
- * `P7M_VERBOSITY` (default "info"); o sink é injetável para os testes — o
+ * `GRIDSMITH_VERBOSITY` (default "info"); o sink é injetável para os testes — o
  * default escreve em stderr (stdout é reservado ao transporte MCP).
  */
 
@@ -72,7 +72,7 @@ export function createLogger(
     options.level ??
     parseLogLevel(
       (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[
-        "P7M_VERBOSITY"
+        "GRIDSMITH_VERBOSITY"
       ],
     );
   const sink = options.sink ?? defaultSink;

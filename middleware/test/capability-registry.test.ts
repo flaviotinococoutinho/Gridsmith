@@ -8,12 +8,12 @@ import { PROTOCOL_VERSION } from "../src/protocol/jsonrpc.js";
 
 let pipeCounter = 0;
 function uniquePipeName(): string {
-  return `p7m-test-caps-${process.pid}-${pipeCounter++}`;
+  return `gridsmith-test-caps-${process.pid}-${pipeCounter++}`;
 }
 
 /** Manifesto no formato que a engine C# publica (EngineDescriptor). */
 const FAKE_MANIFEST: EngineManifest = {
-  engine: { name: "P7m.Engine.Runtime", version: "0.1.0", protocolVersion: "1.0" },
+  engine: { name: "Gridsmith.Engine.Runtime", version: "0.1.0", protocolVersion: "1.0" },
   subsystems: {
     rigging: {
       status: "available",
@@ -55,7 +55,7 @@ async function connectFakeEngine(server: EnginePipeServer): Promise<JsonRpcPeer>
   const peer = new JsonRpcPeer(socket, { label: "fake-engine", requestTimeoutMs: 2000 });
   peer.registerMethod("engine/describe", () => FAKE_MANIFEST);
   await peer.request("engine/handshake", {
-    clientName: "P7m.Engine.Runtime",
+    clientName: "Gridsmith.Engine.Runtime",
     clientVersion: "0.1.0",
     protocolVersion: PROTOCOL_VERSION,
   });
@@ -69,7 +69,7 @@ test("registry pede engine/describe na sessão e cacheia o manifesto", async () 
   try {
     const engine = await connectFakeEngine(server);
     const manifest = await registry.waitForManifest(2000);
-    assert.equal(manifest.engine.name, "P7m.Engine.Runtime");
+    assert.equal(manifest.engine.name, "Gridsmith.Engine.Runtime");
     assert.equal(registry.manifest, manifest);
     engine.close();
   } finally {

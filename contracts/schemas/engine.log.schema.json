@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/engine.log",
+  "$id": "gridsmith://contracts/engine.log",
   "title": "engine/log",
   "description": "Notification (sem id) emitida pela engine para encaminhar logs estruturados ao middleware.",
   "type": "object",

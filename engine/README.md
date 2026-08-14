@@ -1,16 +1,16 @@
-# P7m.Engine
+# Gridsmith.Engine
 
-Serviço de engine 2D (.NET 8) do ecossistema P7M EaaS.
+Serviço de engine 2D (.NET 8) do ecossistema Gridsmith EaaS.
 
 ## Projetos
 
 | Projeto | Papel |
 |---|---|
-| `src/P7m.Engine.Core` | Núcleo Data-Oriented: SoA pré-alocada, Zero-GC nos hot loops. `SkeletonStore` resolve poses hierárquicas em passada linear única e produz as matrizes de skinning consumidas pela GPU. `MeshSharedMemoryReader` mapeia o buffer publicado pelo Node.js (seqlock, memória pré-alocada). Fase 3: `SecondOrderDynamics`/`CinematicCamera`/`ShakeGenerator` (câmera massa-mola-amortecedor com antecipação e shake harmônico determinístico), `LightStore`/`Lighting2D`/`ColorLut` (referências de CPU das equações dos shaders) e `LinearBlendSkinning`. |
-| `src/P7m.Engine.Graphics` | Host MonoGame: `DeferredRenderer` (MRT: G-Buffer albedo+normal → Light Pass aditivo → composição com LUT), shaders HLSL em `Shaders/` (compilados via MGCB — ver `Content/README.md`), `SkinnedVertexDeclaration` (o buffer do plano de dados sobe para a GPU sem repack) e `BonePacker` (matrizes 3x2 → registradores float4). |
-| `src/P7m.Engine.Ipc` | Plano de controle: framing `uint32 LE + JSON-RPC 2.0`, transporte Named Pipe / Unix Socket e peer full-duplex (`JsonRpcConnection`), mais o canal tipado com handshake (`EngineChannel`). |
-| `src/P7m.Engine.Runtime` | Host do serviço: conecta ao middleware com retry/backoff, materializa `skeleton/initialize` e `mesh/bind_shared_memory` no núcleo DOD. O host gráfico MonoGame (game loop, `GraphicsDevice`, shaders HLSL) acopla-se aqui na **Fase 3**. |
-| `tests/P7m.Engine.Ipc.Tests` | xUnit: codec, peer em loopback, handlers do serviço e invariantes DOD (incluindo teste de **zero alocação** em `ComputeWorldPoses`). |
+| `src/Gridsmith.Engine.Core` | Núcleo Data-Oriented: SoA pré-alocada, Zero-GC nos hot loops. `SkeletonStore` resolve poses hierárquicas em passada linear única e produz as matrizes de skinning consumidas pela GPU. `MeshSharedMemoryReader` mapeia o buffer publicado pelo Node.js (seqlock, memória pré-alocada). Fase 3: `SecondOrderDynamics`/`CinematicCamera`/`ShakeGenerator` (câmera massa-mola-amortecedor com antecipação e shake harmônico determinístico), `LightStore`/`Lighting2D`/`ColorLut` (referências de CPU das equações dos shaders) e `LinearBlendSkinning`. |
+| `src/Gridsmith.Engine.Graphics` | Host MonoGame: `DeferredRenderer` (MRT: G-Buffer albedo+normal → Light Pass aditivo → composição com LUT), shaders HLSL em `Shaders/` (compilados via MGCB — ver `Content/README.md`), `SkinnedVertexDeclaration` (o buffer do plano de dados sobe para a GPU sem repack) e `BonePacker` (matrizes 3x2 → registradores float4). |
+| `src/Gridsmith.Engine.Ipc` | Plano de controle: framing `uint32 LE + JSON-RPC 2.0`, transporte Named Pipe / Unix Socket e peer full-duplex (`JsonRpcConnection`), mais o canal tipado com handshake (`EngineChannel`). |
+| `src/Gridsmith.Engine.Runtime` | Host do serviço: conecta ao middleware com retry/backoff, materializa `skeleton/initialize` e `mesh/bind_shared_memory` no núcleo DOD. O host gráfico MonoGame (game loop, `GraphicsDevice`, shaders HLSL) acopla-se aqui na **Fase 3**. |
+| `tests/Gridsmith.Engine.Ipc.Tests` | xUnit: codec, peer em loopback, handlers do serviço e invariantes DOD (incluindo teste de **zero alocação** em `ComputeWorldPoses`). |
 
 ### Layering dos assemblies (regras E1-E5)
 
@@ -22,10 +22,10 @@ assembly pelas fitness functions **E1-E5**: `Core` e `Ipc` não têm dependênci
 ```mermaid
 graph TD
   subgraph EN["Engine (.NET8): assemblies verificados por E1-E5 (reflexão de assembly)"]
-    Core["P7m.Engine.Core<br/>DOD / Zero-GC — sem deps"]
-    Ipc["P7m.Engine.Ipc<br/>peer JSON-RPC — sem deps"]
-    Graphics["P7m.Engine.Graphics<br/>host MonoGame"]
-    Runtime["P7m.Engine.Runtime<br/>EngineService"]
+    Core["Gridsmith.Engine.Core<br/>DOD / Zero-GC — sem deps"]
+    Ipc["Gridsmith.Engine.Ipc<br/>peer JSON-RPC — sem deps"]
+    Graphics["Gridsmith.Engine.Graphics<br/>host MonoGame"]
+    Runtime["Gridsmith.Engine.Runtime<br/>EngineService"]
     Graphics -->|"referencia só Core"| Core
     Runtime -->|"referencia"| Core
     Runtime -->|"referencia"| Ipc
@@ -68,8 +68,8 @@ graph LR
 ```bash
 dotnet build
 dotnet test
-dotnet run --project src/P7m.Engine.Runtime -- --pipe p7m-engine            # modo serviço
-dotnet run --project src/P7m.Engine.Runtime -- --pipe p7m-engine --self-test # prova de vida Fase 1
+dotnet run --project src/Gridsmith.Engine.Runtime -- --pipe gridsmith-engine            # modo serviço
+dotnet run --project src/Gridsmith.Engine.Runtime -- --pipe gridsmith-engine --self-test # prova de vida Fase 1
 ```
 
 ## Política Zero-GC

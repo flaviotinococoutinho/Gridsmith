@@ -1,4 +1,4 @@
-# P7M — instruções do repositório
+# Gridsmith — instruções do repositório
 
 Ecossistema EaaS local de 3 processos: **frontend** (Electron/TS), **middleware**
 (Node/TS), **engine** (.NET 8/MonoGame). Contratos em `contracts/` são fonte de
@@ -18,7 +18,7 @@ cd middleware && npm install && npm run build && npm test
 # frontend (compile o middleware ANTES; engine compilada p/ supervisão local)
 cd frontend && npm install && npm run build && npm test
 npm run app                                   # Electron supervisiona tudo
-npm run app -- --external-services --pipe p7m-engine
+npm run app -- --external-services --pipe gridsmith-engine
 
 # engine (.NET 8 — use export PATH="$HOME/.dotnet:$PATH" se preciso)
 cd engine && dotnet build && dotnet test
@@ -32,7 +32,7 @@ npm run docs:verify                           # lint da documentação
 ## Transports do app (ADR-016/017/018 em docs/adr/)
 
 - App ↔ middleware: **gRPC prioritário no caminho quente** (Dispatch/Query/
-  StreamEvents/Health, proto `contracts/grpc/p7m_editor.proto`) com **fallback
+  StreamEvents/Health, proto `contracts/grpc/gridsmith_editor.proto`) com **fallback
   imediato para GraphQL** (superfície completa, SDL
   `contracts/graphql/editor.schema.graphql`) e recovery com histerese —
   política pura em `frontend/src/core/transportRouter.ts`.
@@ -40,7 +40,7 @@ npm run docs:verify                           # lint da documentação
   memory (MMF) no plano de dados.
 - Eventos: `EventJournal` (seq monotônico) — stream no gRPC, polling
   `eventsSince` no GraphQL; nunca perde eventos dentro da janela.
-- **Verbosidade:** `P7M_VERBOSITY=silent|error|warn|info|debug|trace`.
+- **Verbosidade:** `GRIDSMITH_VERBOSITY=silent|error|warn|info|debug|trace`.
 
 ## Regras inegociáveis (impostas por teste — não relaxe, mova a dependência)
 

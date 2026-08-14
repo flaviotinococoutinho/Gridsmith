@@ -9,12 +9,12 @@ import * as protoLoader from "@grpc/proto-loader";
 import {
   resolveTransportEndpoint,
   type TransportEndpoint,
-} from "@p7m/middleware/dist/transport/endpoints.js";
+} from "@gridsmith/middleware/dist/transport/endpoints.js";
 import {
   bearerAuthorization,
   loadTransportAuthToken,
-} from "@p7m/middleware/dist/transport/auth.js";
-import { resolveProtoPath } from "@p7m/middleware/dist/grpc/GrpcGateway.js";
+} from "@gridsmith/middleware/dist/transport/auth.js";
+import { resolveProtoPath } from "@gridsmith/middleware/dist/grpc/GrpcGateway.js";
 import type { Logger } from "../../core/logging.js";
 
 interface RawJournalStatus {
@@ -152,7 +152,7 @@ export class GrpcTransport {
       defaults: true,
     });
     const pkg = grpc.loadPackageDefinition(definition) as unknown as {
-      p7m: {
+      gridsmith: {
         editor: {
           v1: {
             EditorHotPath: new (target: string, credentials: grpc.ChannelCredentials) => HotPathClient;
@@ -160,7 +160,7 @@ export class GrpcTransport {
         };
       };
     };
-    this.client = new pkg.p7m.editor.v1.EditorHotPath(
+    this.client = new pkg.gridsmith.editor.v1.EditorHotPath(
       this.endpoint.grpcTarget,
       grpc.credentials.createInsecure(),
     );

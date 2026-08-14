@@ -39,7 +39,7 @@ export interface ServiceStatusPayload {
   recentLog: string[];
 }
 
-export interface P7mEditorApi {
+export interface GridsmithEditorApi {
   connect(): Promise<{ sessionId: string }>;
   dispatch(kind: string, payload: Record<string, unknown>): Promise<unknown>;
   query(projection: string): Promise<unknown>;
@@ -93,37 +93,37 @@ export interface P7mEditorApi {
   technicalDiagnostics(): Promise<unknown>;
 }
 
-const api: P7mEditorApi = {
-  connect: () => ipcRenderer.invoke("p7m:connect"),
-  dispatch: (kind, payload) => ipcRenderer.invoke("p7m:dispatch", kind, payload),
-  query: (projection) => ipcRenderer.invoke("p7m:query", projection),
-  experience: (family, version) => ipcRenderer.invoke("p7m:experience", family, version),
+const api: GridsmithEditorApi = {
+  connect: () => ipcRenderer.invoke("gridsmith:connect"),
+  dispatch: (kind, payload) => ipcRenderer.invoke("gridsmith:dispatch", kind, payload),
+  query: (projection) => ipcRenderer.invoke("gridsmith:query", projection),
+  experience: (family, version) => ipcRenderer.invoke("gridsmith:experience", family, version),
   onBlueprintEvent: (listener) => {
-    ipcRenderer.on("p7m:blueprint-event", (_event, payload, projection) =>
+    ipcRenderer.on("gridsmith:blueprint-event", (_event, payload, projection) =>
       listener(payload, projection),
     );
   },
   onProjectionResync: (listener) => {
-    ipcRenderer.on("p7m:projection-resync", (_event, payload) => listener(payload));
+    ipcRenderer.on("gridsmith:projection-resync", (_event, payload) => listener(payload));
   },
-  projectCommand: (command, payload) => ipcRenderer.invoke("p7m:project-command", command, payload),
-  projectStatus: () => ipcRenderer.invoke("p7m:project-status"),
-  historyStatus: (limit?: number) => ipcRenderer.invoke("p7m:history-status", limit),
-  undo: (historyCursor?: string) => ipcRenderer.invoke("p7m:history-undo", historyCursor),
-  redo: (historyCursor?: string) => ipcRenderer.invoke("p7m:history-redo", historyCursor),
-  projectTemplates: () => ipcRenderer.invoke("p7m:project-templates"),
+  projectCommand: (command, payload) => ipcRenderer.invoke("gridsmith:project-command", command, payload),
+  projectStatus: () => ipcRenderer.invoke("gridsmith:project-status"),
+  historyStatus: (limit?: number) => ipcRenderer.invoke("gridsmith:history-status", limit),
+  undo: (historyCursor?: string) => ipcRenderer.invoke("gridsmith:history-undo", historyCursor),
+  redo: (historyCursor?: string) => ipcRenderer.invoke("gridsmith:history-redo", historyCursor),
+  projectTemplates: () => ipcRenderer.invoke("gridsmith:project-templates"),
   onProjectStatus: (listener) => {
-    ipcRenderer.on("p7m:project-status", (_event, status) => listener(status));
+    ipcRenderer.on("gridsmith:project-status", (_event, status) => listener(status));
   },
   onMenuAction: (listener) => {
-    ipcRenderer.on("p7m:menu-action", (_event, action) => listener(action));
+    ipcRenderer.on("gridsmith:menu-action", (_event, action) => listener(action));
   },
-  serviceStatus: () => ipcRenderer.invoke("p7m:service-status"),
-  serviceRestart: (serviceId) => ipcRenderer.invoke("p7m:service-restart", serviceId),
+  serviceStatus: () => ipcRenderer.invoke("gridsmith:service-status"),
+  serviceRestart: (serviceId) => ipcRenderer.invoke("gridsmith:service-restart", serviceId),
   onServiceStatus: (listener) => {
-    ipcRenderer.on("p7m:service-status", (_event, services) => listener(services));
+    ipcRenderer.on("gridsmith:service-status", (_event, services) => listener(services));
   },
-  technicalDiagnostics: () => ipcRenderer.invoke("p7m:technical-diagnostics"),
+  technicalDiagnostics: () => ipcRenderer.invoke("gridsmith:technical-diagnostics"),
 };
 
-contextBridge.exposeInMainWorld("p7m", api);
+contextBridge.exposeInMainWorld("gridsmith", api);

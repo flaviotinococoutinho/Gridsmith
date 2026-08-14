@@ -28,7 +28,7 @@ function assert(condition: boolean, what: string): void {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const pipeName = argv[argv.indexOf("--pipe") + 1] ?? "p7m-engine";
+  const pipeName = argv[argv.indexOf("--pipe") + 1] ?? "gridsmith-engine";
   const expected = argv[argv.indexOf("--expect") + 1] ?? "grpc";
   const withEngine = argv.includes("--engine");
 

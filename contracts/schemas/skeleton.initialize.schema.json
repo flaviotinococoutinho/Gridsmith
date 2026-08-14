@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/skeleton.initialize",
+  "$id": "gridsmith://contracts/skeleton.initialize",
   "title": "skeleton/initialize",
   "description": "Registra a topologia de um esqueleto na engine. 'inverseBindMatrix' é uma matriz 3x2 afim 2D em ordem coluna-maior (6 floats: m11, m12, m21, m22, m31, m32).",
   "type": "object",

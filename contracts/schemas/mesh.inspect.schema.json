@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/mesh.inspect",
+  "$id": "gridsmith://contracts/mesh.inspect",
   "title": "mesh/inspect",
   "description": "Inspeção de diagnóstico (middleware → engine): a engine tira um snapshot estável (seqlock) da malha mapeada e devolve checksum FNV-1a e uma amostra de vértice, permitindo asserções ponta-a-ponta de compatibilidade binária entre o escritor Node.js e o leitor .NET.",
   "type": "object",

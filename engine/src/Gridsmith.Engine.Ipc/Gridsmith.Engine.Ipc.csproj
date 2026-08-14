@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Gridsmith.Engine.Ipc</RootNamespace>
+    <Description>Plano de controle JSON-RPC 2.0 da engine Gridsmith: framing binário, transporte Named Pipe / Unix Socket e peer full-duplex</Description>
+  </PropertyGroup>
+</Project>

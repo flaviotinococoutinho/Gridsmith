@@ -3,7 +3,7 @@
  * zero imports; portável a workers e ao renderer).
  *
  * Níveis: silent < error < warn < info < debug < trace. O nível ativo vem de
- * `P7M_VERBOSITY` quando há `process.env` (main); no renderer o nível é
+ * `GRIDSMITH_VERBOSITY` quando há `process.env` (main); no renderer o nível é
  * passado explicitamente. Sink injetável — os testes capturam linhas; o
  * default usa console.error (nunca stdout, reservado a protocolos).
  */
@@ -58,7 +58,7 @@ export interface Logger {
 function envLevel(): LogLevel {
   const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
     ?.env;
-  return parseLogLevel(env?.["P7M_VERBOSITY"]);
+  return parseLogLevel(env?.["GRIDSMITH_VERBOSITY"]);
 }
 
 const defaultSink: LogSink = (line) => {

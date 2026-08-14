@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Gridsmith.Engine.Runtime</RootNamespace>
+    <Description>Host do serviço de engine Gridsmith: conecta ao middleware via IPC e materializa o blueprint no núcleo DOD. O host gráfico MonoGame acopla aqui na Fase 3.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Gridsmith.Engine.Core/Gridsmith.Engine.Core.csproj" />
+    <ProjectReference Include="../Gridsmith.Engine.Ipc/Gridsmith.Engine.Ipc.csproj" />
+  </ItemGroup>
+</Project>

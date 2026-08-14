@@ -9,7 +9,7 @@
  * uma célula plausível e um pixel plausível.
  *
  * A saída é não adivinhar. Só três documentos v2 foram produzidos por builds
- * do P7M, e todos os três são conhecidos byte a byte: o template de plataforma
+ * do Gridsmith, e todos os três são conhecidos byte a byte: o template de plataforma
  * ANTES da correção de unidade (em células), o mesmo template DEPOIS dela (em
  * pixels) e o template top-down (em pixels, nasceu depois da correção).
  * Qualquer outro documento v2 é de origem desconhecida — projeto real, edição

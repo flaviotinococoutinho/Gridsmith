@@ -10,11 +10,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PIPE_NAME="p7m-transports-$$"
+PIPE_NAME="gridsmith-transports-$$"
 MIDDLEWARE_LOG="$(mktemp)"
 ENGINE_LOG="$(mktemp)"
-export P7M_EDITOR_AUTH_TOKEN="${P7M_EDITOR_AUTH_TOKEN:-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')}"
-unset P7M_EDITOR_AUTH_TOKEN_FILE
+export GRIDSMITH_EDITOR_AUTH_TOKEN="${GRIDSMITH_EDITOR_AUTH_TOKEN:-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')}"
+unset GRIDSMITH_EDITOR_AUTH_TOKEN_FILE
 
 cleanup() {
   for pid in "${ENGINE_PID:-}" "${MIDDLEWARE_PID:-}"; do
@@ -66,7 +66,7 @@ echo "==> Building engine"
 
 echo "==> Fase A: middleware com gRPC + GraphQL (pipe: $PIPE_NAME)"
 start_middleware
-dotnet run --project "$ROOT/engine/src/P7m.Engine.Runtime" --no-build -- \
+dotnet run --project "$ROOT/engine/src/Gridsmith.Engine.Runtime" --no-build -- \
   --pipe "$PIPE_NAME" 2>"$ENGINE_LOG" &
 ENGINE_PID=$!
 for _ in $(seq 1 50); do

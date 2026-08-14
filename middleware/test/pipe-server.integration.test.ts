@@ -26,7 +26,7 @@ import { JsonRpcError, PROTOCOL_VERSION, RpcErrorCode } from "../src/protocol/js
 
 let pipeCounter = 0;
 function uniquePipeName(): string {
-  return `p7m-test-${process.pid}-${pipeCounter++}`;
+  return `gridsmith-test-${process.pid}-${pipeCounter++}`;
 }
 
 /** Cliente TS que se comporta como o host da engine (mesmo contrato do lado C#). */
@@ -91,17 +91,17 @@ test("handshake válido estabelece sessão e devolve identidade", async () => {
       protocolVersion: string;
       acceptedCapabilities: string[];
     }>("engine/handshake", {
-      clientName: "P7m.Engine.Runtime",
+      clientName: "Gridsmith.Engine.Runtime",
       clientVersion: "0.1.0",
       protocolVersion: PROTOCOL_VERSION,
       capabilities: ["skeleton", "raytracing"],
     });
-    assert.equal(result.serverName, "p7m-middleware");
+    assert.equal(result.serverName, "gridsmith-middleware");
     assert.equal(result.protocolVersion, PROTOCOL_VERSION);
     assert.ok(result.sessionId.length > 0);
     // capacidades não suportadas pelo middleware são filtradas
     assert.deepEqual(result.acceptedCapabilities, ["skeleton"]);
-    assert.equal(server.currentSession?.clientName, "P7m.Engine.Runtime");
+    assert.equal(server.currentSession?.clientName, "Gridsmith.Engine.Runtime");
     engine.close();
   });
 });
@@ -295,7 +295,7 @@ test("versão MAJOR incompatível é recusada com PROTOCOL_MISMATCH", async () =
     const engine = await connectFakeEngine(server);
     await assert.rejects(
       engine.request("engine/handshake", {
-        clientName: "P7m.Engine.Runtime",
+        clientName: "Gridsmith.Engine.Runtime",
         clientVersion: "0.1.0",
         protocolVersion: "2.0",
       }),
@@ -313,7 +313,7 @@ test("fluxo bidirecional: middleware pinga a engine e recebe logs dela", async (
     });
     const engine = await connectFakeEngine(server);
     await engine.request("engine/handshake", {
-      clientName: "P7m.Engine.Runtime",
+      clientName: "Gridsmith.Engine.Runtime",
       clientVersion: "0.1.0",
       protocolVersion: PROTOCOL_VERSION,
     });
@@ -334,7 +334,7 @@ test("skeleton/define e mesh/bind percorrem o caminho canônico até a engine", 
   await withServer(async ({ server, store, orchestrator }) => {
     const engine = await connectFakeEngine(server);
     await engine.request("engine/handshake", {
-      clientName: "P7m.Engine.Runtime",
+      clientName: "Gridsmith.Engine.Runtime",
       clientVersion: "0.1.0",
       protocolVersion: PROTOCOL_VERSION,
     });
@@ -362,7 +362,7 @@ test("skeleton/define e mesh/bind percorrem o caminho canônico até a engine", 
       binding: {
         meshId: "hero-mesh",
         skeletonId: "hero-rig",
-        sharedMemoryMapName: "p7m-mesh-hero",
+        sharedMemoryMapName: "gridsmith-mesh-hero",
         vertexCount: 128,
         strideInBytes: 32,
       },
@@ -413,7 +413,7 @@ test("comandos sem engine conectada ficam no AST e são reidratados na conexão"
       });
     });
     await engine.request("engine/handshake", {
-      clientName: "P7m.Engine.Runtime",
+      clientName: "Gridsmith.Engine.Runtime",
       clientVersion: "0.1.0",
       protocolVersion: PROTOCOL_VERSION,
     });

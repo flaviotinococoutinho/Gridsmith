@@ -12,25 +12,25 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { EnginePipeServer } from "@p7m/middleware/dist/ipc/EnginePipeServer.js";
-import { BlueprintStore } from "@p7m/middleware/dist/domain/BlueprintStore.js";
-import { CapabilityRegistry } from "@p7m/middleware/dist/domain/CapabilityRegistry.js";
-import { EditorSurface } from "@p7m/middleware/dist/canonical/EditorSurface.js";
-import { HookBus } from "@p7m/middleware/dist/canonical/HookBus.js";
+import { EnginePipeServer } from "@gridsmith/middleware/dist/ipc/EnginePipeServer.js";
+import { BlueprintStore } from "@gridsmith/middleware/dist/domain/BlueprintStore.js";
+import { CapabilityRegistry } from "@gridsmith/middleware/dist/domain/CapabilityRegistry.js";
+import { EditorSurface } from "@gridsmith/middleware/dist/canonical/EditorSurface.js";
+import { HookBus } from "@gridsmith/middleware/dist/canonical/HookBus.js";
 import {
   ProjectSessionManager,
   type ProjectSessionChangedEvent,
   type SessionBlueprintEvent,
-} from "@p7m/middleware/dist/canonical/ProjectSessionManager.js";
-import { GraphQlGateway } from "@p7m/middleware/dist/graphql/GraphQlGateway.js";
-import { GrpcGateway } from "@p7m/middleware/dist/grpc/GrpcGateway.js";
-import { EventJournal } from "@p7m/middleware/dist/transport/EventJournal.js";
-import { generateTransportAuthToken } from "@p7m/middleware/dist/transport/auth.js";
-import { ExperienceGovernor } from "@p7m/middleware/dist/runtime/ExperienceGovernor.js";
-import { MonoGameAdapter } from "@p7m/middleware/dist/runtime/MonoGameAdapter.js";
-import { RuntimeProfileRegistry } from "@p7m/middleware/dist/runtime/RuntimeProfile.js";
-import { MONOGAME_PROFILES } from "@p7m/middleware/dist/runtime/profiles/monogame.js";
-import { createLogger as createMiddlewareLogger } from "@p7m/middleware/dist/util/log.js";
+} from "@gridsmith/middleware/dist/canonical/ProjectSessionManager.js";
+import { GraphQlGateway } from "@gridsmith/middleware/dist/graphql/GraphQlGateway.js";
+import { GrpcGateway } from "@gridsmith/middleware/dist/grpc/GrpcGateway.js";
+import { EventJournal } from "@gridsmith/middleware/dist/transport/EventJournal.js";
+import { generateTransportAuthToken } from "@gridsmith/middleware/dist/transport/auth.js";
+import { ExperienceGovernor } from "@gridsmith/middleware/dist/runtime/ExperienceGovernor.js";
+import { MonoGameAdapter } from "@gridsmith/middleware/dist/runtime/MonoGameAdapter.js";
+import { RuntimeProfileRegistry } from "@gridsmith/middleware/dist/runtime/RuntimeProfile.js";
+import { MONOGAME_PROFILES } from "@gridsmith/middleware/dist/runtime/profiles/monogame.js";
+import { createLogger as createMiddlewareLogger } from "@gridsmith/middleware/dist/util/log.js";
 import {
   EditorClient,
   type ProjectionSnapshot,
@@ -62,7 +62,7 @@ interface RigOptions {
 }
 
 async function makeRig(tag: string, options: RigOptions = {}): Promise<Rig> {
-  const pipeName = `p7m-fe-${tag}-${process.pid}-${Date.now() % 100000}`;
+  const pipeName = `gridsmith-fe-${tag}-${process.pid}-${Date.now() % 100000}`;
   const engineServer = new EnginePipeServer({ pipeName, requestTimeoutMs: 2000 });
   const capabilities = new CapabilityRegistry(engineServer);
   const adapter = new MonoGameAdapter(engineServer, capabilities);
@@ -510,7 +510,7 @@ test(
   "resiliência: reinício completo do middleware troca instância, refaz snapshot e aceita seq reiniciado",
   { timeout: 45_000 },
   async () => {
-    const pipeName = `p7m-restart-${process.pid}-${Date.now() % 100000}`;
+    const pipeName = `gridsmith-restart-${process.pid}-${Date.now() % 100000}`;
     const authToken = generateTransportAuthToken();
     const client = new EditorClient(pipeName, {
       requestTimeoutMs: 1000,
@@ -615,10 +615,10 @@ function startMiddlewareProcess(pipeName: string, authToken: string): Middleware
   const entry = fileURLToPath(new URL("../../middleware/dist/index.js", import.meta.url));
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    P7M_EDITOR_AUTH_TOKEN: authToken,
-    P7M_VERBOSITY: "silent",
+    GRIDSMITH_EDITOR_AUTH_TOKEN: authToken,
+    GRIDSMITH_VERBOSITY: "silent",
   };
-  delete env["P7M_EDITOR_AUTH_TOKEN_FILE"];
+  delete env["GRIDSMITH_EDITOR_AUTH_TOKEN_FILE"];
   const child = spawn(process.execPath, [entry, "--pipe", pipeName, "--no-mcp"], {
     env,
     stdio: ["ignore", "ignore", "pipe"],

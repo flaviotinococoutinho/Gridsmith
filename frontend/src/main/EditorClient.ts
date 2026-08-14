@@ -262,7 +262,7 @@ export class EditorClient {
     this.eventPollMs = options.eventPollMs ?? 500;
     this.probeTickMs = options.probeTickMs ?? 1_000;
     this.resyncRetryMs = options.resyncRetryMs ?? 1_000;
-    this.grpcEnabled = options.grpcEnabled ?? process.env["P7M_GRPC_ENABLED"] !== "0";
+    this.grpcEnabled = options.grpcEnabled ?? process.env["GRIDSMITH_GRPC_ENABLED"] !== "0";
   }
 
   get isConnected(): boolean {

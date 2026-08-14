@@ -29,22 +29,22 @@ interface CatalogEntry {
   readonly action: string;
 }
 
-/** Códigos JSON-RPC (padrão + faixa de domínio do P7M). */
+/** Códigos JSON-RPC (padrão + faixa de domínio do Gridsmith). */
 export const ERROR_CATALOG: Readonly<Record<number, CatalogEntry>> = {
   [-32700]: {
     title: "Mensagem corrompida",
-    cause: "Os serviços do P7M trocaram uma mensagem que não pôde ser lida.",
+    cause: "Os serviços do Gridsmith trocaram uma mensagem que não pôde ser lida.",
     action: "Reinicie os serviços pela barra de status. Se repetir, reporte com o log da Saída.",
   },
   [-32600]: {
     title: "Requisição inválida",
     cause: "O editor enviou uma mensagem fora do protocolo esperado.",
-    action: "Atualize a instalação do P7M — editor e serviços podem estar em versões diferentes.",
+    action: "Atualize a instalação do Gridsmith — editor e serviços podem estar em versões diferentes.",
   },
   [-32601]: {
     title: "Operação não disponível",
     cause: "Os serviços em execução não conhecem esta operação.",
-    action: "Atualize a instalação inteira do P7M para alinhar editor e serviços.",
+    action: "Atualize a instalação inteira do Gridsmith para alinhar editor e serviços.",
   },
   [-32602]: {
     title: "Dados inválidos",
@@ -63,8 +63,8 @@ export const ERROR_CATALOG: Readonly<Record<number, CatalogEntry>> = {
   },
   [-32001]: {
     title: "Versões incompatíveis",
-    cause: "As versões do editor e dos serviços P7M são incompatíveis.",
-    action: "Atualize a instalação inteira do P7M e abra o aplicativo novamente.",
+    cause: "As versões do editor e dos serviços Gridsmith são incompatíveis.",
+    action: "Atualize a instalação inteira do Gridsmith e abra o aplicativo novamente.",
   },
   [-32002]: {
     title: "Esqueleto desconhecido",
@@ -84,7 +84,7 @@ export const ERROR_CATALOG: Readonly<Record<number, CatalogEntry>> = {
   [-32005]: {
     title: "Layout binário incompatível",
     cause: "Editor e engine discordam do formato binário dos dados de malha.",
-    action: "Atualize a instalação inteira do P7M — os dois lados precisam da mesma versão.",
+    action: "Atualize a instalação inteira do Gridsmith — os dois lados precisam da mesma versão.",
   },
   [-32006]: {
     title: "Identificador já existe",
@@ -110,7 +110,7 @@ export const ERROR_CATALOG: Readonly<Record<number, CatalogEntry>> = {
 
 const GENERIC: CatalogEntry = {
   title: "Não foi possível concluir a operação",
-  cause: "Os serviços do P7M recusaram a operação.",
+  cause: "Os serviços do Gridsmith recusaram a operação.",
   action: "Tente novamente. Se repetir, veja a aba Saída para o detalhe técnico.",
 };
 

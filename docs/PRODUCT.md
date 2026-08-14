@@ -1,17 +1,17 @@
-# P7M — Visão de Produto
+# Gridsmith — Visão de Produto
 
 ## O que é
 
-O P7M é uma **ferramenta visual de desenvolvimento de jogos 2D fortemente
+O Gridsmith é uma **ferramenta visual de desenvolvimento de jogos 2D fortemente
 orientada a domínio**, construída sobre o conceito de Engine-as-a-Service: o
 criador edita um **modelo canônico próprio** (blueprint declarativo,
 versionável e diffável) e a ferramenta o **projeta em runtimes reais** —
 MonoGame hoje — através de adapters governados por perfis de capacidades.
 
-O que diferencia o P7M de um editor acoplado a uma engine:
+O que diferencia o Gridsmith de um editor acoplado a uma engine:
 
 1. **O domínio é o produto.** Rigs, níveis, luzes, câmera, entidades e
-   estados são conceitos do P7M, não wrappers da engine. Trocar de runtime
+   estados são conceitos do Gridsmith, não wrappers da engine. Trocar de runtime
    não muda o projeto do usuário.
 2. **A experiência é governada, não assumida.** Cada recurso da UI existe
    porque o perfil do runtime + o manifesto vivo da engine o habilitam — e
@@ -22,7 +22,7 @@ O que diferencia o P7M de um editor acoplado a uma engine:
 
 ## Personas
 
-| Persona | Necessidade | O que o P7M entrega |
+| Persona | Necessidade | O que o Gridsmith entrega |
 |---|---|---|
 | **Designer de níveis** | Pintar jogabilidade rápido, iterar sem programador | IntGrid + auto-tiling determinístico com preview de regras; world map com vizinhança; undo/redo profundo |
 | **Artista técnico** | Timing e deformação sob controle da arte | Frame tags do Aseprite viram clipes automaticamente; rigs com FABRIK interativo; curvas de easing por segmento |
@@ -43,7 +43,7 @@ graph LR
     n3["Motor previsivel e performatico"]
     n4["Operar programaticamente"]
   end
-  subgraph C["Capacidades que o P7M entrega"]
+  subgraph C["Capacidades que o Gridsmith entrega"]
     c1["IntGrid + auto-tiling determinístico<br/>world map + undo/redo profundo"]
     c2["Frame tags do Aseprite -> clipes<br/>rigs FABRIK + easing por segmento"]
     c3["Nucleo DOD Zero-GC<br/>camera f/ζ/r + contratos binarios"]
@@ -59,7 +59,7 @@ graph LR
 
 ## Estado honesto do produto
 
-> **Diagnóstico (2026-07):** o P7M é hoje uma **plataforma técnica de edição
+> **Diagnóstico (2026-07):** o Gridsmith é hoje uma **plataforma técnica de edição
 > madura com uma aplicação visual embrionária**. As capacidades abaixo estão
 > entregues e verificadas **na plataforma** (modelo, gateway, runtime) — a
 > experiência visual do usuário ainda não as expõe. A conversão em produto é
@@ -109,7 +109,7 @@ graph LR
 
 ```mermaid
 mindmap
-  root(("Capacidades da plataforma P7M"))
+  root(("Capacidades da plataforma Gridsmith"))
     Rigging
       Esqueletos ate 64x256 ossos
       Skinning LBS na GPU via shared memory

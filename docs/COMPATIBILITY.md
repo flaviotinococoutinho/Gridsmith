@@ -1,6 +1,6 @@
 # Compatibilidade e Versionamento
 
-Fonte de verdade única da **compatibilidade** do ecossistema P7M. Cada eixo é
+Fonte de verdade única da **compatibilidade** do ecossistema Gridsmith. Cada eixo é
 versionado de forma **independente** — **não** existe um número de versão único
 para tudo. Este documento consolida o que antes estava disperso entre
 [`ARCHITECTURE.md`](ARCHITECTURE.md), [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md)
@@ -19,7 +19,7 @@ graph TD
     SM["Shared memory<br/>layoutVersion (int)"]
     V["Layout de vertice<br/>LayoutVersion (int)"]
     G["Contrato GraphQL do app<br/>SDL (arquivo unico)"]
-    GR["Contrato gRPC do app<br/>package p7m.editor.v1"]
+    GR["Contrato gRPC do app<br/>package gridsmith.editor.v1"]
     PR["Produto / pacotes<br/>SemVer (0.1.0)"]
   end
   P -->|"nao compativel"| e1(["ProtocolMismatch -32001"])
@@ -31,7 +31,7 @@ graph TD
   GR -->|"dist diverge da fonte"| e4
 ```
 
-*Mostra os nove eixos de versão independentes do P7M e o comportamento de incompatibilidade de cada um: cada eixo tem sua própria regra, fallback e teste — nunca um único SemVer global.*
+*Mostra os nove eixos de versão independentes do Gridsmith e o comportamento de incompatibilidade de cada um: cada eixo tem sua própria regra, fallback e teste — nunca um único SemVer global.*
 
 ## Matriz resumida
 
@@ -45,7 +45,7 @@ graph TD
 | Shared memory | inteiro (`layoutVersion`) | `contracts/shared-memory-layout.md` · header MMF | binária estrita | `InvalidBinaryLayout` (-32005) |
 | Layout de vértice | inteiro (`LayoutVersion`, stride 36) | `engine/.../SharedMemory/SkinnedVertex2D.cs` | offsets publicados por reflexão | `InvalidBinaryLayout` (-32005) |
 | Contrato GraphQL do app | SDL (arquivo único) | `contracts/graphql/editor.schema.graphql` | evolução aditiva; cursor composto e snapshot completos | — (baseline e destino do fallback; ADR-016/019) |
-| Contrato gRPC do app | package proto (`p7m.editor.v1`) | `contracts/grpc/p7m_editor.proto` | protobuf aditivo; `StreamEventsV2` preserva o legado | GraphQL somente em indisponibilidade (ADR-017/019) |
+| Contrato gRPC do app | package proto (`gridsmith.editor.v1`) | `contracts/grpc/gridsmith_editor.proto` | protobuf aditivo; `StreamEventsV2` preserva o legado | GraphQL somente em indisponibilidade (ADR-017/019) |
 | Produto / pacotes | SemVer (`0.1.0`) | `*/package.json` · `EngineChannel.ClientVersion` | alpha; sem garantia de compat | — |
 
 > **Não trate todos os componentes como SemVer.** Apenas os pacotes usam SemVer;
@@ -60,9 +60,9 @@ graph TD
 
 | Campo | Conteúdo |
 |---|---|
-| Componente | Pacotes `@p7m/middleware`, `frontend`, host da engine |
+| Componente | Pacotes `@gridsmith/middleware`, `frontend`, host da engine |
 | Formato da versão | SemVer — hoje `0.1.0` (middleware, frontend) e `ClientVersion = "0.1.0"` (engine) |
-| Fonte de verdade | `middleware/package.json`, `frontend/package.json`, `engine/src/P7m.Engine.Ipc/EngineChannel.cs` |
+| Fonte de verdade | `middleware/package.json`, `frontend/package.json`, `engine/src/Gridsmith.Engine.Ipc/EngineChannel.cs` |
 | Regra de compatibilidade | Fase alpha — **não** há garantia de compatibilidade de produto; a interoperabilidade entre runtimes é regida pelo protocolo e pelos perfis, não pela versão de produto |
 | Breaking change | n/a (alpha; não versionado como contrato) |
 | Migração | n/a |
@@ -75,14 +75,14 @@ graph TD
 |---|---|
 | Componente | Plano de controle (handshake + mensagens JSON-RPC 2.0) |
 | Formato da versão | `major.minor` (string) — `PROTOCOL_VERSION = "1.0"` |
-| Fonte de verdade | `middleware/src/protocol/jsonrpc.ts` · `engine/src/P7m.Engine.Ipc/Protocol/JsonRpcProtocol.cs` (`ProtocolVersion`) — idênticos nos dois lados |
+| Fonte de verdade | `middleware/src/protocol/jsonrpc.ts` · `engine/src/Gridsmith.Engine.Ipc/Protocol/JsonRpcProtocol.cs` (`ProtocolVersion`) — idênticos nos dois lados |
 | Regra de compatibilidade | A versão **MAJOR** deve coincidir no `engine/handshake`; MINOR não bloqueia |
 | Breaking change | Bump de MAJOR (mudança incompatível de mensagens/erros) |
 | Migração | Nenhuma — renegociação exige atualizar os dois lados do fio |
 | Fallback | `ProtocolMismatch` (-32001); a sessão é recusada no handshake |
 | Teste | Testes de handshake (mismatch de MAJOR) + regra arquitetural **R9** (constantes de framing casam com o contrato) |
 
-### Documento Blueprint (projeto `.p7m.json`)
+### Documento Blueprint (projeto `.gridsmith.json`)
 
 | Campo | Conteúdo |
 |---|---|
@@ -94,6 +94,7 @@ graph TD
 | Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3 → 4`); v2 introduz `projectId`, derivado deterministicamente para v1; v3 introduz `metadata` (nome, resolução de referência e convenção espacial declarada) e converte coordenadas **apenas** nos quatro ramos descritos abaixo; v4 traz a paleta de significados para dentro do documento (era constante de build do editor), dando entradas default a todo nível que não tinha e nomeando deterministicamente os valores pintados fora dela; `project/openDocument` prepara e valida antes da troca; `expectedProjectSessionId` protege o commit contra candidato obsoleto |
 | Fallback | Versão acima da suportada é **rejeitada** com `BlueprintDocumentError` (mensagem clara); versão sem migrador registrado é rejeitada |
 | Teste | `middleware/test/blueprint-migration.test.ts` (um teste nomeado por ramo da 2 → 3 + round-trip do corpus) + `grid-coordinates.test.ts` + `project-session-manager.test.ts` (projectId v1 determinístico, replay isolado, rollback, CAS e troca A→B) |
+| Nome do arquivo | **Leitura aceita `.gridsmith.json` E `.p7m.json`**; a escrita de um caminho NOVO (Novo / Salvar como) emite `.gridsmith.json`. Um projeto aberto como `.p7m.json` continua salvando nele — o rebrand não move o arquivo de ninguém. Fonte única: `frontend/src/core/projectExtensions.ts` (filtro do diálogo, roteamento de `argv` e nome sugerido saem daí) |
 
 #### Os quatro ramos da migração 2 → 3
 
@@ -134,7 +135,7 @@ a única prova de que documentos antigos ainda abrem.
 
 | Campo | Conteúdo |
 |---|---|
-| Componente | `EventEnvelope` do `contracts/grpc/p7m_editor.proto` |
+| Componente | `EventEnvelope` do `contracts/grpc/gridsmith_editor.proto` |
 | Regra de compatibilidade | **Os campos 7, 8 e 9 são IMUTÁVEIS**: já foram publicados como `has_projection`/`projection_status`/`projection_reason`. Todo campo de histórico entra **a partir do 10** |
 | Por quê | Em proto3 o número do campo É a identidade no fio. Reaproveitar 7/8/9 não seria conflito de texto: um build decodificaria um campo como o outro **em silêncio** |
 | Teste | `middleware/test/envelope-compat.test.ts` — serializa com o proto novo e decodifica com o antigo (e vice-versa), mais uma verificação textual de que nenhum campo de histórico usa número abaixo de 10 |
@@ -187,6 +188,7 @@ a única prova de que documentos antigos ainda abrem.
 | Fonte de verdade | `contracts/shared-memory-layout.md` · header do MMF · engine |
 | Regra de compatibilidade | **Binária estrita** — o `layoutVersion` e o `strideInBytes` do escritor devem coincidir com o que a engine mapeia |
 | Breaking change | Qualquer mudança no header ou na struct de vértice bumpa `layoutVersion` |
+| Rebrand (uma vez, pré-release) | O `magic` do header trocou de `0x4D4D3750` (ASCII `P7MM`) para `0x4D4D5347` (ASCII `GSMM`) junto com o rename do produto. É quebra binária deliberada e AUTOSSINALIZADA: um escritor antigo contra um leitor novo é recusado pelo próprio magic, sem ler um byte de vértice. Por isso o `layoutVersion` **não** foi bumpado — o header e a struct de vértice não mudaram |
 | Migração | Nenhuma (dado binário; não há migração de layout em runtime) |
 | Fallback | `InvalidBinaryLayout` (-32005) ao vincular a shared memory |
 | Teste | `scripts/verify-phase2.sh` (checksum FNV-1a cruzado entre runtimes) + teste de reflexão (manifesto ≡ struct) |
@@ -197,7 +199,7 @@ a única prova de que documentos antigos ainda abrem.
 |---|---|
 | Componente | Struct `SkinnedVertex2D` publicada por reflexão em `engine/describe` |
 | Formato da versão | Inteiro `LayoutVersion` (atual `1`), stride 36 bytes |
-| Fonte de verdade | `engine/src/P7m.Engine.Core/SharedMemory/SkinnedVertex2D.cs` (offsets via `Marshal.OffsetOf`) |
+| Fonte de verdade | `engine/src/Gridsmith.Engine.Core/SharedMemory/SkinnedVertex2D.cs` (offsets via `Marshal.OffsetOf`) |
 | Regra de compatibilidade | O escritor Node usa os **offsets publicados** pela engine, nunca valores hardcoded |
 | Breaking change | Mudança de campo/ordem/tipo bumpa `LayoutVersion` |
 | Migração | Nenhuma (binário) |
@@ -225,16 +227,32 @@ a única prova de que documentos antigos ainda abrem.
 | Campo | Conteúdo |
 |---|---|
 | Componente | App ↔ middleware — serviço `EditorHotPath` (`ProjectCreate`, `ProjectOpenDocument`, `ProjectClose`, `ProjectStatus`, `Dispatch`, `Query`, `Snapshot`, `StreamEventsV2`, `Health`; RPCs legados preservados) |
-| Formato da versão | Package proto — `p7m.editor.v1` |
-| Fonte de verdade | `contracts/grpc/p7m_editor.proto` (cópia em `dist/contracts/` gerada pelo build; byte-idêntica) |
+| Formato da versão | Package proto — `gridsmith.editor.v1` |
+| Fonte de verdade | `contracts/grpc/gridsmith_editor.proto` (cópia em `dist/contracts/` gerada pelo build; byte-idêntica) |
 | Regra de compatibilidade | Protobuf aditivo (campos novos com tags novas); os payloads de comando viajam como `payload_json` e são validados na **mesma fonte única** (`BlueprintStore` + `contracts/schemas/`) — o proto não introduz segunda fonte de validação |
-| Breaking change | Mudança incompatível de mensagem/RPC = novo package (`p7m.editor.v2`) |
+| Breaking change | Mudança incompatível de mensagem/RPC = novo package (`gridsmith.editor.v2`) |
+| Rebrand (uma vez, pré-release) | O prefixo do package passou de `p7m.editor.v1` para `gridsmith.editor.v1` junto com o rename do produto. É quebra de fio por definição — o caminho HTTP/2 do serviço muda —, absorvida porque as três camadas são distribuídas juntas e não há build publicado. O segmento de VERSÃO (`v1`) **não** foi bumpado: nenhum campo mudou de número ou de significado |
 | Migração | n/a (distribuição conjunta) |
 | Continuidade | `Health`/`Snapshot` expõem identidade e limites; `StreamEventsV2` envia um frame de status antes dos eventos. Restart/gap/cursor futuro/troca de sessão resultam em `resync_required` sem cauda parcial. `request_id` torna retry cross-transport idempotente. |
 | Concorrência | Requests de create/open/close carregam `expected_project_session_id`; o servidor valida a identidade no commit atômico. |
 | Autenticação | Metadata `authorization` com Bearer efêmero obrigatória. `UNAUTHENTICATED` nunca aciona fallback. |
 | Fallback | **Somente indisponibilidade** do canal → GraphQL; autenticação, domínio e incompatibilidade de contrato não são cobertos por fallback. Default/freeze segue ADR-019. |
 | Teste | Paridade `dist` ⇄ fonte em `middleware/test/transport-gateways.test.ts`; fallback ao vivo em `frontend/test/editor-client.integration.test.ts`; e2e `scripts/verify-transports.sh` |
+
+### Rebrand P7M → Gridsmith (eixo fechado, uma vez, pré-release)
+
+O produto foi renomeado antes de existir build publicado. Três identidades já
+estão registradas no eixo a que pertencem (magic do MMF, package proto e sufixo
+do documento); estas duas não têm eixo próprio e ficam aqui:
+
+| Identidade | Antes | Depois | Efeito |
+|---|---|---|---|
+| Nome default do endpoint local | `p7m-engine` / `p7m-middleware` | `gridsmith-engine` / `gridsmith-middleware` | No POSIX muda o caminho do socket. **No Windows muda a PORTA**, porque ela é derivada por FNV-1a do nome do endpoint (`middleware/src/transport/endpoints.ts`) — um processo antigo e um novo não se encontram, que é o comportamento correto: são builds incompatíveis |
+| Estado local do app (`userData`) | derivado do `name` do pacote npm | **fixo** em `Gridsmith` (`app.setName`) | Recentes e posição da janela recomeçam UMA vez. Nenhum dado de projeto se perde: o documento e os sidecars (`.bak`, `.autosave`) moram ao lado do arquivo do usuário, não no `userData`. O nome deixou de depender do escopo npm, então um rename de pacote não move mais o diretório em silêncio |
+
+O layout de painéis do workbench **não** recomeça: a chave herdada
+(`p7m.workbench.layout`) é lida como fallback, com precedência da nova
+(`frontend/src/core/workbench/workbenchLayout.ts`, coberto por teste).
 
 ### Freeze do default (não é eixo de versão)
 

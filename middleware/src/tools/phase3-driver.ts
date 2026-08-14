@@ -78,7 +78,7 @@ function fnv1aInt32(values: Int32Array): number {
 
 async function main(): Promise<void> {
   const pipeIdx = process.argv.indexOf("--pipe");
-  const pipeName = pipeIdx >= 0 ? process.argv[pipeIdx + 1]! : "p7m-phase3";
+  const pipeName = pipeIdx >= 0 ? process.argv[pipeIdx + 1]! : "gridsmith-phase3";
 
   const server = new EnginePipeServer({
     pipeName,

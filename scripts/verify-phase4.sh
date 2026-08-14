@@ -6,11 +6,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PIPE_NAME="p7m-phase4-$$"
+PIPE_NAME="gridsmith-phase4-$$"
 MIDDLEWARE_LOG="$(mktemp)"
 ENGINE_LOG="$(mktemp)"
-export P7M_EDITOR_AUTH_TOKEN="${P7M_EDITOR_AUTH_TOKEN:-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')}"
-unset P7M_EDITOR_AUTH_TOKEN_FILE
+export GRIDSMITH_EDITOR_AUTH_TOKEN="${GRIDSMITH_EDITOR_AUTH_TOKEN:-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')}"
+unset GRIDSMITH_EDITOR_AUTH_TOKEN_FILE
 
 cleanup() {
   for pid in "${ENGINE_PID:-}" "${MIDDLEWARE_PID:-}"; do
@@ -41,7 +41,7 @@ grep -q "editor gateway listening" "$MIDDLEWARE_LOG" || {
 }
 
 echo "==> Starting engine service"
-dotnet run --project "$ROOT/engine/src/P7m.Engine.Runtime" --no-build -- \
+dotnet run --project "$ROOT/engine/src/Gridsmith.Engine.Runtime" --no-build -- \
   --pipe "$PIPE_NAME" 2>"$ENGINE_LOG" &
 ENGINE_PID=$!
 

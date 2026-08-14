@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 
-export const DEFAULT_PIPE_NAME = "p7m-engine";
+export const DEFAULT_PIPE_NAME = "gridsmith-engine";
 
 /**
  * Resolve o nome lógico do canal para o endpoint físico da plataforma:

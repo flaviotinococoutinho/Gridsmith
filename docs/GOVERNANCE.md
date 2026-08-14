@@ -1,6 +1,6 @@
 # Governança Arquitetural e Definition of Done
 
-A arquitetura do P7M não depende de disciplina de revisão: **toda regra de
+A arquitetura do Gridsmith não depende de disciplina de revisão: **toda regra de
 governança é uma asserção executável** (fitness function) que quebra o CI com
 o arquivo infrator no erro. Este documento enumera as regras, aponta o teste
 que as impõe e define o que "pronto" significa.
@@ -46,7 +46,7 @@ graph LR
 
 | Regra | Enunciado | Imposição |
 |---|---|---|
-| **E1** | `Core` (DOD/Zero-GC) não depende de nenhuma outra camada P7m | teste E1 |
+| **E1** | `Core` (DOD/Zero-GC) não depende de nenhuma outra camada Gridsmith | teste E1 |
 | **E2** | `Ipc` é plano de controle independente do domínio | teste E2 |
 | **E3** | `Graphics` (MonoGame) só conhece `Core` | teste E3 |
 | **E4** | `Runtime` (serviço headless) orquestra `Core`+`Ipc`, nunca `Graphics` — o host gráfico acopla por fora | teste E4 |
@@ -57,9 +57,9 @@ graph LR
 | Regra | Enunciado | Imposição |
 |---|---|---|
 | **F1** | Núcleos do editor (`core/`) são puros: sem Electron, Node ou middleware | teste F1 |
-| **F2** | O renderer nunca importa Electron/Node; `main/` só como type (contrato `window.p7m`) | teste F2 |
+| **F2** | O renderer nunca importa Electron/Node; `main/` só como type (contrato `window.gridsmith`) | teste F2 |
 | **F3** | Electron só existe no processo `main/` | teste F3 |
-| **F4** | O frontend nunca reimplementa framing de protocolo — peers vêm de `@p7m/middleware` | teste F4 |
+| **F4** | O frontend nunca reimplementa framing de protocolo — peers vêm de `@gridsmith/middleware` | teste F4 |
 | **F5** | SDKs de transporte (`@grpc/*`, `node:http`) são exclusivos de `main/transport/` — `core/` decide, `main/transport/` fala | teste F5 |
 | **F6** | O teclado global tem UM ouvinte (`renderer/renderer.ts`); atalho se CONTRIBUI ao workbench, não se instala | teste F6 |
 
@@ -87,7 +87,7 @@ graph TD
     R13["R13 todas as bordas usam a mesma sessao"]
   end
   subgraph ENg["Engine (E1-E5) — reflexao de assembly"]
-    E1["E1 Core sem deps P7m"]
+    E1["E1 Core sem deps Gridsmith"]
     E2["E2 Ipc independente do dominio"]
     E3["E3 Graphics so conhece Core"]
     E4["E4 Runtime Core+Ipc, nunca Graphics"]
@@ -97,7 +97,7 @@ graph TD
     F1["F1 core/ puro (sem Electron/Node/mw)"]
     F2["F2 renderer sem Electron/Node"]
     F3["F3 Electron so no main/"]
-    F4["F4 framing vem de @p7m/middleware"]
+    F4["F4 framing vem de @gridsmith/middleware"]
     F5["F5 SDKs de transporte so em main/transport/"]
     F6["F6 um unico ouvinte de teclado"]
   end
@@ -128,7 +128,7 @@ graph TD
 >
 > Duas defesas, uma insuficiente e outra decisiva:
 >
-> 1. `P7m.Engine.Ipc.Tests.csproj` fixa
+> 1. `Gridsmith.Engine.Ipc.Tests.csproj` fixa
 >    `<TieredCompilation>false</TieredCompilation>`, para que a promoção de um
 >    método a tier1 não aconteça dentro da janela. **Necessário, mas não
 >    suficiente** — o flake voltou com a tiered compilation já desligada.
@@ -152,7 +152,7 @@ semânticas, todas convergindo nos quality gates e na suíte completa (contagem 
 
 ```mermaid
 mindmap
-  root(("Fitness Functions P7M"))
+  root(("Fitness Functions Gridsmith"))
     Estruturais
       Middleware R1-R13 import-graph
       Frontend F1-F6

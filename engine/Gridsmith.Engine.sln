@@ -1,0 +1,57 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{3F344EB3-72AA-4F5F-8599-C32F3BBF4CE0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Gridsmith.Engine.Core", "src\Gridsmith.Engine.Core\Gridsmith.Engine.Core.csproj", "{C0561E46-5615-4BAA-9F7B-71DEE67E3883}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Gridsmith.Engine.Ipc", "src\Gridsmith.Engine.Ipc\Gridsmith.Engine.Ipc.csproj", "{7ECB5C0E-8942-431F-836D-46B350180EA5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Gridsmith.Engine.Runtime", "src\Gridsmith.Engine.Runtime\Gridsmith.Engine.Runtime.csproj", "{68535CFC-75E9-4E99-8318-542BBC17FC6A}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{9AE82C0D-1BE7-4201-9845-8B8C3A5A7A7B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Gridsmith.Engine.Ipc.Tests", "tests\Gridsmith.Engine.Ipc.Tests\Gridsmith.Engine.Ipc.Tests.csproj", "{6FF71DAD-45B4-46DB-A0C5-CA9AB9477C85}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Gridsmith.Engine.Graphics", "src\Gridsmith.Engine.Graphics\Gridsmith.Engine.Graphics.csproj", "{EC7454D9-4B3E-4B15-A7A8-B1DDBE65C0B3}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C0561E46-5615-4BAA-9F7B-71DEE67E3883}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C0561E46-5615-4BAA-9F7B-71DEE67E3883}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C0561E46-5615-4BAA-9F7B-71DEE67E3883}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C0561E46-5615-4BAA-9F7B-71DEE67E3883}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7ECB5C0E-8942-431F-836D-46B350180EA5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7ECB5C0E-8942-431F-836D-46B350180EA5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7ECB5C0E-8942-431F-836D-46B350180EA5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7ECB5C0E-8942-431F-836D-46B350180EA5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{68535CFC-75E9-4E99-8318-542BBC17FC6A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{68535CFC-75E9-4E99-8318-542BBC17FC6A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{68535CFC-75E9-4E99-8318-542BBC17FC6A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{68535CFC-75E9-4E99-8318-542BBC17FC6A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6FF71DAD-45B4-46DB-A0C5-CA9AB9477C85}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6FF71DAD-45B4-46DB-A0C5-CA9AB9477C85}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6FF71DAD-45B4-46DB-A0C5-CA9AB9477C85}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6FF71DAD-45B4-46DB-A0C5-CA9AB9477C85}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EC7454D9-4B3E-4B15-A7A8-B1DDBE65C0B3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EC7454D9-4B3E-4B15-A7A8-B1DDBE65C0B3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EC7454D9-4B3E-4B15-A7A8-B1DDBE65C0B3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EC7454D9-4B3E-4B15-A7A8-B1DDBE65C0B3}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{C0561E46-5615-4BAA-9F7B-71DEE67E3883} = {3F344EB3-72AA-4F5F-8599-C32F3BBF4CE0}
+		{7ECB5C0E-8942-431F-836D-46B350180EA5} = {3F344EB3-72AA-4F5F-8599-C32F3BBF4CE0}
+		{68535CFC-75E9-4E99-8318-542BBC17FC6A} = {3F344EB3-72AA-4F5F-8599-C32F3BBF4CE0}
+		{6FF71DAD-45B4-46DB-A0C5-CA9AB9477C85} = {9AE82C0D-1BE7-4201-9845-8B8C3A5A7A7B}
+		{EC7454D9-4B3E-4B15-A7A8-B1DDBE65C0B3} = {3F344EB3-72AA-4F5F-8599-C32F3BBF4CE0}
+	EndGlobalSection
+EndGlobal

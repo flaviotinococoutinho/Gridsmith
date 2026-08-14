@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/blueprint.commands",
+  "$id": "gridsmith://contracts/blueprint.commands",
   "title": "Comandos canônicos do Blueprint",
   "description": "Payload de cada comando canônico, como as bordas (JSON-RPC, GraphQL, gRPC, MCP) o recebem antes de `reshapeCommand` reconstruir o comando. FONTE DE VERDADE do conjunto de kinds: este arquivo, `COMMAND_KINDS` em middleware/src/canonical/commandShape.ts e o enum `CommandKind` do SDL devem cobrir EXATAMENTE o mesmo conjunto — o lint de contratos do `npm run docs:verify` quebra se divergirem. O enum do SDL usa o mesmo nome com `/` trocado por `_`. Este schema descreve o SHAPE aceito na borda; a validação semântica (limites, coerência entre campos, existência de referências) é do BlueprintStore e devolve InvalidParams. Kinds em $defs.",
   "$defs": {

@@ -1,14 +1,14 @@
 {
-  "name": "@p7m/middleware",
+  "name": "@gridsmith/middleware",
   "version": "0.1.0",
-  "description": "Camada de orquestração do ecossistema P7M EaaS: servidor MCP, estado declarativo (AST) e ponte JSON-RPC com a engine MonoGame",
+  "description": "Camada de orquestração do ecossistema Gridsmith EaaS: servidor MCP, estado declarativo (AST) e ponte JSON-RPC com a engine MonoGame",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "main": "dist/index.js",
   "bin": {
-    "p7m-middleware": "dist/index.js"
+    "gridsmith-middleware": "dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-contracts.mjs",

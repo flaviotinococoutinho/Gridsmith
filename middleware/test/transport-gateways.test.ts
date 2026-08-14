@@ -226,9 +226,9 @@ interface HotPathClient {
 
 function grpcClient(target: string): HotPathClient {
   const pkg = loadEditorProto() as unknown as {
-    p7m: { editor: { v1: { EditorHotPath: new (t: string, c: grpc.ChannelCredentials) => HotPathClient } } };
+    gridsmith: { editor: { v1: { EditorHotPath: new (t: string, c: grpc.ChannelCredentials) => HotPathClient } } };
   };
-  const raw = new pkg.p7m.editor.v1.EditorHotPath(target, grpc.credentials.createInsecure());
+  const raw = new pkg.gridsmith.editor.v1.EditorHotPath(target, grpc.credentials.createInsecure());
   const authenticatedMethods = new Set([
     "Health", "Dispatch", "Query", "Snapshot", "StreamEvents", "StreamEventsV2",
     "ProjectCreate", "ProjectOpenDocument", "ProjectClose", "ProjectStatus",
@@ -257,9 +257,9 @@ test("paridade de contrato: cópias em dist/ idênticas à fonte em contracts/ e
   );
   assert.equal(sdlDist, sdlSource, "dist SDL must be byte-identical to contracts/ (run npm run build)");
 
-  const protoSource = fs.readFileSync(path.join(REPO, "contracts/grpc/p7m_editor.proto"), "utf8");
+  const protoSource = fs.readFileSync(path.join(REPO, "contracts/grpc/gridsmith_editor.proto"), "utf8");
   const protoDist = fs.readFileSync(
-    path.join(REPO, "middleware/dist/contracts/grpc/p7m_editor.proto"),
+    path.join(REPO, "middleware/dist/contracts/grpc/gridsmith_editor.proto"),
     "utf8",
   );
   assert.equal(protoDist, protoSource, "dist proto must be byte-identical to contracts/");
@@ -336,7 +336,7 @@ test("EditorSurface: snapshot completo e requestId impedem dispatch duplicado", 
 test("GraphQL: dispatch/query/eventBatch/templates/experience na mesma superfície canônica", async () => {
   const { surface, journal } = await makeRig();
   const gateway = new GraphQlGateway({
-    pipeName: `p7m-gql-${process.pid}-${pipeCounter++}`,
+    pipeName: `gridsmith-gql-${process.pid}-${pipeCounter++}`,
     surface,
     journal,
     log: silent,
@@ -473,7 +473,7 @@ test("GraphQL eventBatch: gap/cursor futuro são explícitos e nunca retornam ca
   journal.append("b", { kind: "b" });
   journal.append("c", { kind: "c" });
   const gateway = new GraphQlGateway({
-    pipeName: `p7m-gql-gap-${process.pid}-${pipeCounter++}`,
+    pipeName: `gridsmith-gql-gap-${process.pid}-${pipeCounter++}`,
     surface,
     journal,
     log: silent,
@@ -519,7 +519,7 @@ test("GraphQL eventBatch: gap/cursor futuro são explícitos e nunca retornam ca
 test("gRPC: dispatch/query unários + StreamEventsV2 session-aware com catch-up e ao vivo", async () => {
   const { surface, journal } = await makeRig();
   const gateway = new GrpcGateway({
-    pipeName: `p7m-grpc-${process.pid}-${pipeCounter++}`,
+    pipeName: `gridsmith-grpc-${process.pid}-${pipeCounter++}`,
     surface,
     journal,
     log: silent,
@@ -662,7 +662,7 @@ test("gRPC: dispatch/query unários + StreamEventsV2 session-aware com catch-up 
 
 test("sessão de projeto: paridade GraphQL, gRPC e gateway legado sobre a mesma sessão", async () => {
   const rig = await makeRig();
-  const pipe = `p7m-both-${process.pid}-${pipeCounter++}`;
+  const pipe = `gridsmith-both-${process.pid}-${pipeCounter++}`;
   const gql = new GraphQlGateway({
     pipeName: pipe,
     surface: rig.surface,

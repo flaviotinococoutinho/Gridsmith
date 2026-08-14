@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "p7m://contracts/engine.handshake",
+  "$id": "gridsmith://contracts/engine.handshake",
   "title": "engine/handshake",
   "description": "Primeiro request enviado pela engine ao conectar. O middleware valida a versão de protocolo e responde com a identidade da sessão.",
   "type": "object",

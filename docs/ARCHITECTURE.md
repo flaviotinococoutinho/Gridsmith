@@ -1,4 +1,4 @@
-# Arquitetura do Ecossistema P7M EaaS
+# Arquitetura do Ecossistema Gridsmith EaaS
 
 ## Visão geral
 
@@ -7,7 +7,7 @@ graph TD
   subgraph FE["Frontend (Electron/TS)"]
     direction TB
     FEmain["main (Node privilegiado)"]
-    FEpre["preload (window.p7m)"]
+    FEpre["preload (window.gridsmith)"]
     FErnd["renderer (UI)"]
     FEcore["core/ (nucleos puros)"]
     FEmain --> FEpre --> FErnd --> FEcore
@@ -141,7 +141,7 @@ sequenceDiagram
   alt MAJOR de protocolVersion diverge
     M-->>E: erro ProtocolMismatch -32001
   else MAJOR compativel (PROTOCOL_VERSION 1.0)
-    M-->>E: {sessionId uuid v4, serverName p7m-middleware, acceptedCapabilities}
+    M-->>E: {sessionId uuid v4, serverName gridsmith-middleware, acceptedCapabilities}
     Note over M: emite evento session
     M->>E: welcome ping
     M->>E: engine/reset_session {}
@@ -194,8 +194,8 @@ O plano de controle JSON-RPC acima é a borda **middleware ↔ engine**. A borda
 - **GraphQL** ([`../contracts/graphql/editor.schema.graphql`](../contracts/graphql/editor.schema.graphql)):
   superfície **baseline completa** — toda operação do editor existe aqui — e
   também o destino do **fallback**.
-- **gRPC** ([`../contracts/grpc/p7m_editor.proto`](../contracts/grpc/p7m_editor.proto),
-  package `p7m.editor.v1`): **caminho quente prioritário medido** — `Dispatch`,
+- **gRPC** ([`../contracts/grpc/gridsmith_editor.proto`](../contracts/grpc/gridsmith_editor.proto),
+  package `gridsmith.editor.v1`): **caminho quente prioritário medido** — `Dispatch`,
   `Query`, `StreamEventsV2` (server streaming com status de cursor) e `Health` —
   mais a paridade de sessão `ProjectCreate/OpenDocument/Close/Status`;
   `StreamEvents` permanece apenas para compatibilidade.
@@ -285,7 +285,7 @@ integral. Antes de reidratar outro projeto, o adapter executa
 `engine/reset_session`, que limpa atores, níveis, luzes, câmera, esqueletos e
 readers de shared memory sob um único lock.
 
-**Verbosidade:** `P7M_VERBOSITY=silent|error|warn|info|debug|trace` controla os
+**Verbosidade:** `GRIDSMITH_VERBOSITY=silent|error|warn|info|debug|trace` controla os
 loggers estruturados dos dois lados (stdout do middleware pertence ao MCP; logs
 vão para stderr). E2E das duas fases (gRPC quente + fallback GraphQL):
 `scripts/verify-transports.sh`.

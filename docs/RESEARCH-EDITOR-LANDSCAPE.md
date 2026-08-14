@@ -1,8 +1,8 @@
-# Pesquisa: paisagem de editores 2D e o que o P7M absorve de cada um
+# Pesquisa: paisagem de editores 2D e o que o Gridsmith absorve de cada um
 
 Investigação de seis ferramentas consolidadas do ecossistema 2D — FlatRedBall,
 LDtk, Tiled, Gum, Ogmo Editor 3 e Aseprite — para extrair o melhor de cada
-experiência de edição e integrá-lo ao ecossistema P7M EaaS. Cada seção termina
+experiência de edição e integrá-lo ao ecossistema Gridsmith EaaS. Cada seção termina
 com a **decisão de projeto** correspondente e onde ela vive no código.
 
 Fontes primárias: [LDtk](https://ldtk.io/) e [auto-layers](https://ldtk.io/docs/general/auto-layers/) /
@@ -17,7 +17,7 @@ e [custom properties](https://doc.mapeditor.org/en/stable/manual/custom-properti
 
 ```mermaid
 mindmap
-  root(("P7M absorve o melhor de cada editor 2D"))
+  root(("Gridsmith absorve o melhor de cada editor 2D"))
     LDtk
       IntGrid vira AutoTiler deterministico
       Auto-layers regras NxN com wildcard e negacao
@@ -42,7 +42,7 @@ mindmap
       CLI batch alimenta o watcher de assets
 ```
 
-*Mostra os conceitos absorvidos de cada uma das seis ferramentas e a feature correspondente do P7M (AutoTiler, entitydef tipado, TilemapStore, importador Aseprite, stateMachines).*
+*Mostra os conceitos absorvidos de cada uma das seis ferramentas e a feature correspondente do Gridsmith (AutoTiler, entitydef tipado, TilemapStore, importador Aseprite, stateMachines).*
 
 ---
 
@@ -59,7 +59,7 @@ mindmap
 - **World map**: níveis organizados espacialmente (Grid-vania/linear/free) com
   vizinhança navegável.
 
-**Decisão P7M:** o IntGrid + auto-tiling é a espinha do nosso subsistema de
+**Decisão Gridsmith:** o IntGrid + auto-tiling é a espinha do nosso subsistema de
 níveis. A resolução de regras é **determinística e roda no middleware** (função
 pura, testável, com seed) — a engine recebe tiles já resolvidos e os consolida
 em buffer estático (casa com a diretriz "entidades stateless em um único buffer
@@ -81,7 +81,7 @@ graph LR
   AT == "controle: tilemap/define (tiles ja resolvidos)" ==> TS
 ```
 
-*Mostra a decisao LDtk do P7M: pinta-se significado (IntGrid), a resolucao deterministica por seed roda no middleware e a engine recebe apenas tiles resolvidos para consolidar em buffer estatico.*
+*Mostra a decisao LDtk do Gridsmith: pinta-se significado (IntGrid), a resolucao deterministica por seed roda no middleware e a engine recebe apenas tiles resolvidos para consolidar em buffer estatico.*
 
 ## 2. Tiled — generalidade e propriedades customizadas
 
@@ -93,7 +93,7 @@ graph LR
 - **Infinite maps** com alocação por chunk; camadas de objetos independentes
   de grid.
 
-**Decisão P7M:** o sistema de tipos do projeto (enums + classes) converge com
+**Decisão Gridsmith:** o sistema de tipos do projeto (enums + classes) converge com
 os campos tipados do LDtk num único registro de definições no Blueprint
 (`entitydef/define` com `enum` como tipo de campo). Wang tiles ficam como
 evolução do AutoTiler (regras por borda além de padrão NxN) — registrado como
@@ -109,7 +109,7 @@ típicos; o limite está documentado no contrato).
   com os tipos corretos.
 - Minimalismo: Grid/Tile/Entity/Decal layers cobrem 95% dos jogos 2D.
 
-**Decisão P7M:** confirma a nossa aposta da Fase 2: **o editor é uma projeção
+**Decisão Gridsmith:** confirma a nossa aposta da Fase 2: **o editor é uma projeção
 de definições** (`engine/describe` + definições do Blueprint), nunca uma UI
 hardcoded. O que o Ogmo faz com o arquivo de projeto, nós fazemos com o AST do
 middleware: `entitydef/define` é o "template de entidade" e `editorConcepts()`
@@ -125,7 +125,7 @@ entrega a paleta pronta para a UI.
   em runtime (live edit).
 - Integração nativa com MonoGame e content pipeline.
 
-**Decisão P7M:** nosso equivalente de "generated code" é o **artefato binário
+**Decisão Gridsmith:** nosso equivalente de "generated code" é o **artefato binário
 determinístico**: blueprint → resolução (auto-tiling, skinning bind, clips) →
 buffers consumidos pela engine. A separação gerado/custom vira separação
 plano-declarativo (AST, sempre regenerável) / código da engine. As variáveis
@@ -141,7 +141,7 @@ live edit via `camera/configure`-style RPCs por subsistema.
 - Layout hierárquico com unidades relativas (percent/pixels/relative-to-
   container) e componentes instanciáveis; runtime NuGet para MonoGame.
 
-**Decisão P7M:** os grafos de máquina de estados da Fase 4 (escopo original)
+**Decisão Gridsmith:** os grafos de máquina de estados da Fase 4 (escopo original)
 adotam a semântica Gum: **um estado é um conjunto nomeado de atribuições de
 propriedades; transições interpolam** — reutilizando as curvas de Bézier do
 editor de animação para easing. Isso unifica FSM de gameplay, estados visuais
@@ -159,7 +159,7 @@ Fase 4).
   exportação de spritesheet + metadados JSON (json-hash/json-array) — perfeito
   para um watcher de assets.
 
-**Decisão P7M:** o pipeline de assets (Fase 4) trata o export JSON do Aseprite
+**Decisão Gridsmith:** o pipeline de assets (Fase 4) trata o export JSON do Aseprite
 como **formato de ingestão de primeira classe**: o importador converte
 frameTags → clipes (com direção forward/reverse/pingpong expandida
 deterministicamente), durations por frame → timeline, slices → pivôs/9-slice.
@@ -187,9 +187,9 @@ sequenceDiagram
 
 ---
 
-## Síntese: o modelo unificado P7M
+## Síntese: o modelo unificado Gridsmith
 
-As seis ferramentas convergem para quatro princípios que o P7M adota como lei:
+As seis ferramentas convergem para quatro princípios que o Gridsmith adota como lei:
 
 1. **Definições geram o editor** (Ogmo/LDtk/Tiled): toda UI de edição é
    projeção de um schema vivo — `engine/describe` para capacidades da engine,
@@ -211,7 +211,7 @@ graph TD
   D -->|"nao"| F{"Depende de infra ainda ausente?"}
   F -->|"plano de dados / editor Electron"| G(["Adia com registro (Fase 4/5)"])
   F -->|"nao"| C
-  C --> H(["vira lei do modelo unificado P7M"])
+  C --> H(["vira lei do modelo unificado Gridsmith"])
 ```
 
 *Mostra o criterio de decisao de absorcao: nucleo entra agora como funcao pura + RPC + store DOD, extensoes ficam registradas no contrato e o que depende de infra ausente e adiado com registro para a Fase 4/5.*

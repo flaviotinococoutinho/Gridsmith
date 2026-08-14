@@ -37,11 +37,11 @@ npm run benchmark:transports
 ```
 
 O script compila middleware e frontend, gera um token efêmero em
-`P7M_EDITOR_AUTH_TOKEN` quando ele não foi fornecido e imprime o caminho do
+`GRIDSMITH_EDITOR_AUTH_TOKEN` quando ele não foi fornecido e imprime o caminho do
 relatório JSON. Para escolher o destino:
 
 ```bash
-npm run benchmark:transports -- --output /tmp/p7m-transport-benchmark.json
+npm run benchmark:transports -- --output /tmp/gridsmith-transport-benchmark.json
 ```
 
 Defaults de medição:
@@ -57,14 +57,14 @@ Os defaults podem ser alterados apenas para experimentos diagnósticos:
 
 | Variável | Default | Efeito |
 |---|---:|---|
-| `P7M_BENCH_FORKS` | 3 | Processos independentes do middleware |
-| `P7M_BENCH_WARMUPS` | 20 | Chamadas descartadas antes da medição |
-| `P7M_BENCH_SAMPLES` | 100 | Chamadas medidas por operação e fork |
-| `P7M_BENCH_CONCURRENCY` | 1 | Chamadas simultâneas por worker pool |
-| `P7M_BENCH_EVENT_COUNT` | 1000 | Eventos do fluxo; relatório oficial deve manter 1000 |
-| `P7M_BENCH_GRAPHQL_POLL_MS` | 10 | Intervalo explícito do consumidor GraphQL |
-| `P7M_BENCH_REQUEST_TIMEOUT_MS` | 10000 | Deadline por chamada |
-| `P7M_BENCH_FLOW_TIMEOUT_MS` | 30000 | Deadline para receber todos os eventos |
+| `GRIDSMITH_BENCH_FORKS` | 3 | Processos independentes do middleware |
+| `GRIDSMITH_BENCH_WARMUPS` | 20 | Chamadas descartadas antes da medição |
+| `GRIDSMITH_BENCH_SAMPLES` | 100 | Chamadas medidas por operação e fork |
+| `GRIDSMITH_BENCH_CONCURRENCY` | 1 | Chamadas simultâneas por worker pool |
+| `GRIDSMITH_BENCH_EVENT_COUNT` | 1000 | Eventos do fluxo; relatório oficial deve manter 1000 |
+| `GRIDSMITH_BENCH_GRAPHQL_POLL_MS` | 10 | Intervalo explícito do consumidor GraphQL |
+| `GRIDSMITH_BENCH_REQUEST_TIMEOUT_MS` | 10000 | Deadline por chamada |
+| `GRIDSMITH_BENCH_FLOW_TIMEOUT_MS` | 30000 | Deadline para receber todos os eventos |
 
 ## Matriz e semântica
 

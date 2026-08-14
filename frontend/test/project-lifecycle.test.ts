@@ -19,21 +19,21 @@ function makeLifecycle(startMs = 0): { lifecycle: ProjectLifecycle; tick: (ms: n
 test("fluxo feliz: novo → editar → salvar → fechar", () => {
   const { lifecycle } = makeLifecycle();
   assert.equal(lifecycle.currentState, "no-project");
-  assert.equal(lifecycle.windowTitle, "P7M");
+  assert.equal(lifecycle.windowTitle, "Gridsmith");
 
   lifecycle.beginOpen();
   lifecycle.opened({ name: "Meu Jogo" });
   assert.equal(lifecycle.currentState, "open-clean");
-  assert.equal(lifecycle.windowTitle, "Meu Jogo — P7M");
+  assert.equal(lifecycle.windowTitle, "Meu Jogo — Gridsmith");
 
   lifecycle.commandApplied();
   assert.equal(lifecycle.currentState, "open-dirty");
-  assert.equal(lifecycle.windowTitle, "● Meu Jogo — P7M"); // marcador de sujo
+  assert.equal(lifecycle.windowTitle, "● Meu Jogo — Gridsmith"); // marcador de sujo
 
   lifecycle.beginSave();
-  lifecycle.saved("/projetos/meu-jogo.p7m.json");
+  lifecycle.saved("/projetos/meu-jogo.gridsmith.json");
   assert.equal(lifecycle.currentState, "open-clean");
-  assert.equal(lifecycle.project?.filePath, "/projetos/meu-jogo.p7m.json");
+  assert.equal(lifecycle.project?.filePath, "/projetos/meu-jogo.gridsmith.json");
 
   assert.equal(lifecycle.requestClose(), "close");
   assert.equal(lifecycle.currentState, "closing");
@@ -117,7 +117,7 @@ test("autosave dispara por limiar de comandos e por intervalo", () => {
   lifecycle.onEvent((e) => events.push(e));
 
   lifecycle.beginOpen();
-  lifecycle.opened({ filePath: "/p/a.p7m.json", name: "A" });
+  lifecycle.opened({ filePath: "/p/a.gridsmith.json", name: "A" });
 
   // limiar = 3 comandos
   assert.equal(lifecycle.commandApplied(), false);
@@ -152,7 +152,7 @@ test("recentes: mais novo primeiro, sem duplicatas, máximo de 10", () => {
   const { lifecycle, tick } = makeLifecycle(1_000);
   for (let i = 0; i < 12; i++) {
     lifecycle.beginOpen();
-    lifecycle.opened({ filePath: `/p/jogo-${i % 11}.p7m.json`, name: `Jogo ${i % 11}` });
+    lifecycle.opened({ filePath: `/p/jogo-${i % 11}.gridsmith.json`, name: `Jogo ${i % 11}` });
     lifecycle.requestClose();
     lifecycle.confirmClose();
     tick(1_000);
@@ -161,7 +161,7 @@ test("recentes: mais novo primeiro, sem duplicatas, máximo de 10", () => {
   const recents = lifecycle.recentProjects;
   assert.equal(recents.length, 10);
   // o último aberto (jogo-0, reaberto na iteração 11) é o primeiro da lista
-  assert.equal(recents[0]?.filePath, "/p/jogo-0.p7m.json");
+  assert.equal(recents[0]?.filePath, "/p/jogo-0.gridsmith.json");
   const unique = new Set(recents.map((r) => r.filePath));
   assert.equal(unique.size, recents.length);
 });
@@ -177,22 +177,22 @@ test("transições fora de ordem falham com erros tipados", () => {
 
 test("parseRecents saneia o arquivo em disco: entrada inválida nunca vira item de UI", () => {
   const parsed = parseRecents([
-    { filePath: "/a.p7m.json", name: "A", lastOpenedUnixMs: 100 },
-    { filePath: "/b.p7m.json", name: "B", lastOpenedUnixMs: 300 },
+    { filePath: "/a.gridsmith.json", name: "A", lastOpenedUnixMs: 100 },
+    { filePath: "/b.gridsmith.json", name: "B", lastOpenedUnixMs: 300 },
     { filePath: "", name: "sem caminho", lastOpenedUnixMs: 200 },
-    { filePath: "/c.p7m.json", name: "", lastOpenedUnixMs: 200 },
-    { filePath: "/d.p7m.json", name: "D", lastOpenedUnixMs: Number.NaN },
-    { filePath: "/e.p7m.json", name: "E" },
+    { filePath: "/c.gridsmith.json", name: "", lastOpenedUnixMs: 200 },
+    { filePath: "/d.gridsmith.json", name: "D", lastOpenedUnixMs: Number.NaN },
+    { filePath: "/e.gridsmith.json", name: "E" },
     "texto solto",
     null,
   ]);
-  assert.deepEqual(parsed.map((r) => r.filePath), ["/b.p7m.json", "/a.p7m.json"]);
+  assert.deepEqual(parsed.map((r) => r.filePath), ["/b.gridsmith.json", "/a.gridsmith.json"]);
 });
 
 test("parseRecents deduplica por caminho mantendo a abertura mais recente", () => {
   const parsed = parseRecents([
-    { filePath: "/a.p7m.json", name: "Antigo", lastOpenedUnixMs: 100 },
-    { filePath: "/a.p7m.json", name: "Novo", lastOpenedUnixMs: 500 },
+    { filePath: "/a.gridsmith.json", name: "Antigo", lastOpenedUnixMs: 100 },
+    { filePath: "/a.gridsmith.json", name: "Novo", lastOpenedUnixMs: 500 },
   ]);
   assert.equal(parsed.length, 1);
   assert.equal(parsed[0]?.name, "Novo");
@@ -200,12 +200,12 @@ test("parseRecents deduplica por caminho mantendo a abertura mais recente", () =
 
 test("parseRecents respeita a capacidade e tolera arquivo corrompido", () => {
   const muitos = Array.from({ length: 25 }, (_, i) => ({
-    filePath: `/p${i}.p7m.json`,
+    filePath: `/p${i}.gridsmith.json`,
     name: `P${i}`,
     lastOpenedUnixMs: i,
   }));
   assert.equal(parseRecents(muitos).length, 10);
-  assert.equal(parseRecents(muitos)[0]?.filePath, "/p24.p7m.json");
+  assert.equal(parseRecents(muitos)[0]?.filePath, "/p24.gridsmith.json");
   // arquivo corrompido não derruba o boot do editor
   assert.deepEqual(parseRecents(undefined), []);
   assert.deepEqual(parseRecents({ nao: "e uma lista" }), []);

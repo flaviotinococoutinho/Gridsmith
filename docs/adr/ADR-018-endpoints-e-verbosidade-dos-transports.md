@@ -27,8 +27,8 @@ processo é erro operacional tipado. Todo bind TCP é restrito a `127.0.0.1`.
 
 **Segurança local:** o main do Electron gera um token aleatório efêmero de
 256 bits e o entrega somente ao processo filho e aos clientes. Execuções com
-serviços externos usam exatamente uma fonte: `P7M_EDITOR_AUTH_TOKEN` ou
-`P7M_EDITOR_AUTH_TOKEN_FILE`; arquivo POSIX deve ser regular, do usuário e sem
+serviços externos usam exatamente uma fonte: `GRIDSMITH_EDITOR_AUTH_TOKEN` ou
+`GRIDSMITH_EDITOR_AUTH_TOKEN_FILE`; arquivo POSIX deve ser regular, do usuário e sem
 permissões de grupo/outros. GraphQL exige Bearer e gRPC exige metadata
 `authorization`; o gateway JSON-RPC legado exige o mesmo segredo no handshake.
 O valor nunca é hardcoded nem registrado.
@@ -38,9 +38,9 @@ Sockets POSIX são verificados como socket do usuário atual, recebem modo
 `ECONNREFUSED` com revalidação de inode. Um listener vivo, symlink, arquivo
 comum ou socket de outro usuário nunca é apagado.
 
-**Verbosidade** (`P7M_VERBOSITY` = `silent|error|warn|info|debug|trace`,
+**Verbosidade** (`GRIDSMITH_VERBOSITY` = `silent|error|warn|info|debug|trace`,
 default `info`): loggers estruturados com escopo hierárquico
-(`p7m:grpc`, `editor-client:graphql`), sink INJETÁVEL (testes capturam
+(`gridsmith:grpc`, `editor-client:graphql`), sink INJETÁVEL (testes capturam
 linhas), emissão só até o nível ativo. Middleware escreve em stderr; o
 frontend usa `console.error`. Transições de transporte sempre logam a RAZÃO
 (`history` do router carrega a telemetria).

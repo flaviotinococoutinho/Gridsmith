@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Gridsmith.Engine.Graphics</RootNamespace>
+    <Description>Host gráfico MonoGame da engine Gridsmith: pipeline deferred 2D (MRT), vertex shader de Linear Blend Skinning e câmera cinemática aplicada à projeção</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.2.1105" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Gridsmith.Engine.Core/Gridsmith.Engine.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders/**/*.fx" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Content/Content.mgcb" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

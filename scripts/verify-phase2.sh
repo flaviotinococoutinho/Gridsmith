@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PIPE_NAME="p7m-phase2-$$"
+PIPE_NAME="gridsmith-phase2-$$"
 ENGINE_LOG="$(mktemp)"
 
 cleanup() {
@@ -25,7 +25,7 @@ echo "==> Building engine"
 (cd "$ROOT/engine" && dotnet build --nologo -v quiet)
 
 echo "==> Starting engine service (pipe: $PIPE_NAME)"
-dotnet run --project "$ROOT/engine/src/P7m.Engine.Runtime" --no-build -- \
+dotnet run --project "$ROOT/engine/src/Gridsmith.Engine.Runtime" --no-build -- \
   --pipe "$PIPE_NAME" 2>"$ENGINE_LOG" &
 ENGINE_PID=$!
 

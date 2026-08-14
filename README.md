@@ -1,4 +1,4 @@
-# P7M — Ecossistema EaaS (Engine-as-a-Service) para Plataforma 2D
+# Gridsmith — Ecossistema EaaS (Engine-as-a-Service) para Plataforma 2D
 
 Ecossistema de desenvolvimento de jogos 2D baseado no conceito de **Engine-as-a-Service**,
 composto por três macrocamadas independentes e altamente desacopladas:
@@ -15,7 +15,7 @@ graph TD
   subgraph FE["Frontend (Electron/TS)"]
     direction TB
     FEmain["main (Node privilegiado)"]
-    FEpre["preload (window.p7m)"]
+    FEpre["preload (window.gridsmith)"]
     FErnd["renderer (UI)"]
     FEcore["core/ (nucleos puros)"]
     FEmain --> FEpre --> FErnd --> FEcore
@@ -51,7 +51,7 @@ graph TD
 
 ## Princípios arquiteturais
 
-O P7M é uma ferramenta visual **fortemente orientada a domínio**: o usuário
+O Gridsmith é uma ferramenta visual **fortemente orientada a domínio**: o usuário
 edita um **modelo canônico próprio** (comandos → eventos, hooks/filters,
 pipelines e artefatos versionáveis), que não depende de runtime. **Adapters**
 projetam o modelo em runtimes concretos (MonoGame hoje), e a experiência
@@ -186,7 +186,7 @@ npm start         # inicia o pipe server + servidor MCP (stdio)
 cd engine
 dotnet build
 dotnet test
-dotnet run --project src/P7m.Engine.Runtime -- --pipe p7m-engine
+dotnet run --project src/Gridsmith.Engine.Runtime -- --pipe gridsmith-engine
 ```
 
 ### Frontend (Electron)
@@ -214,14 +214,14 @@ O Electron é o **supervisor do ecossistema**: por padrão o processo `main` sob
 middleware (via `ELECTRON_RUN_AS_NODE`) e a engine (`dotnet <dll>`). O app fala com o
 middleware por **gRPC no caminho quente** (fallback automático para **GraphQL** —
 contratos em `contracts/grpc/` e `contracts/graphql/`; política em
-[`docs/adr/`](docs/adr/)). Verbosidade: `P7M_VERBOSITY=silent|error|warn|info|debug|trace`.
+[`docs/adr/`](docs/adr/)). Verbosidade: `GRIDSMITH_VERBOSITY=silent|error|warn|info|debug|trace`.
 
 ```bash
 # supervisão local (padrão): o main spawna middleware e engine e reidrata a sessão
 npm run app
 
 # serviços externos (dev): suba middleware e engine à parte e conecte por --pipe
-npm run app -- --external-services --pipe p7m-engine
+npm run app -- --external-services --pipe gridsmith-engine
 ```
 
 ### Validação ponta-a-ponta

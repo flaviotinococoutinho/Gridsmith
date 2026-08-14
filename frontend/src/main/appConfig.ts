@@ -76,7 +76,7 @@ export function hardenedWindowOptions(preloadPath: string): BrowserWindowConstru
     width: state.width,
     height: state.height,
     ...(state.x !== undefined && state.y !== undefined ? { x: state.x, y: state.y } : {}),
-    title: "P7M",
+    title: "Gridsmith",
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -113,7 +113,7 @@ export function ensureSingleInstance(
       if (window.isMinimized()) window.restore();
       window.focus();
     }
-    // a segunda instância morre, mas o ARGUMENTO dela não: abrir um .p7m.json
+    // a segunda instância morre, mas o ARGUMENTO dela não: abrir um .gridsmith.json
     // pelo gerenciador de arquivos com o app já aberto tem de abrir o projeto,
     // não só piscar a janela
     onSecondInstance?.(argv, workingDirectory);

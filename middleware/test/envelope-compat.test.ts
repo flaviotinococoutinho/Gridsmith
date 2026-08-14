@@ -22,7 +22,7 @@ import protobuf from "protobufjs";
 
 const ENVELOPE_ANTIGO = `
 syntax = "proto3";
-package p7m.editor.v1;
+package gridsmith.editor.v1;
 
 message EventEnvelope {
   uint64 seq = 1;
@@ -45,18 +45,18 @@ message EventEnvelope {
 type EnvelopeType = protobuf.Type;
 
 function carregar(protoPath: string): EnvelopeType {
-  return protobuf.loadSync(protoPath).lookupType("p7m.editor.v1.EventEnvelope");
+  return protobuf.loadSync(protoPath).lookupType("gridsmith.editor.v1.EventEnvelope");
 }
 
 function envelopeAntigo(): EnvelopeType {
-  const dir = mkdtempSync(path.join(tmpdir(), "p7m-envelope-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "gridsmith-envelope-"));
   const file = path.join(dir, "legacy_envelope.proto");
   writeFileSync(file, ENVELOPE_ANTIGO);
   return carregar(file);
 }
 
 function envelopeNovo(): EnvelopeType {
-  return carregar(path.join(import.meta.dirname, "..", "..", "contracts", "grpc", "p7m_editor.proto"));
+  return carregar(path.join(import.meta.dirname, "..", "..", "contracts", "grpc", "gridsmith_editor.proto"));
 }
 
 test("bytes do servidor NOVO preservam a projeção quando lidos pelo cliente ANTIGO", () => {
@@ -158,7 +158,7 @@ test("os campos 7, 8 e 9 do envelope são imutáveis — o proto declara isso po
 /** Só o corpo de `message EventEnvelope { ... }`. */
 function envelopeBlock(): string {
   const proto = readFileSync(
-    path.join(import.meta.dirname, "..", "..", "contracts", "grpc", "p7m_editor.proto"),
+    path.join(import.meta.dirname, "..", "..", "contracts", "grpc", "gridsmith_editor.proto"),
     "utf8",
   );
   const match = /message EventEnvelope \{([\s\S]*?)\n\}/.exec(proto);

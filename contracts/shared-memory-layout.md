@@ -5,7 +5,7 @@ Todo o conteúdo é **little-endian**. A fonte de verdade dos offsets é a struc
 (`LayoutKind.Sequential`) — a engine publica o layout via `engine/describe`, e o
 escritor **deve** usar os offsets publicados, nunca valores hardcoded.
 
-Este arquivo especifica o **plano de dados** do P7M — o Memory-Mapped File (MMF)
+Este arquivo especifica o **plano de dados** do Gridsmith — o Memory-Mapped File (MMF)
 compartilhado entre escritor e leitor. Para situá-lo no ecossistema, os dois planos
 que ligam as três camadas locais:
 
@@ -33,7 +33,7 @@ graph TD
 
 ## Resolução do endpoint físico
 
-O `sharedMemoryMapName` lógico (ex.: `p7m-mesh-hero`) resolve para um arquivo:
+O `sharedMemoryMapName` lógico (ex.: `gridsmith-mesh-hero`) resolve para um arquivo:
 
 | Plataforma | Caminho |
 |---|---|
@@ -44,7 +44,7 @@ A resolução do caminho físico a partir do nome lógico é uma decisão por pl
 
 ```mermaid
 graph TD
-  A["sharedMemoryMapName logico<br/>(ex.: p7m-mesh-hero)"] --> B{"plataforma?"}
+  A["sharedMemoryMapName logico<br/>(ex.: gridsmith-mesh-hero)"] --> B{"plataforma?"}
   B -->|"POSIX (Linux / macOS)"| C{"XDG_RUNTIME_DIR definido?"}
   C -->|"sim"| D["$XDG_RUNTIME_DIR/&lt;nome&gt;.mmap"]
   C -->|"nao"| E["tmpdir/&lt;nome&gt;.mmap (fallback)"]
@@ -69,7 +69,7 @@ O arquivo é criado pelo escritor com o tamanho final (`64 + vertexCount * strid
 
 | Offset | Tipo | Campo | Semântica |
 |---|---|---|---|
-| 0 | `uint32` | `magic` | `0x4D4D3750` (bytes ASCII `P7MM`) |
+| 0 | `uint32` | `magic` | `0x4D4D5347` (bytes ASCII `GSMM`) |
 | 4 | `uint32` | `layoutVersion` | Versão do layout de vértice. Atual: `1` |
 | 8 | `uint32` | `vertexCount` | Número de vértices no buffer |
 | 12 | `uint32` | `strideInBytes` | Stride de cada vértice |

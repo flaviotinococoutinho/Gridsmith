@@ -1,6 +1,6 @@
-# @p7m/frontend — Editor visual (Electron)
+# @gridsmith/frontend — Editor visual (Electron)
 
-Editor visual do ecossistema P7M EaaS. **Shell fina + núcleos de domínio
+Editor visual do ecossistema Gridsmith EaaS. **Shell fina + núcleos de domínio
 testáveis**: nenhuma lógica de jogo vive no Electron — comandos são
 despachados pelo caminho canônico do middleware e o gating de UI vem da
 governança de runtime.
@@ -16,11 +16,11 @@ governança de runtime.
 | `src/core/transportRouter.ts` | Política **pura** de transporte: gRPC prioritário, fallback imediato para GraphQL em falha DE TRANSPORTE, sondas com backoff e histerese — falha de domínio nunca troca transporte (ADR-017) |
 | `src/core/projectLifecycle.ts` | Máquina de estados do documento vinculada a `projectSessionId`; dirty tracking e autosave só avançam para a sessão confirmada |
 | `src/core/levelEditorTools.ts` | Ferramentas puras do editor de níveis (brush/rect/line/picker, drag de células, hit-test de marcadores) |
-| `src/core/logging.ts` | Logger puro com escopo hierárquico e sink injetável (`P7M_VERBOSITY`) |
+| `src/core/logging.ts` | Logger puro com escopo hierárquico e sink injetável (`GRIDSMITH_VERBOSITY`) |
 | `src/main/transport/` | Clientes dos transports (`GrpcTransport`, `GraphQlTransport`) — os **únicos** módulos com SDKs de transporte (regra F5) |
 | `src/main/EditorClient.ts` | Cliente do middleware: gRPC quente/fallback GraphQL, cursor `(middlewareInstanceId, projectSessionId, seq)`, snapshot integral em resync e operações transacionais de projeto |
 | `src/main/appConfig.ts` | Configuração refinada do Electron: instância única, estado de janela persistido, `sandbox` + navegação/popups bloqueados |
-| `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation, API `window.p7m` (connect/dispatch/query/projectStatus/experience/eventos e notificação de resync) |
+| `src/main/main.ts` + `preload.ts` | Shell Electron: contextIsolation, API `window.gridsmith` (connect/dispatch/query/projectStatus/experience/eventos e notificação de resync) |
 | `src/renderer/` | Shell da UI: régua de painéis do ExperienceGate + log de eventos; editor de níveis montado por contexto em `levelEditorView.ts` |
 
 ### Modelo de processos
@@ -30,7 +30,7 @@ graph TD
   subgraph FE["Frontend (Electron/TS)"]
     direction TB
     FEmain["main (Node privilegiado)<br/>supervisor + ciclo de projeto + dialogos"]
-    FEpre["preload (window.p7m, contextIsolation)"]
+    FEpre["preload (window.gridsmith, contextIsolation)"]
     FErnd["renderer (UI)"]
     FEcore["core/ (nucleos puros)"]
     FEmain --> FEpre
@@ -56,8 +56,8 @@ npm run build
 npm test           # núcleos + integração real com o EditorGateway
 
 # execução (requer o binário do Electron e um middleware rodando):
-node ../middleware/dist/index.js --pipe p7m-engine --no-mcp &
-npm run app -- --pipe p7m-engine
+node ../middleware/dist/index.js --pipe gridsmith-engine --no-mcp &
+npm run app -- --pipe gridsmith-engine
 
 # e2e dos transports (gRPC quente + fallback GraphQL), da raiz do repo:
 ../scripts/verify-transports.sh
@@ -66,7 +66,7 @@ npm run app -- --pipe p7m-engine
 O app fala com o middleware por gRPC no caminho quente e cai para GraphQL em
 falha de transporte (ADR-016/017/018/019/020 em
 [`../docs/adr/`](../docs/adr/README.md)).
-Verbosidade dos dois lados: `P7M_VERBOSITY=silent|error|warn|info|debug|trace`
+Verbosidade dos dois lados: `GRIDSMITH_VERBOSITY=silent|error|warn|info|debug|trace`
 (default `info`).
 
 Create/open/close consultam `project/status` e usam
@@ -85,7 +85,7 @@ tripla de cursor.
 
 ```mermaid
 graph LR
-  R["renderer (UI)"] -->|"dispatch(command)"| P["preload (window.p7m)"]
+  R["renderer (UI)"] -->|"dispatch(command)"| P["preload (window.gridsmith)"]
   P == "IPC do Electron (contextBridge)" ==> M["main (EditorClient)"]
   M == "quente: gRPC / fallback: GraphQL" ==> GW(["EditorSurface (caminho canonico)"])
   GW --> SESS["ProjectSessionManager<br/>sessao ativa"]
