@@ -77,6 +77,12 @@ export interface GridsmithEditorApi {
   historyStatus(limit?: number): Promise<unknown>;
   undo(historyCursor?: string): Promise<unknown>;
   redo(historyCursor?: string): Promise<unknown>;
+  /**
+   * Imagem de atlas como data URL, lida pelo main DENTRO do diretório do
+   * projeto aberto (referência fora dele é recusada). `undefined` = sem arte:
+   * o canvas cai para a cor determinística conjunta do host.
+   */
+  readAtlasImage(imageReference: string): Promise<string | undefined>;
   /** Templates de projeto para a tela inicial (cards de "Novo projeto"). */
   projectTemplates(): Promise<{
     templates: Array<{ id: string; label: string; description: string }>;
@@ -111,6 +117,7 @@ const api: GridsmithEditorApi = {
   historyStatus: (limit?: number) => ipcRenderer.invoke("gridsmith:history-status", limit),
   undo: (historyCursor?: string) => ipcRenderer.invoke("gridsmith:history-undo", historyCursor),
   redo: (historyCursor?: string) => ipcRenderer.invoke("gridsmith:history-redo", historyCursor),
+  readAtlasImage: (imageReference) => ipcRenderer.invoke("gridsmith:atlas-image", imageReference),
   projectTemplates: () => ipcRenderer.invoke("gridsmith:project-templates"),
   onProjectStatus: (listener) => {
     ipcRenderer.on("gridsmith:project-status", (_event, status) => listener(status));

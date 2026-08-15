@@ -51,6 +51,7 @@ import {
 } from "../core/recoveryPlan.js";
 import { NodeProjectFileSystem } from "./project/NodeProjectFileSystem.js";
 import { projectPathFromArgs } from "./project/ProjectLaunchRouting.js";
+import { atlasImageMime, resolveAtlasImagePath } from "./project/AtlasImagePath.js";
 import {
   ensureSingleInstance,
   hardenNavigation,
@@ -706,6 +707,25 @@ void app.whenReady().then(async () => {
   // Ctrl+Z do editor local por este caminho canônico é da frente F6/E10 — a
   // vista ainda guarda estado no closure, e mover o atalho antes disso faria
   // o desfazer global brigar com o desfazer local do IntGrid.
+  ipcMain.handle("gridsmith:atlas-image", async (_event, imageReference: unknown) => {
+    // A imagem do atlas chega ao renderer como data URL: o CSP bloqueia
+    // file:// e rede, e é assim que deve continuar. `undefined` nas recusas —
+    // sem projeto, referência fora do projeto, formato desconhecido, arquivo
+    // ausente — e o canvas cai para a cor determinística CONJUNTA do host.
+    if (typeof imageReference !== "string") return undefined;
+    const projectPath = lifecycle.project?.filePath;
+    if (!projectPath) return undefined;
+    const resolved = resolveAtlasImagePath(projectPath, imageReference);
+    if (!resolved) return undefined;
+    const mime = atlasImageMime(resolved);
+    if (!mime) return undefined;
+    try {
+      const bytes = await fs.promises.readFile(resolved);
+      return `data:${mime};base64,${bytes.toString("base64")}`;
+    } catch {
+      return undefined;
+    }
+  });
   ipcMain.handle("gridsmith:history-status", (_event, limit?: number) => client.historyStatus(limit));
   ipcMain.handle("gridsmith:history-undo", (_event, historyCursor?: string) =>
     client.undo(historyCursor),
