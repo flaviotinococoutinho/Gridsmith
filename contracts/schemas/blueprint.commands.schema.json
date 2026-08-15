@@ -78,6 +78,68 @@
         "additionalProperties": false
       }
     },
+    "tileset/define": {
+      "description": "Define o atlas de arte do projeto (grade LDtk/Tiled-like). A região de um tileId é matemática pura sobre (tileSize, columns): não há tabela por tile para divergir entre o canvas do editor e o host gráfico. Duplicata é recusada.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "tilesetId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "image": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Referência da imagem do atlas (caminho relativo ao projeto ou id de artefato); o documento não embute bytes."
+          },
+          "tileSize": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "columns": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tileCount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Ids válidos são 0..tileCount-1; deve ser >= columns. Um tileId fora da faixa vira projeção skipped com razão, nunca exceção."
+          },
+          "transactionId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "tilesetId",
+          "image",
+          "tileSize",
+          "columns",
+          "tileCount"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "tileset/remove": {
+      "description": "Remove o tileset. Recusa enquanto algum nível o referenciar (sem cascata: reescrever níveis por efeito colateral quebraria o inverso único).",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "tilesetId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "transactionId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "tilesetId"
+        ],
+        "additionalProperties": false
+      }
+    },
     "entity/place": {
       "description": "Instancia uma entidade no mundo. Campos ausentes assumem o default da definição; campo sem valor e sem default é erro.",
       "payload": {
@@ -636,6 +698,11 @@
             "items": {
               "$ref": "#/$defs/shared/levelPaletteEntry"
             }
+          },
+          "tilesetId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Atlas que dá arte aos tiles resolvidos; deve existir via tileset/define. Ausente = sem arte escolhida (documentos anteriores à v5)."
           }
         },
         "required": [

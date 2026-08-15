@@ -26,6 +26,8 @@ enum CommandKind {
   entitydef_define
   entitydef_update
   entitydef_remove
+  tileset_define
+  tileset_remove
   entity_place
   entity_move
   entity_properties

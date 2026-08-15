@@ -304,7 +304,7 @@ test("EditorSurface: snapshot completo e requestId impedem dispatch duplicado", 
 
   const snapshot = rig.surface.snapshot();
   assert.deepEqual(Object.keys(snapshot.projections).sort(),
-    ["camera", "document", "entities", "entityDefs", "levels", "lights", "meshes", "skeletons", "world"].sort());
+    ["camera", "document", "entities", "entityDefs", "levels", "lights", "meshes", "skeletons", "tilesets", "world"].sort());
   assert.equal(
     (snapshot.projections.entityDefs["entityDefs"] as Array<{ entityDefId: string }>)[0]?.entityDefId,
     "coin",
@@ -439,7 +439,7 @@ test("GraphQL: dispatch/query/eventBatch/templates/experience na mesma superfíc
     assert.equal(snap.middlewareInstanceId, "middleware-test");
     assert.equal(snap.lastEventSeq, "1");
     assert.deepEqual(Object.keys(snap.projections).sort(),
-      ["camera", "document", "entities", "entityDefs", "levels", "lights", "meshes", "skeletons", "world"].sort());
+      ["camera", "document", "entities", "entityDefs", "levels", "lights", "meshes", "skeletons", "tilesets", "world"].sort());
     assert.equal(
       ((snap.projections["lights"] as { lights: Array<{ lightId: string }> }).lights[0]?.lightId),
       "sun",
@@ -609,7 +609,7 @@ test("gRPC: dispatch/query unários + StreamEventsV2 session-aware com catch-up 
     assert.equal(snapshot.last_event_seq, "2");
     const projections = JSON.parse(snapshot.projections_json) as Record<string, unknown>;
     assert.deepEqual(Object.keys(projections).sort(),
-      ["camera", "document", "entities", "entityDefs", "levels", "lights", "meshes", "skeletons", "world"].sort());
+      ["camera", "document", "entities", "entityDefs", "levels", "lights", "meshes", "skeletons", "tilesets", "world"].sort());
 
     const status = await new Promise<Record<string, unknown>>((resolve, reject) => {
       const v2 = client.StreamEventsV2({

@@ -16,6 +16,8 @@ export const COMMAND_KINDS = [
   "entitydef/define",
   "entitydef/update",
   "entitydef/remove",
+  "tileset/define",
+  "tileset/remove",
   "entity/place",
   "entity/move",
   "entity/properties",
@@ -90,6 +92,10 @@ export function reshapeCommand(
       };
     case "entity/remove":
       return { kind, entityId: payload["entityId"] as string, ...context };
+    case "tileset/define":
+      return { kind, tileset: payload as never, ...context };
+    case "tileset/remove":
+      return { kind, tilesetId: payload["tilesetId"] as string, ...context };
     case "level/define":
       return { kind, level: payload as never, ...context };
     case "level/update":

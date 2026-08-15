@@ -114,6 +114,36 @@ export interface LevelPaletteEntry {
 }
 
 /**
+ * Atlas de arte do projeto (documento v5): a tabela que dá IMAGEM a um
+ * `tileId` resolvido.
+ *
+ * O atlas é uma GRADE, de propósito (convenção LDtk/Tiled): a região de um
+ * `tileId` é matemática pura — coluna `tileId % columns`, linha
+ * `tileId / columns`, célula de `tileSize` px. Não há tabela de regiões por
+ * tile para divergir entre o canvas do editor e o host gráfico: os dois lados
+ * derivam a região da MESMA fórmula com os MESMOS quatro números, e a
+ * paridade visual (ADR-022) compara listas de quads que só podem discordar se
+ * estes números discordarem.
+ *
+ * Um `tileId` fora de `[0, tileCount)` não tem arte: vira projeção `skipped`
+ * com razão, nunca exceção — falha de conteúdo não derruba o documento.
+ */
+export interface TilesetSpec {
+  readonly tilesetId: string;
+  /**
+   * Referência da imagem do atlas (caminho relativo ao projeto ou id de
+   * artefato). O documento NÃO embute bytes de imagem: arte pesada viaja pelo
+   * pipeline de assets, não pelo blueprint.
+   */
+  readonly image: string;
+  /** Lado da célula do atlas, em pixels da imagem. */
+  readonly tileSize: number;
+  readonly columns: number;
+  /** Total de tiles válidos; ids válidos são `0..tileCount-1`. */
+  readonly tileCount: number;
+}
+
+/**
  * Nível no modelo canônico (LDtk-like): o designer edita o IntGrid de
  * SIGNIFICADO + regras; a resolução em tiles é responsabilidade do adapter
  * de runtime na projeção (função pura com seed — determinística).
@@ -129,6 +159,12 @@ export interface LevelSpec {
   readonly rules: readonly AutoTileRule[];
   /** Ordenada por `value`; ausente em documentos anteriores à v4. */
   readonly palette?: readonly LevelPaletteEntry[];
+  /**
+   * Atlas que dá arte aos tiles resolvidos deste nível; ausente em documentos
+   * anteriores à v5 (e em níveis que ainda não escolheram arte — o canvas e o
+   * host desenham cor determinística nesse caso, JUNTOS).
+   */
+  readonly tilesetId?: string;
 }
 
 /** Faixa de valores pintáveis do IntGrid (0 é o vazio implícito). */
@@ -207,6 +243,8 @@ type Command =
       readonly changes: readonly EntityPropertyChange[];
     }
   | { readonly kind: "entity/remove"; readonly entityId: string }
+  | { readonly kind: "tileset/define"; readonly tileset: TilesetSpec }
+  | { readonly kind: "tileset/remove"; readonly tilesetId: string }
   | { readonly kind: "level/define"; readonly level: LevelSpec }
   | { readonly kind: "level/update"; readonly level: LevelSpec }
   | {
@@ -262,6 +300,8 @@ export type BlueprintEvent =
   | { readonly kind: "entityPlaced"; readonly entity: EntityInstance; readonly archetypeId?: string }
   | { readonly kind: "entityMoved"; readonly entity: EntityInstance; readonly archetypeId?: string }
   | { readonly kind: "entityRemoved"; readonly entityId: string }
+  | { readonly kind: "tilesetDefined"; readonly tileset: TilesetSpec }
+  | { readonly kind: "tilesetRemoved"; readonly tilesetId: string }
   | { readonly kind: "levelDefined"; readonly level: LevelSpec }
   | { readonly kind: "levelUpdated"; readonly level: LevelSpec }
   | {
@@ -318,6 +358,7 @@ export class BlueprintStore {
   private lights = new Map<string, LightSpec>();
   private entityDefs = new Map<string, EntityDefinition>();
   private entities = new Map<string, EntityInstance>();
+  private tilesets = new Map<string, TilesetSpec>();
   private levels = new Map<string, LevelSpec>();
   private placements = new Map<string, WorldPlacement>();
   private camera: CameraSettings = {};
@@ -342,6 +383,7 @@ export class BlueprintStore {
     draft.lights = new Map(this.lights);
     draft.entityDefs = new Map(this.entityDefs);
     draft.entities = new Map(this.entities);
+    draft.tilesets = new Map(this.tilesets);
     draft.levels = new Map(this.levels);
     draft.placements = new Map(this.placements);
     draft.camera = this.camera;
@@ -383,6 +425,7 @@ export class BlueprintStore {
     this.lights = draft.lights;
     this.entityDefs = draft.entityDefs;
     this.entities = draft.entities;
+    this.tilesets = draft.tilesets;
     this.levels = draft.levels;
     this.placements = draft.placements;
     this.camera = draft.camera;
@@ -672,9 +715,50 @@ export class BlueprintStore {
           { kind: "entity/place", entity: previous },
         ]);
       }
+      case "tileset/define": {
+        const tileset = command.tileset;
+        validateTileset(tileset);
+        if (this.tilesets.has(tileset.tilesetId)) {
+          throw new JsonRpcError(
+            RpcErrorCode.DuplicateId,
+            `Tileset "${tileset.tilesetId}" already exists`,
+          );
+        }
+        this.tilesets.set(tileset.tilesetId, Object.freeze({ ...tileset }));
+        return applied({ kind: "tilesetDefined", tileset: this.tilesets.get(tileset.tilesetId)! }, [
+          { kind: "tileset/remove", tilesetId: tileset.tilesetId },
+        ]);
+      }
+      case "tileset/remove": {
+        const previous = this.tilesets.get(command.tilesetId);
+        if (!previous) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Tileset "${command.tilesetId}" does not exist`,
+          );
+        }
+        // Remoção enquanto referenciado é recusada, não cascateada: cascatear
+        // reescreveria níveis por efeito colateral, e o inverso deixaria de
+        // ser um único define — a mesma regra do entitydef com instâncias.
+        const referenced = [...this.levels.values()].filter(
+          (level) => level.tilesetId === command.tilesetId,
+        );
+        if (referenced.length > 0) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Tileset "${command.tilesetId}" is still used by ${referenced.length} level(s) — ` +
+              `update the levels first (level/update without tilesetId)`,
+          );
+        }
+        this.tilesets.delete(command.tilesetId);
+        return applied({ kind: "tilesetRemoved", tilesetId: command.tilesetId }, [
+          { kind: "tileset/define", tileset: previous },
+        ]);
+      }
       case "level/define": {
         const level = command.level;
         validateLevel(level);
+        this.requireTileset(level);
         if (this.levels.has(level.levelId)) {
           throw new JsonRpcError(RpcErrorCode.DuplicateId, `Level "${level.levelId}" is already defined`);
         }
@@ -686,6 +770,7 @@ export class BlueprintStore {
       case "level/update": {
         const level = command.level;
         validateLevel(level);
+        this.requireTileset(level);
         const previous = this.levels.get(level.levelId);
         if (!previous) {
           throw new JsonRpcError(
@@ -940,6 +1025,35 @@ export class BlueprintStore {
     return [...this.entities.values()];
   }
 
+  getTileset(tilesetId: string): TilesetSpec | undefined {
+    return this.tilesets.get(tilesetId);
+  }
+
+  listTilesets(): readonly TilesetSpec[] {
+    return [...this.tilesets.values()];
+  }
+
+  /**
+   * Um nível que aponta para um tileset inexistente é recusado NA ESCRITA. A
+   * alternativa — aceitar e degradar na projeção — deixaria o erro aparecer
+   * longe da causa, num frame desenhado em cor chapada sem explicação.
+   */
+  private requireTileset(level: LevelSpec): void {
+    if (level.tilesetId === undefined) return;
+    if (typeof level.tilesetId !== "string" || level.tilesetId.length === 0) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"tilesetId" must be a non-empty string when present`,
+      );
+    }
+    if (!this.tilesets.has(level.tilesetId)) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `Tileset "${level.tilesetId}" is not defined — use tileset/define first`,
+      );
+    }
+  }
+
   getLevel(levelId: string): LevelSpec | undefined {
     return this.levels.get(levelId);
   }
@@ -1009,6 +1123,32 @@ function levelRect(level: LevelSpec, placement: WorldPlacement): Rect {
 
 function rectsOverlap(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function validateTileset(tileset: TilesetSpec): void {
+  if (typeof tileset.tilesetId !== "string" || tileset.tilesetId.length === 0) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"tilesetId" must be a non-empty string`);
+  }
+  if (typeof tileset.image !== "string" || tileset.image.length === 0) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"image" must be a non-empty string`);
+  }
+  if (!Number.isInteger(tileset.tileSize) || tileset.tileSize < 1) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"tileSize" must be a positive integer`);
+  }
+  if (!Number.isInteger(tileset.columns) || tileset.columns < 1) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"columns" must be a positive integer`);
+  }
+  if (!Number.isInteger(tileset.tileCount) || tileset.tileCount < 1) {
+    throw new JsonRpcError(RpcErrorCode.InvalidParams, `"tileCount" must be a positive integer`);
+  }
+  // um atlas com menos tiles que uma linha completa é legítimo; mais colunas
+  // que tiles não é — a fórmula produziria uma primeira linha com buracos
+  if (tileset.tileCount < tileset.columns) {
+    throw new JsonRpcError(
+      RpcErrorCode.InvalidParams,
+      `"tileCount" (${tileset.tileCount}) must be at least "columns" (${tileset.columns})`,
+    );
+  }
 }
 
 function validateLevel(level: LevelSpec): void {

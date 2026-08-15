@@ -29,11 +29,12 @@ import type {
   LightSpec,
   MeshBinding,
   SkeletonBlueprint,
+  TilesetSpec,
   WorldPlacement,
 } from "../domain/BlueprintStore.js";
 import type { CanonicalOrchestrator, DispatchResult } from "./CanonicalOrchestrator.js";
 
-export const BLUEPRINT_DOCUMENT_VERSION = 4;
+export const BLUEPRINT_DOCUMENT_VERSION = 5;
 
 /**
  * Convenção espacial DECLARADA pelo documento (v3).
@@ -83,6 +84,8 @@ export interface BlueprintDocument {
   readonly lights: readonly LightSpec[];
   readonly entityDefs: readonly EntityDefinition[];
   readonly entities: readonly EntityInstance[];
+  /** Atlas de arte do projeto (v5); vazio em documentos migrados. */
+  readonly tilesets: readonly TilesetSpec[];
   readonly levels: readonly LevelSpec[];
   readonly placements: readonly WorldPlacement[];
 }
@@ -121,6 +124,7 @@ export function exportBlueprint(
     lights: store.listLights(),
     entityDefs: store.listEntityDefs(),
     entities: store.listEntities(),
+    tilesets: store.listTilesets(),
     levels: store.listLevels(),
     placements: store.listPlacements(),
   };
@@ -177,6 +181,17 @@ const MIGRATIONS = new Map<number, BlueprintMigration>([
   // 3 → 4: a paleta de significados deixa de ser constante de build do editor
   // e passa a ser dado do projeto.
   [3, migrateLevelPalette],
+  // 4 → 5: o documento ganha a coleção de tilesets (atlas de arte). Nenhum
+  // nível existente muda: `tilesetId` é opcional e nasce ausente — a arte é
+  // uma ESCOLHA do projeto, não um default inventado pela migração.
+  [
+    4,
+    (document) => ({
+      ...document,
+      tilesets: Array.isArray(document["tilesets"]) ? document["tilesets"] : [],
+      schemaVersion: 5,
+    }),
+  ],
 ]);
 
 /**
@@ -251,8 +266,9 @@ function migrateToV3(document: Record<string, unknown>): Record<string, unknown>
   // de coordenadas do template pré-correção pararia de disparar EM SILÊNCIO,
   // corrompendo posições de projetos legados sem nenhum erro visível. Por
   // isso o strip entra JUNTO com a v4, não antes: antes dela seria código
-  // morto impossível de testar.
-  const origin = recognizeLegacyV2Document(withoutLevelPalettes(document));
+  // morto impossível de testar. A v5 repete a jogada com `tilesets` e
+  // `tilesetId` — mesma decisão, registrada no plano.
+  const origin = recognizeLegacyV2Document(withoutPostV2Fields(document));
   if (!origin) {
     return {
       ...document,
@@ -273,19 +289,25 @@ function migrateToV3(document: Record<string, unknown>): Record<string, unknown>
  * Converte as posições de célula para pixels do mundo. Só é chamada para
  * documento de origem RECONHECIDA — nunca especula.
  */
-/** Remove `palette` de cada nível — só para efeito de impressão digital. */
-function withoutLevelPalettes(document: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Remove os campos pós-v2 (`palette` e `tilesetId` dos níveis, `tilesets` do
+ * topo) — só para efeito de impressão digital: um simulador de v2 construído
+ * por um build novo pode carregá-los, e a v2 real nunca os teve.
+ */
+function withoutPostV2Fields(document: Record<string, unknown>): Record<string, unknown> {
   const levels = Array.isArray(document["levels"]) ? document["levels"] : undefined;
-  if (!levels?.some((raw) => (raw as Record<string, unknown>)["palette"] !== undefined)) {
-    return document;
-  }
-  return {
-    ...document,
-    levels: levels.map((raw) => {
-      const { palette: _ignored, ...rest } = raw as Record<string, unknown>;
-      return rest;
-    }),
-  };
+  const strippedLevels = levels?.some((raw) => {
+    const level = raw as Record<string, unknown>;
+    return level["palette"] !== undefined || level["tilesetId"] !== undefined;
+  })
+    ? levels.map((raw) => {
+        const { palette: _palette, tilesetId: _tilesetId, ...rest } = raw as Record<string, unknown>;
+        return rest;
+      })
+    : levels;
+  if (strippedLevels === levels && document["tilesets"] === undefined) return document;
+  const { tilesets: _tilesets, ...rest } = document;
+  return strippedLevels === undefined ? rest : { ...rest, levels: strippedLevels };
 }
 
 function withWorldPixelPositions(document: Record<string, unknown>): Record<string, unknown> {
@@ -505,6 +527,8 @@ export function documentToCommands(rawDocument: unknown): BlueprintCommand[] {
   for (const light of document.lights ?? []) commands.push({ kind: "light/add", light });
   for (const definition of document.entityDefs ?? []) commands.push({ kind: "entitydef/define", definition });
   for (const entity of document.entities ?? []) commands.push({ kind: "entity/place", entity });
+  // tilesets ANTES dos níveis: level/define valida que o tilesetId exista
+  for (const tileset of document.tilesets ?? []) commands.push({ kind: "tileset/define", tileset });
   for (const level of document.levels ?? []) commands.push({ kind: "level/define", level });
   for (const placement of document.placements ?? []) commands.push({ kind: "world/place", placement });
   return commands;

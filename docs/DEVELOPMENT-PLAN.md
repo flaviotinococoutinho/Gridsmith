@@ -67,7 +67,7 @@ algo violando uma destas linhas está errando, não melhorando.
 | Transports do app | GraphQL baseline completo + gRPC prioritário no caminho quente com fallback imediato e histerese de repromoção | ADR-016/017/018 |
 | Fatiamento do ex-PR de lifecycle | Dez etapas E1–E10 + cauda, cada uma mergeável sozinha; o branch `codex/project-lifecycle-20260719` foi fechado sem merge e permanece como **referência de leitura** (`git show <commit>:<path>`) | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8 |
 | Proto `EventEnvelope` | Os campos 7/8/9 pertencem à projeção (`has_projection`/`projection_status`/`projection_reason`) e são **imutáveis para sempre**; campos de histórico entram **a partir do 10** — a colisão com o ex-PR é binária, não textual | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.1 |
-| Cadeia de versões do documento | v3 na E7 → v4 na E9 → v5 na cauda; **um bump por PR**; a migração 2→3 tem quatro ramos explícitos | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.4 |
+| Cadeia de versões do documento | v3 na E7 → v4 na E9 → **v5 na F1 onda A** (coleção `tilesets` + `tilesetId` por nível — a fatia do atlas chegou antes da cauda e tomou o número) → v6 reservado para a cauda (`spriteRenderer`); **um bump por PR**; a migração 2→3 tem quatro ramos explícitos, e a 4→5 dá `tilesets: []` sem inventar arte | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.4 + `middleware/test/tileset-canonical.test.ts` |
 | Lista de descarte | A UX do ex-PR que a `main` refez por outro desenho NÃO volta (tela inicial inline, wizard no renderer, catálogo por prefixo de mensagem…); reaproveitar apenas o que a tabela lista | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.3 |
 | Regime de curadoria (avaliação da "cebola") | Adotar como **vocabulário + linha de DoD**, sem reorganizar código e sem o termo "temperatura" (colide com "caminho quente"): todo vocabulário curado novo exige versão + proveniência, `reason` quando nega, e teste de consistência com quem o consome | §10 deste documento (ADR-021 pendente de redação) |
 | Medição Zero-GC | Tiered compilation desligada no csproj de teste; a garantia continua intacta | [`GOVERNANCE.md`](GOVERNANCE.md) |
@@ -183,7 +183,7 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 
 | # | Pendência | Evidência | Onde no plano |
 |---|---|---|---|
-| B1 (parte) | **F1**: o host gráfico EXISTE e desenha (`Gridsmith.Engine.Host`, ADR-022) — o que falta para "o jogo aparece como jogo" é a arte: sem tileset/atlas os quads saem em cor chapada | `Gridsmith.Engine.Host` instancia `Game`/`GraphicsDeviceManager` e desenha os stores por referência; `FrameComposer` compõe o frame sem alocar | F1 (receita §9.6, fatias restantes) |
+| B1 (parte) | **F1**: o host desenha (ADR-022) e o CONTRATO do atlas existe — `tileset/define`/`tileset/remove` canônicos com DoD completo, documento v5, projeção honesta (`skipped` com razão até o runtime consumir). Falta o CONSUMO: o canvas e o host ainda desenham cor determinística, e é a fatia (ii) que troca isso por amostragem do atlas nos DOIS lados | `TilesetSpec` em grade (região por fórmula — nada por tile para divergir); consulta `tilesets` nas quatro bordas | F1 (receita §9.6, fatias ii–iv) |
 | B2 | **Tileset/atlas não existe em nenhuma camada** — "pinte significado, derive arte" termina em `tileId` inteiro | busca por `tileset`/`atlas` em `middleware/src`, `frontend/src` e `contracts/` não retorna nada | F1 (receita §9.6) |
 | B3 | **P0.5 — preview embutido** (run/pause/stop, live edit, overlays) | não existe classe `Game`/`GraphicsDeviceManager` na engine; o "Runtime MonoGame" é headless | F1, onda B |
 | B4 | **P0.7 — undo/redo global** no nível do comando canônico | `CommandHistory` declara no cabeçalho que é só o relógio lógico; undo segue local ao IntGrid | E8 + E9 (receita §9.4) |
@@ -220,7 +220,7 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 | ~~D15~~ | ✅ **Entregue (E8).** Domínio transacional (`planBatch`/`commitBatch`/`fork` com `mutationVersion` como CAS interno, `applyWithInverse`, inverso por kind, barreiras, rejeição de no-op), quatro kinds in-place e proveniência carimbada pela borda | — | — |
 | ~~D16~~ | ✅ **Entregue (E9).** Histórico global transacional: pilhas past/future, undo/redo canônico com CAS por `historyCursor`, coalescing por gesto, barreiras, `level/patch`, paleta no documento (v4) e proto renumerado a partir do campo 10 | — | — |
 | ~~D17~~ | ✅ **Entregue (E10).** `capabilityRegistry`, `panelRegistry`, `commandRegistry` (com conflito de acorde), `toolRegistry`, `inspectorRegistry`, `selectionService`, `workbenchLayout` e a casca (`workbenchShell`) que os compõe | — | — |
-| D18 | Cauda: asset browser com inspector, `spriteRenderer` com bump v5, campos do wizard sobre o núcleo puro da `main` | o "Novo" hoje só escolhe template por diálogo de botões | cauda pós-E10 |
+| D18 | Cauda: asset browser com inspector, `spriteRenderer` com bump v6 (o v5 foi tomado pelos tilesets da F1), campos do wizard sobre o núcleo puro da `main` | o "Novo" hoje só escolhe template por diálogo de botões | cauda pós-E10 |
 | D19 | DoD ainda não exige "todo domínio editável expõe create/update/delete" | o modelo segue assimétrico e o DoD não menciona simetria | F7 + E8 |
 | D20 | P0.8 parcial: falta navegação ao objeto, fix automático e consolidação de compatibilidade/pipeline no painel | o painel existe e é honesto; as três funções não | F4 + F5 residual |
 | D21 | F1: canal engine→editor só transporta handshake/ping/log — nenhum overlay de runtime é possível | são os únicos métodos registrados no servidor de pipe | F1 (telemetria) |
@@ -265,7 +265,7 @@ flowchart TD
   E9 --> E10["E10 — casca do workbench<br/>(absorve F4)"]
   E10 --> F6["F6 — pintura canonica<br/>(level/patch por gesto)"]
   E10 --> F3a["F3a — rota de conceitos"]
-  E6 --> CAUDA["cauda: asset browser,<br/>spriteRenderer (v5), wizard"]
+  E6 --> CAUDA["cauda: asset browser,<br/>spriteRenderer (v6), wizard"]
   E10 --> CAUDA
   F1A["F1 onda A — host gráfico<br/>+ tileset/atlas + telemetria"] --> F1B["F1 onda B — preview embutido"]
   F1B --> P09["P0.9 — empacotamento"]
@@ -747,11 +747,22 @@ o CAS de `historyCursor`. Trocar o alvo passou a ser uma linha.
 > a aceitar justamente as divergências que ela deveria pegar. A ADR-022 registra
 > a decisão e as alternativas descartadas.
 >
-> **Fatias restantes da onda A**, cada uma mergeável sozinha: (i) `tileset/define`
-> como comando canônico com o DoD completo + `tilesetId` em `LevelSpec`;
+> ✅ **Fatia (i) entregue**: `tileset/define` e `tileset/remove` canônicos com o
+> DoD completo (inversos no histórico incluídos), `tilesetId` opcional em
+> `LevelSpec`, documento **v5** com migração 4→5 (`tilesets: []` — a migração
+> não inventa arte) e fixture v4 congelada. O atlas é uma GRADE de propósito:
+> a região de um `tileId` é fórmula sobre (`tileSize`, `columns`), então não
+> existe tabela por tile para divergir entre canvas e host. O strip do
+> fingerprint v2 foi estendido aos campos da v5 — mesma jogada da paleta na
+> v4, pelo mesmo motivo. Projeção honesta: o runtime ainda não consome
+> tilesets, então o evento sai `skipped` com razão acionável.
+>
+> **Fatias restantes da onda A**, cada uma mergeável sozinha:
 > (ii) `frontend/src/core/tilesetAtlas.ts` e o canvas desenhando a partir da
-> tabela; (iii) `scripts/verify-visual-parity.sh` comparando as duas listas de
-> quads; (iv) telemetria de frame como notificação no `EventJournal`.
+> tabela — e o host amostrando o MESMO atlas (os dois falham JUNTOS quando a
+> tabela diverge); (iii) `scripts/verify-visual-parity.sh` comparando as duas
+> listas de quads por igualdade exata; (iv) telemetria de frame como
+> notificação no `EventJournal`.
 
 **Objetivo (onda A).** Que exista um processo que desenhe, em janela própria,
 os mesmos stores que os handlers JSON-RPC mutam — e que o que o usuário pinta

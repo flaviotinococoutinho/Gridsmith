@@ -87,13 +87,13 @@ graph TD
 | Campo | Conteúdo |
 |---|---|
 | Componente | Documento declarativo do projeto (`exportBlueprint` / load por replay) |
-| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 4`; documento sem `schemaVersion` é tratado como versão `0` |
+| Formato da versão | Inteiro — `BLUEPRINT_DOCUMENT_VERSION = 5`; documento sem `schemaVersion` é tratado como versão `0` |
 | Fonte de verdade | `middleware/src/canonical/BlueprintSerializer.ts` |
 | Regra de compatibilidade | Versão exata é carregada direto; versões anteriores são **migradas em cadeia** `v(n) → v(n+1)` antes do replay |
 | Breaking change | Qualquer mudança estrutural do documento exige nova versão **+** entrada correspondente no registro `MIGRATIONS` |
-| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3 → 4`); v2 introduz `projectId`, derivado deterministicamente para v1; v3 introduz `metadata` (nome, resolução de referência e convenção espacial declarada) e converte coordenadas **apenas** nos quatro ramos descritos abaixo; v4 traz a paleta de significados para dentro do documento (era constante de build do editor), dando entradas default a todo nível que não tinha e nomeando deterministicamente os valores pintados fora dela; `project/openDocument` prepara e valida antes da troca; `expectedProjectSessionId` protege o commit contra candidato obsoleto |
+| Migração | `migrateBlueprintDocument(raw)` + `MIGRATIONS` encadeado (`0 → 1 → 2 → 3 → 4 → 5`); v2 introduz `projectId`, derivado deterministicamente para v1; v3 introduz `metadata` (nome, resolução de referência e convenção espacial declarada) e converte coordenadas **apenas** nos quatro ramos descritos abaixo; v4 traz a paleta de significados para dentro do documento (era constante de build do editor), dando entradas default a todo nível que não tinha e nomeando deterministicamente os valores pintados fora dela; v5 introduz a coleção `tilesets` (atlas de arte em grade) e o `tilesetId` opcional por nível — a migração dá `tilesets: []` e NÃO inventa arte, porque escolher atlas é decisão do projeto; `project/openDocument` prepara e valida antes da troca; `expectedProjectSessionId` protege o commit contra candidato obsoleto |
 | Fallback | Versão acima da suportada é **rejeitada** com `BlueprintDocumentError` (mensagem clara); versão sem migrador registrado é rejeitada |
-| Teste | `middleware/test/blueprint-migration.test.ts` (um teste nomeado por ramo da 2 → 3 + round-trip do corpus) + `grid-coordinates.test.ts` + `project-session-manager.test.ts` (projectId v1 determinístico, replay isolado, rollback, CAS e troca A→B) |
+| Teste | `middleware/test/blueprint-migration.test.ts` (um teste nomeado por ramo da 2 → 3 + round-trip do corpus, que inclui a fixture v4 congelada) + `tileset-canonical.test.ts` (migração 4 → 5, inversos e o strip da contaminação v5 no fingerprint v2) + `grid-coordinates.test.ts` + `project-session-manager.test.ts` |
 | Nome do arquivo | **Leitura aceita `.gridsmith.json` E `.p7m.json`**; a escrita de um caminho NOVO (Novo / Salvar como) emite `.gridsmith.json`. Um projeto aberto como `.p7m.json` continua salvando nele — o rebrand não move o arquivo de ninguém. Fonte única: `frontend/src/core/projectExtensions.ts` (filtro do diálogo, roteamento de `argv` e nome sugerido saem daí) |
 
 #### Os quatro ramos da migração 2 → 3
