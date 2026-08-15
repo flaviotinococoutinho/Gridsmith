@@ -82,7 +82,9 @@ da engine, nunca assume suporte. Desenho completo em
 > fluxo vertical utilizável sem terminal —
 > `Projeto → Asset → Entidade → Nível → Preview → Live edit → Save/reopen`.
 > A matriz honesta plataforma × produto está em
-> [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md).
+> [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md). A identidade do produto, o
+> diferencial e o caminho faseado até um artefato vendável estão em
+> [`docs/PRODUCT-STRATEGY.md`](docs/PRODUCT-STRATEGY.md).
 
 ```mermaid
 graph LR

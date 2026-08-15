@@ -35,6 +35,7 @@ Ordem recomendada de leitura antes de tocar em qualquer coisa:
 | 5 | [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md) | a constituição (princípios, protocolos, versionamento) |
 | 6 | [`adr/`](adr/README.md) | decisões arquiteturais registradas |
 | 7 | [`ALPHA-0.1.md`](ALPHA-0.1.md) | a milestone de produto e seus checkboxes |
+| 8 | [`PRODUCT-STRATEGY.md`](PRODUCT-STRATEGY.md) | identidade, diferencial, tese de crescimento e o caminho comercial (fases A–C + fila GTM) |
 
 ## 3. Invariantes — o que NUNCA pode quebrar
 
@@ -71,6 +72,7 @@ algo violando uma destas linhas está errando, não melhorando.
 | Regime de curadoria (avaliação da "cebola") | Adotar como **vocabulário + linha de DoD**, sem reorganizar código e sem o termo "temperatura" (colide com "caminho quente"): todo vocabulário curado novo exige versão + proveniência, `reason` quando nega, e teste de consistência com quem o consome | §10 deste documento (ADR-021 pendente de redação) |
 | Medição Zero-GC | Tiered compilation desligada no csproj de teste; a garantia continua intacta | [`GOVERNANCE.md`](GOVERNANCE.md) |
 | Nome do produto | **Gridsmith**. O rebrand de P7M já foi aplicado em código, contratos, namespaces .NET, escopo npm, variáveis de ambiente e documentação. O **repositório no GitHub continua `p7m-design`** de propósito: renomeá-lo quebraria as nove URLs de issue do backlog Alpha 0.1. Ficaram preservados também `p7m-151` (testemunha de colisão de hash), `p7m.transport-benchmark/v1` (versão de FORMATO, travada no baseline congelado da ADR-019) e a leitura de `.p7m.json` | [`COMPATIBILITY.md`](COMPATIBILITY.md) §"Rebrand P7M → Gridsmith" |
+| Posicionamento e tese de crescimento | **"O editor para engines que não têm editor."** Público: dev code-first 2D (MonoGame hoje; família XNA-like como aposta). Diferencial nº 1: agente-nativo pelo funil único com proveniência. O produto cresce por três eixos — adapters de runtime, contribuições de workbench e comandos canônicos (que viram capacidade de agente de graça). Caminho até vendável em fases A–C com critérios de saída; recomendação comercial (source-available, perpétua, itch→site→Steam) registrada como recomendação, decisão do dono | [`PRODUCT-STRATEGY.md`](PRODUCT-STRATEGY.md) |
 
 ## 5. Como trabalhar neste repositório (protocolo operacional)
 
