@@ -3,6 +3,7 @@ using System.Text.Json;
 using Gridsmith.Engine.Core.Actors;
 using Gridsmith.Engine.Core.Camera;
 using Gridsmith.Engine.Core.Level;
+using Gridsmith.Engine.Core.Rendering;
 using Gridsmith.Engine.Core.Lighting;
 using Gridsmith.Engine.Core.Rigging;
 using Gridsmith.Engine.Core.SharedMemory;
@@ -36,6 +37,9 @@ public sealed class EngineService : IDisposable
 
     /// <summary>Atores spawnados via spawn table (ALPHA-0.1 P0.6).</summary>
     public ActorStore Actors { get; }
+
+    /// <summary>Atlas aplicados pela sessão — consumidos pelo host gráfico (ADR-022).</summary>
+    public TilesetRegistry Tilesets { get; } = new();
 
     /// <summary>Binds de shared memory aceitos.</summary>
     public IReadOnlyDictionary<string, MeshBindParams> MeshBindings => _meshBindings;
@@ -160,6 +164,7 @@ public sealed class EngineService : IDisposable
         RegisterCameraHandlers(connection);
         RegisterLightingHandlers(connection);
         RegisterTilemapHandlers(connection);
+        RegisterTilesetHandlers(connection);
         RegisterActorHandlers(connection);
 
         connection.RegisterMethod("mesh/inspect", (params_, _) =>
@@ -230,6 +235,7 @@ public sealed class EngineService : IDisposable
         Camera.Reset();
         Lights.Reset();
         Tilemaps.Reset();
+        Tilesets.Reset();
         Actors.Reset();
     }
 
@@ -422,6 +428,59 @@ public sealed class EngineService : IDisposable
         });
     }
 
+    private void RegisterTilesetHandlers(JsonRpcConnection connection)
+    {
+        // O atlas é fase de CARGA: valida e registra; quem amostra é o host
+        // gráfico, por referência, no loop de desenho (ADR-022). Upsert
+        // deliberado — reidratação integral reaplica sem erro.
+        connection.RegisterMethod("tileset/apply", (params_, _) =>
+        {
+            var p = Deserialize<TilesetApplyParams>(params_);
+            if (string.IsNullOrEmpty(p.TilesetId))
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"tilesetId\" must be a non-empty string");
+            }
+
+            if (string.IsNullOrEmpty(p.Image))
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"image\" must be a non-empty string");
+            }
+
+            if (p.TileSize < 1 || p.Columns < 1 || p.TileCount < p.Columns)
+            {
+                throw new JsonRpcException(
+                    RpcErrorCode.InvalidParams,
+                    "\"tileSize\"/\"columns\" must be positive and \"tileCount\" >= \"columns\"");
+            }
+
+            lock (_gate)
+            {
+                Tilesets.Apply(new TilesetTable(p.TilesetId, p.Image, p.TileSize, p.Columns, p.TileCount));
+            }
+
+            return ValueTask.FromResult<object?>(new { tilesetId = p.TilesetId, status = "applied" });
+        });
+
+        connection.RegisterMethod("tileset/clear", (params_, _) =>
+        {
+            var p = Deserialize<TilesetClearParams>(params_);
+            if (string.IsNullOrEmpty(p.TilesetId))
+            {
+                throw new JsonRpcException(RpcErrorCode.InvalidParams, "\"tilesetId\" must be a non-empty string");
+            }
+
+            lock (_gate)
+            {
+                if (!Tilesets.Remove(p.TilesetId))
+                {
+                    throw new JsonRpcException(RpcErrorCode.InvalidParams, $"Tileset \"{p.TilesetId}\" is not applied");
+                }
+            }
+
+            return ValueTask.FromResult<object?>(new { tilesetId = p.TilesetId, status = "cleared" });
+        });
+    }
+
     private void RegisterTilemapHandlers(JsonRpcConnection connection)
     {
         connection.RegisterMethod("tilemap/define", (params_, _) =>
@@ -460,7 +519,7 @@ public sealed class EngineService : IDisposable
                 {
                     handle = Tilemaps.Define(
                         p.TilemapId, p.Width, p.Height, p.TileSize > 0 ? p.TileSize : 16,
-                        p.IntGrid, p.Tiles);
+                        p.IntGrid, p.Tiles, string.IsNullOrEmpty(p.TilesetId) ? null : p.TilesetId);
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -971,7 +1030,17 @@ public sealed class EngineService : IDisposable
         int Height,
         int TileSize,
         short[]? IntGrid,
-        int[]? Tiles);
+        int[]? Tiles,
+        string? TilesetId);
+
+    public sealed record TilesetApplyParams(
+        string? TilesetId,
+        string? Image,
+        int TileSize,
+        int Columns,
+        int TileCount);
+
+    public sealed record TilesetClearParams(string? TilesetId);
 
     public sealed record TilemapInspectParams(string? TilemapId, int[]? Cell);
 

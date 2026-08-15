@@ -8,87 +8,187 @@
       "params": {
         "type": "object",
         "properties": {
-          "tilemapId": { "type": "string", "minLength": 1 },
-          "width": { "type": "integer", "minimum": 1 },
-          "height": { "type": "integer", "minimum": 1 },
-          "tileSize": { "type": "integer", "minimum": 1, "default": 16 },
+          "tilemapId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tileSize": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 16
+          },
           "intGrid": {
             "type": "array",
-            "items": { "type": "integer", "minimum": 0, "maximum": 32767 },
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 32767
+            },
             "description": "Significado pintado pelo designer (0 = vazio); width×height valores"
           },
           "tiles": {
             "type": "array",
-            "items": { "type": "integer", "minimum": -1 },
+            "items": {
+              "type": "integer",
+              "minimum": -1
+            },
             "description": "TileId resolvido pelo AutoTiler (-1 = sem tile); width×height valores"
+          },
+          "tilesetId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Atlas que dá arte a este mapa (aplicado antes via tileset/apply). Ausente = host desenha os tiles em cor determinística."
           }
         },
-        "required": ["tilemapId", "width", "height", "intGrid", "tiles"],
+        "required": [
+          "tilemapId",
+          "width",
+          "height",
+          "intGrid",
+          "tiles"
+        ],
         "additionalProperties": false
       },
       "result": {
         "type": "object",
         "properties": {
-          "tilemapId": { "type": "string" },
-          "nonEmptyTiles": { "type": "integer", "minimum": 0 },
+          "tilemapId": {
+            "type": "string"
+          },
+          "nonEmptyTiles": {
+            "type": "integer",
+            "minimum": 0
+          },
           "checksumFnv1a": {
             "type": "integer",
             "description": "FNV-1a dos tiles (int32 LE) — asserção de determinismo entre runtimes"
           },
-          "staticBatches": { "type": "integer", "minimum": 1 },
-          "status": { "enum": ["defined"] }
+          "staticBatches": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "enum": [
+              "defined"
+            ]
+          }
         },
-        "required": ["tilemapId", "nonEmptyTiles", "checksumFnv1a", "staticBatches", "status"]
+        "required": [
+          "tilemapId",
+          "nonEmptyTiles",
+          "checksumFnv1a",
+          "staticBatches",
+          "status"
+        ]
       }
     },
     "tilemap/remove": {
       "params": {
         "type": "object",
-        "properties": { "tilemapId": { "type": "string", "minLength": 1 } },
-        "required": ["tilemapId"],
+        "properties": {
+          "tilemapId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "tilemapId"
+        ],
         "additionalProperties": false
       },
       "result": {
         "type": "object",
-        "properties": { "removed": { "type": "string" } },
-        "required": ["removed"]
+        "properties": {
+          "removed": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "removed"
+        ]
       }
     },
     "tilemap/inspect": {
       "params": {
         "type": "object",
         "properties": {
-          "tilemapId": { "type": "string", "minLength": 1 },
+          "tilemapId": {
+            "type": "string",
+            "minLength": 1
+          },
           "cell": {
             "type": "array",
-            "items": { "type": "integer", "minimum": 0 },
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
             "minItems": 2,
             "maxItems": 2
           }
         },
-        "required": ["tilemapId"],
+        "required": [
+          "tilemapId"
+        ],
         "additionalProperties": false
       },
       "result": {
         "type": "object",
         "properties": {
-          "tilemapId": { "type": "string" },
-          "width": { "type": "integer" },
-          "height": { "type": "integer" },
-          "tileSize": { "type": "integer" },
-          "nonEmptyTiles": { "type": "integer" },
-          "checksumFnv1a": { "type": "integer" },
+          "tilemapId": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "tileSize": {
+            "type": "integer"
+          },
+          "nonEmptyTiles": {
+            "type": "integer"
+          },
+          "checksumFnv1a": {
+            "type": "integer"
+          },
           "cell": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "properties": {
-              "x": { "type": "integer" },
-              "y": { "type": "integer" },
-              "intGridValue": { "type": "integer" },
-              "tileId": { "type": "integer", "minimum": -1 }
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "intGridValue": {
+                "type": "integer"
+              },
+              "tileId": {
+                "type": "integer",
+                "minimum": -1
+              }
             }
           }
         },
-        "required": ["tilemapId", "width", "height", "nonEmptyTiles", "checksumFnv1a"]
+        "required": [
+          "tilemapId",
+          "width",
+          "height",
+          "nonEmptyTiles",
+          "checksumFnv1a"
+        ]
       }
     }
   }

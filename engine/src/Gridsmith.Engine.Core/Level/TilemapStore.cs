@@ -34,6 +34,7 @@ public sealed class TilemapStore
     private readonly int[] _tiles;       // tileId resolvido (-1 = sem tile)
 
     private readonly string?[] _ids;
+    private readonly string?[] _tilesetIds;
     private readonly int[] _widths;
     private readonly int[] _heights;
     private readonly int[] _tileSizes;
@@ -47,6 +48,7 @@ public sealed class TilemapStore
         _intGrid = new short[maxTilemaps * MaxCells];
         _tiles = new int[maxTilemaps * MaxCells];
         _ids = new string?[maxTilemaps];
+        _tilesetIds = new string?[maxTilemaps];
         _widths = new int[maxTilemaps];
         _heights = new int[maxTilemaps];
         _tileSizes = new int[maxTilemaps];
@@ -62,7 +64,7 @@ public sealed class TilemapStore
     /// </summary>
     public TilemapHandle Define(
         string tilemapId, int width, int height, int tileSize,
-        ReadOnlySpan<short> intGrid, ReadOnlySpan<int> tiles)
+        ReadOnlySpan<short> intGrid, ReadOnlySpan<int> tiles, string? tilesetId = null)
     {
         if (width < 1 || height < 1 || (long)width * height > MaxCells)
         {
@@ -93,6 +95,7 @@ public sealed class TilemapStore
         }
 
         _ids[slot] = tilemapId;
+        _tilesetIds[slot] = tilesetId;
         _widths[slot] = width;
         _heights[slot] = height;
         _tileSizes[slot] = tileSize;
@@ -110,6 +113,7 @@ public sealed class TilemapStore
         }
 
         _ids[handle.Slot] = null;
+        _tilesetIds[handle.Slot] = null;
         _nonEmptyCounts[handle.Slot] = 0;
         _liveCount--;
     }
@@ -120,6 +124,7 @@ public sealed class TilemapStore
     /// </summary>
     public void Reset()
     {
+        Array.Clear(_tilesetIds, 0, _tilesetIds.Length);
         Array.Clear(_intGrid, 0, _intGrid.Length);
         Array.Fill(_tiles, -1);
         Array.Clear(_ids, 0, _ids.Length);
@@ -142,6 +147,9 @@ public sealed class TilemapStore
 
         return TilemapHandle.Invalid;
     }
+
+    /// <summary>Atlas escolhido pelo nível; null = sem arte (fallback determinístico).</summary>
+    public string? TilesetId(TilemapHandle handle) => _tilesetIds[handle.Slot];
 
     public int Width(TilemapHandle handle) => _widths[handle.Slot];
     public int Height(TilemapHandle handle) => _heights[handle.Slot];
