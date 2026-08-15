@@ -768,13 +768,20 @@ o CAS de `historyCursor`. Trocar o alvo passou a ser uma linha.
 > (`TilesetTableTests.cs` ↔ `tileset-atlas.test.ts`): mudar a fórmula de um
 > lado quebra a suíte dele com os valores que o outro continua afirmando.
 >
+> ✅ **Fatia (ii-b) entregue — o canvas amostra o atlas.** A imagem chega ao
+> renderer como data URL por IPC, com a contenção testada: a referência do
+> documento é entrada NÃO confiável, e um caminho que resolva FORA do
+> diretório do projeto é recusado (path traversal, absolutos, irmão com
+> prefixo comum — `atlas-image-path.test.ts`). O CSP ganhou `img-src 'self'
+> data:` e nada além. No "Ver arte": nível com `tilesetId` amostra o atlas via
+> `tileRegion`; tabela que não cobre cai em `fallbackTileColor` — o MESMO hash
+> do host, então os dois lados degradam JUNTOS; nível sem tileset segue em
+> `TILE_COLORS`. Cache negativo no renderer espelha o do host.
+>
 > **Fatias restantes da onda A**, cada uma mergeável sozinha:
-> (ii-b) o CANVAS do editor amostrando o atlas no "Ver arte" — exige a imagem
-> chegar ao renderer (IPC de leitura + `img-src data:` no CSP) e usa o
-> `tileRegion`/`fallbackTileColor` de `core/tilesetAtlas.ts`, que já existem;
-> só depois dela a (iii) faz sentido; (iii) `scripts/verify-visual-parity.sh`
-> comparando as duas listas de quads por igualdade exata; (iv) telemetria de
-> frame como notificação no `EventJournal`.
+> (iii) `scripts/verify-visual-parity.sh` comparando as duas listas de quads
+> por igualdade exata; (iv) telemetria de frame como notificação no
+> `EventJournal`.
 
 **Objetivo (onda A).** Que exista um processo que desenhe, em janela própria,
 os mesmos stores que os handlers JSON-RPC mutam — e que o que o usuário pinta

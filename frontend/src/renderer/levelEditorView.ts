@@ -25,6 +25,7 @@ import {
   type LevelTool,
 } from "../core/levelEditorTools.js";
 import { LEVEL_PALETTE, TILE_COLORS, defaultLevelRules } from "../core/levelPresets.js";
+import { fallbackTileColor, tileRegion, type TilesetTable } from "../core/tilesetAtlas.js";
 import { presentError } from "../core/errorCatalog.js";
 import { projectionLabel } from "../core/vocabulary.js";
 import { LEVEL_EDITOR_PANEL } from "../core/workbench/editorContributions.js";
@@ -197,6 +198,35 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   // "Pinte significado, derive arte": preview usa o MESMO resolvedor da projeção
   let artPreview = false;
   let previewTiles: Int32Array | undefined;
+  // Atlas do nível aberto (documento v5). `atlasImage === null` registra que a
+  // carga JÁ falhou — a MESMA semântica do cache negativo do host: sem isso o
+  // canvas repediria a imagem por IPC a cada repaint.
+  let tilesetTable: TilesetTable | undefined;
+  let atlasImage: HTMLImageElement | null | undefined;
+
+  function loadAtlas(table: TilesetTable | undefined): void {
+    tilesetTable = table;
+    atlasImage = undefined;
+    if (!table) return;
+    void window.gridsmith.readAtlasImage(table.image).then((dataUrl) => {
+      if (tilesetTable?.tilesetId !== table.tilesetId) return; // trocou no meio
+      if (!dataUrl) {
+        atlasImage = null; // recusado/ausente: fallback determinístico CONJUNTO
+        repaint();
+        return;
+      }
+      const image = new Image();
+      image.onload = () => {
+        atlasImage = image;
+        repaint();
+      };
+      image.onerror = () => {
+        atlasImage = null;
+        repaint();
+      };
+      image.src = dataUrl;
+    });
+  }
   let previewTimer: ReturnType<typeof setTimeout> | undefined;
   const previewBtn = addButton(
     "Ver arte",
@@ -276,7 +306,33 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         let fill = "#1b1e24";
         if (artPreview && previewTiles) {
           const tileId = previewTiles[y * doc.width + x]!;
-          if (tileId >= 0) fill = TILE_COLORS[tileId] ?? "#888";
+          if (tileId >= 0) {
+            // Com tileset no nível, a arte vem do ATLAS — e quando a tabela
+            // não cobre (id fora da faixa, imagem recusada/ausente), a cor é
+            // o MESMO hash determinístico do host: os dois lados degradam
+            // JUNTOS, nunca um fingindo o que o outro não mostra. TILE_COLORS
+            // sobrevive apenas como preview de nível SEM tileset.
+            if (tilesetTable) {
+              const region = atlasImage ? tileRegion(tilesetTable, tileId) : undefined;
+              if (atlasImage && region) {
+                context.drawImage(
+                  atlasImage,
+                  region.x,
+                  region.y,
+                  region.width,
+                  region.height,
+                  screen.x,
+                  screen.y,
+                  size - gap,
+                  size - gap,
+                );
+                continue;
+              }
+              fill = fallbackTileColor(tileId);
+            } else {
+              fill = TILE_COLORS[tileId] ?? "#888";
+            }
+          }
         } else {
           const value = doc.valueAt(x, y);
           if (value !== 0) fill = meaningColors.get(value) ?? "#888";
@@ -649,6 +705,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
           tileSize?: number;
           seed?: number;
           rules?: ReturnType<typeof defaultLevelRules>;
+          tilesetId?: string;
         }>;
       };
       const existing = pickLevel(result.levels ?? [], ctx.levelId);
@@ -666,6 +723,15 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         viewport.fit(doc.width, doc.height, tileSize);
         onEdited();
         status.textContent = "Nível carregado do projeto.";
+
+        // o atlas do nível vem da MESMA consulta canônica que o agente usa;
+        // sem tilesetId (ou sem tabela) o preview continua em TILE_COLORS
+        if (typeof existing.tilesetId === "string" && existing.tilesetId.length > 0) {
+          const atlas = (await window.gridsmith.query("tilesets")) as {
+            tilesets?: TilesetTable[];
+          };
+          loadAtlas(atlas.tilesets?.find((t) => t.tilesetId === existing.tilesetId));
+        }
       }
 
       const placed = (await window.gridsmith.query("entities")) as {
