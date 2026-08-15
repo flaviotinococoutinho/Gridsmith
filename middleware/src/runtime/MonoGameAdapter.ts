@@ -254,19 +254,34 @@ export class MonoGameAdapter implements RuntimeAdapter {
           reason: "entity definitions are editorial; instances with archetypeId spawn actors",
         };
 
-      case "tilesetDefined":
-      case "tilesetRemoved":
-        // O runtime ainda não tem um método tileset/*: o host desenha tiles
-        // em cor determinística até a fatia que leva o atlas pelo fio. Fingir
-        // "projected" aqui faria o painel Problemas afirmar que a arte chegou
-        // à engine quando não chegou.
-        return {
-          event: event.kind,
-          status: "skipped",
-          reason:
-            "the runtime does not consume tilesets yet; the graphics host draws resolved tiles " +
-            "with deterministic colors until the atlas crosses the wire",
-        };
+      case "tilesetDefined": {
+        // A tabela do atlas atravessa o fio como está — quatro números e uma
+        // referência de imagem; a REGIÃO de cada tile é fórmula nos dois
+        // lados, nunca dado transmitido.
+        const detail = await this.requestAtEpoch(
+          session,
+          expectedRuntimeSessionEpoch,
+          "tileset/apply",
+          {
+            tilesetId: event.tileset.tilesetId,
+            image: event.tileset.image,
+            tileSize: event.tileset.tileSize,
+            columns: event.tileset.columns,
+            tileCount: event.tileset.tileCount,
+          },
+        );
+        return { event: event.kind, status: "projected", detail };
+      }
+
+      case "tilesetRemoved": {
+        const detail = await this.requestAtEpoch(
+          session,
+          expectedRuntimeSessionEpoch,
+          "tileset/clear",
+          { tilesetId: event.tilesetId },
+        );
+        return { event: event.kind, status: "projected", detail };
+      }
 
       case "entityPropertiesChanged":
         // Os campos tipados ainda não atravessam o fio — o spawn leva apenas
@@ -474,6 +489,9 @@ function toEngineTilemap(level: LevelSpec): Record<string, unknown> {
     tileSize: level.tileSize,
     intGrid: [...level.intGrid],
     tiles: [...resolved.tiles],
+    // o vínculo nível→atlas acompanha o tilemap: é ele que diz ao host qual
+    // tabela amostrar ao desenhar este mapa
+    ...(level.tilesetId === undefined ? {} : { tilesetId: level.tilesetId }),
   };
 }
 

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gridsmith://contracts/tileset.methods",
+  "title": "tileset/* (atlas de arte)",
+  "description": "Métodos do atlas de arte (middleware → engine), F1 onda A (ADR-022). A tabela é uma GRADE: a região de um tileId é fórmula (coluna id % columns, linha id / columns, célula de tileSize px) nos DOIS lados do fio — nada por tile para divergir. A imagem viaja como REFERÊNCIA (caminho relativo ao projeto ou id de artefato), nunca bytes. Aplicar é upsert (reidratação reaplica sem erro); um tileId fora de [0, tileCount) não tem arte e cai no fallback determinístico, junto com o editor. Métodos em $defs.",
+  "$defs": {
+    "tileset/apply": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "tilesetId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "image": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tileSize": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "columns": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tileCount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Deve ser >= columns; ids válidos são 0..tileCount-1."
+          }
+        },
+        "required": [
+          "tilesetId",
+          "image",
+          "tileSize",
+          "columns",
+          "tileCount"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "tilesetId": {
+            "type": "string"
+          },
+          "status": {
+            "const": "applied"
+          }
+        },
+        "required": [
+          "tilesetId",
+          "status"
+        ]
+      }
+    },
+    "tileset/clear": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "tilesetId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "tilesetId"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "tilesetId": {
+            "type": "string"
+          },
+          "status": {
+            "const": "cleared"
+          }
+        },
+        "required": [
+          "tilesetId",
+          "status"
+        ]
+      }
+    }
+  }
+}

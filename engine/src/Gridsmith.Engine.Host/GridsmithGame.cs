@@ -33,15 +33,23 @@ public sealed class GridsmithGame : Game
 
     private readonly GraphicsDeviceManager _graphics;
     private readonly EngineService _service;
+    private readonly string _contentRoot;
     private readonly FrameQuad[] _quads = new FrameQuad[MaxQuadsPerFrame];
+
+    /// <summary>
+    /// Texturas por caminho de imagem. `null` registrado = carga já falhou;
+    /// sem a entrada negativa o host tentaria reabrir o arquivo TODO frame.
+    /// </summary>
+    private readonly Dictionary<string, Texture2D?> _atlasTextures = new(StringComparer.Ordinal);
 
     private SpriteBatch? _batch;
     private Texture2D? _pixel;
     private int _lastTruncatedRequired;
 
-    public GridsmithGame(EngineService service)
+    public GridsmithGame(EngineService service, string? contentRoot = null)
     {
         _service = service;
+        _contentRoot = contentRoot ?? Environment.CurrentDirectory;
         _graphics = new GraphicsDeviceManager(this)
         {
             PreferredBackBufferWidth = 1280,
@@ -100,6 +108,16 @@ public sealed class GridsmithGame : Game
         var originX = viewport.CenterX - viewport.HalfWorldWidth;
         var originY = viewport.CenterY - viewport.HalfWorldHeight;
 
+        // A tabela do mapa desenhado, resolvida UMA vez por frame: o vínculo
+        // vem do tilemap (tilesetId por slot), a tabela do registro da sessão
+        // e a textura do cache — sem alocação no caminho.
+        var map = FirstTilemap();
+        TilesetTable atlasTable = default;
+        var hasTable = map.IsValid
+            && _service.Tilemaps.TilesetId(map) is { } tilesetId
+            && _service.Tilesets.TryGet(tilesetId, out atlasTable);
+        var atlasTexture = hasTable ? TextureFor(atlasTable.Image) : null;
+
         _batch.Begin(samplerState: SamplerState.PointClamp);
         for (var i = 0; i < composition.Written; i++)
         {
@@ -109,7 +127,25 @@ public sealed class GridsmithGame : Game
                 (int)MathF.Round((quad.Y - originY) * scale),
                 Math.Max(1, (int)MathF.Round(quad.Width * scale)),
                 Math.Max(1, (int)MathF.Round(quad.Height * scale)));
-            _batch.Draw(_pixel, destination, ColorOf(in quad));
+
+            // Amostra o atlas SÓ quando a tabela cobre o tile; qualquer outra
+            // situação (sem tileset, imagem ausente, id fora da faixa) cai na
+            // MESMA cor determinística do editor — os dois lados degradam
+            // juntos, nunca um fingindo o que o outro não mostra.
+            if (quad.Layer == FrameLayer.Tilemap
+                && atlasTexture is not null
+                && atlasTable.TryRegion(quad.TileId, out var sourceX, out var sourceY))
+            {
+                _batch.Draw(
+                    atlasTexture,
+                    destination,
+                    new Rectangle(sourceX, sourceY, atlasTable.TileSize, atlasTable.TileSize),
+                    Color.White);
+            }
+            else
+            {
+                _batch.Draw(_pixel, destination, ColorOf(in quad));
+            }
         }
 
         _batch.End();
@@ -166,8 +202,45 @@ public sealed class GridsmithGame : Game
             (int)(80 + ((hash >> 16) & 0x7F)));
     }
 
+    /// <summary>
+    /// Textura do atlas por referência de imagem, com cache NEGATIVO: uma
+    /// imagem que não carrega é registrada como null e reportada uma vez —
+    /// sem isso o host tentaria reabrir o arquivo a cada frame.
+    /// </summary>
+    private Texture2D? TextureFor(string imageReference)
+    {
+        if (_atlasTextures.TryGetValue(imageReference, out var cached))
+        {
+            return cached;
+        }
+
+        Texture2D? texture = null;
+        var fullPath = Path.IsPathRooted(imageReference)
+            ? imageReference
+            : Path.Combine(_contentRoot, imageReference);
+        try
+        {
+            using var stream = File.OpenRead(fullPath);
+            texture = Texture2D.FromStream(GraphicsDevice, stream);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[host] atlas \"{imageReference}\" não carregou ({ex.Message}); tiles em cor determinística");
+        }
+
+        _atlasTextures[imageReference] = texture;
+        return texture;
+    }
+
     protected override void UnloadContent()
     {
+        foreach (var texture in _atlasTextures.Values)
+        {
+            texture?.Dispose();
+        }
+
+        _atlasTextures.Clear();
         _pixel?.Dispose();
         _batch?.Dispose();
         base.UnloadContent();

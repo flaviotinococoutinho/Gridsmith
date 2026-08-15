@@ -18,12 +18,18 @@ using Gridsmith.Engine.Runtime;
 // a janela sem responder até o middleware subir.
 
 var pipeName = PipeTransport.DefaultPipeName;
+string? contentRoot = null;
 for (var i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
         case "--pipe":
             pipeName = args[++i];
+            break;
+        case "--content-root":
+            // raiz para resolver referências RELATIVAS de imagem de atlas (o
+            // diretório do projeto do usuário); default = cwd
+            contentRoot = args[++i];
             break;
         default:
             Console.Error.WriteLine($"[host] unknown argument: {args[i]}");
@@ -43,7 +49,7 @@ var control = ControlPlane.RunAsync(service, pipeName, shutdown.Token);
 
 try
 {
-    using var game = new GridsmithGame(service);
+    using var game = new GridsmithGame(service, contentRoot);
     game.Run();
 }
 finally

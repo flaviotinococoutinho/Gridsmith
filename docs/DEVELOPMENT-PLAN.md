@@ -757,12 +757,24 @@ o CAS de `historyCursor`. Trocar o alvo passou a ser uma linha.
 > v4, pelo mesmo motivo. Projeção honesta: o runtime ainda não consome
 > tilesets, então o evento sai `skipped` com razão acionável.
 >
+> ✅ **Fatia (ii-a) entregue — o atlas atravessa o fio.** Métodos
+> `tileset/apply`/`tileset/clear` na engine (upsert; reset de sessão limpa),
+> `tilesetId` no `tilemap/define`, projeção do adapter deixou de ser `skipped`
+> e virou `projected`, capability `tileset-atlas` no manifesto. O host amostra
+> a textura do atlas (`--content-root` resolve referências relativas, cache
+> NEGATIVO evita reabrir imagem ausente a cada frame) e cai para a cor
+> determinística exatamente quando a tabela não cobre — e o hash dessa cor é
+> IDÊNTICO nos dois lados, travado por testes ESPELHADOS número a número
+> (`TilesetTableTests.cs` ↔ `tileset-atlas.test.ts`): mudar a fórmula de um
+> lado quebra a suíte dele com os valores que o outro continua afirmando.
+>
 > **Fatias restantes da onda A**, cada uma mergeável sozinha:
-> (ii) `frontend/src/core/tilesetAtlas.ts` e o canvas desenhando a partir da
-> tabela — e o host amostrando o MESMO atlas (os dois falham JUNTOS quando a
-> tabela diverge); (iii) `scripts/verify-visual-parity.sh` comparando as duas
-> listas de quads por igualdade exata; (iv) telemetria de frame como
-> notificação no `EventJournal`.
+> (ii-b) o CANVAS do editor amostrando o atlas no "Ver arte" — exige a imagem
+> chegar ao renderer (IPC de leitura + `img-src data:` no CSP) e usa o
+> `tileRegion`/`fallbackTileColor` de `core/tilesetAtlas.ts`, que já existem;
+> só depois dela a (iii) faz sentido; (iii) `scripts/verify-visual-parity.sh`
+> comparando as duas listas de quads por igualdade exata; (iv) telemetria de
+> frame como notificação no `EventJournal`.
 
 **Objetivo (onda A).** Que exista um processo que desenhe, em janela própria,
 os mesmos stores que os handlers JSON-RPC mutam — e que o que o usuário pinta

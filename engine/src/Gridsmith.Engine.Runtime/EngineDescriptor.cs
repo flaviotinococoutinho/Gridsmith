@@ -152,7 +152,7 @@ public static class EngineDescriptor
                 features = new[]
                 {
                     "intgrid", "auto-tiling-middleware", "static-batch-consolidation",
-                    "deterministic-checksum",
+                    "deterministic-checksum", "tileset-atlas",
                 },
                 editor = new
                 {
