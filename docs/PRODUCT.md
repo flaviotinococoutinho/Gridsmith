@@ -8,6 +8,11 @@ criador edita um **modelo canônico próprio** (blueprint declarativo,
 versionável e diffável) e a ferramenta o **projeta em runtimes reais** —
 MonoGame hoje — através de adapters governados por perfis de capacidades.
 
+> **Posicionamento externo, mapa competitivo e caminho comercial:**
+> [`PRODUCT-STRATEGY.md`](PRODUCT-STRATEGY.md) — identidade em uma frase,
+> diferencial por defensabilidade, tese de crescimento e as fases até um
+> artefato vendável.
+
 O que diferencia o Gridsmith de um editor acoplado a uma engine:
 
 1. **O domínio é o produto.** Rigs, níveis, luzes, câmera, entidades e

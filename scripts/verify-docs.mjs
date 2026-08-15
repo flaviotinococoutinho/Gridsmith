@@ -48,6 +48,7 @@ const REQUIRED = [
   "docs/CANONICAL-MODEL.md",
   "docs/OPPORTUNITIES.md",
   "docs/PRODUCT.md",
+  "docs/PRODUCT-STRATEGY.md",
   "docs/RESEARCH-EDITOR-LANDSCAPE.md",
   "docs/adr/README.md",
   "docs/adr/ADR-019-freeze-medido-dos-transports.md",
