@@ -390,6 +390,8 @@ const LABELS: Readonly<Record<BlueprintCommand["kind"], string>> = {
   "entitydef/define": "Criar tipo de entidade",
   "entitydef/update": "Editar tipo de entidade",
   "entitydef/remove": "Remover tipo de entidade",
+  "tileset/define": "Criar tileset",
+  "tileset/remove": "Remover tileset",
   "entity/place": "Posicionar entidade",
   "entity/move": "Mover entidade",
   "entity/properties": "Editar propriedades",

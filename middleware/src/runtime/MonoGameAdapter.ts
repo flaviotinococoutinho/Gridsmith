@@ -254,6 +254,20 @@ export class MonoGameAdapter implements RuntimeAdapter {
           reason: "entity definitions are editorial; instances with archetypeId spawn actors",
         };
 
+      case "tilesetDefined":
+      case "tilesetRemoved":
+        // O runtime ainda não tem um método tileset/*: o host desenha tiles
+        // em cor determinística até a fatia que leva o atlas pelo fio. Fingir
+        // "projected" aqui faria o painel Problemas afirmar que a arte chegou
+        // à engine quando não chegou.
+        return {
+          event: event.kind,
+          status: "skipped",
+          reason:
+            "the runtime does not consume tilesets yet; the graphics host draws resolved tiles " +
+            "with deterministic colors until the atlas crosses the wire",
+        };
+
       case "entityPropertiesChanged":
         // Os campos tipados ainda não atravessam o fio — o spawn leva apenas
         // (entityId, archetypeId, position). Enquanto for assim, a razão diz

@@ -581,7 +581,8 @@ test(
       assert.notEqual(restarted.record.middlewareInstanceId, previousInstanceId);
       assert.equal(restarted.record.lastEventSeq, "0");
       assert.equal(restarted.snapshot.firstAvailableSeq, "1");
-      assert.equal(Object.keys(restarted.snapshot.projections).length, 9);
+      // uma entrada por QUERYABLE_PROJECTIONS — cresceu com a projeção "tilesets" (v5)
+      assert.equal(Object.keys(restarted.snapshot.projections).length, 10);
       assert.equal(client.latestProjectionSnapshot?.middlewareInstanceId, restarted.record.middlewareInstanceId);
 
       const deliveredAfterRestart: string[] = [];

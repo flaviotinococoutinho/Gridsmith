@@ -51,6 +51,7 @@ export const QUERYABLE_PROJECTIONS = [
   "entityDefs",
   "entities",
   "camera",
+  "tilesets",
   "levels",
   "world",
   "document",
@@ -213,6 +214,11 @@ export class EditorSurface {
         return { entities: store.listEntities() };
       case "camera":
         return { camera: store.cameraSettings };
+      case "tilesets":
+        // é a MESMA tabela que o canvas e o host consomem: a consulta existe
+        // para que UI e agente leiam o atlas pelo mesmo caminho, nunca de um
+        // cache paralelo
+        return { tilesets: store.listTilesets() };
       case "levels":
         return { levels: store.listLevels() };
       case "world": {
@@ -508,6 +514,7 @@ function emptyProjectionSnapshot(): CompleteProjectionSnapshot {
     entityDefs: { entityDefs: [] },
     entities: { entities: [] },
     camera: { camera: {} },
+    tilesets: { tilesets: [] },
     levels: { levels: [] },
     world: { placements: [], neighbors: {} },
     document: { document: null },
