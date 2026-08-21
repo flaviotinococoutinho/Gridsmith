@@ -66,6 +66,7 @@ const REQUIRED = [
   "scripts/verify-phase3.sh",
   "scripts/verify-phase4.sh",
   "scripts/verify-transports.sh",
+  "scripts/verify-visual-parity.sh",
   "scripts/benchmark-transports.sh",
   "benchmarks/README.md",
   "benchmarks/transport-benchmark.schema.json",
@@ -115,6 +116,10 @@ if (fs.existsSync(ciPath)) {
     {
       label: "./scripts/verify-transports.sh",
       pattern: /^\s*-\s*run:\s+\.\/scripts\/verify-transports\.sh\s*$/m,
+    },
+    {
+      label: "./scripts/verify-visual-parity.sh",
+      pattern: /^\s*-\s*run:\s+\.\/scripts\/verify-visual-parity\.sh\s*$/m,
     },
     {
       label: "npm run docs:verify",

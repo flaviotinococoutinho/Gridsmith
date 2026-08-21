@@ -778,10 +778,20 @@ o CAS de `historyCursor`. Trocar o alvo passou a ser uma linha.
 > do host, então os dois lados degradam JUNTOS; nível sem tileset segue em
 > `TILE_COLORS`. Cache negativo no renderer espelha o do host.
 >
-> **Fatias restantes da onda A**, cada uma mergeável sozinha:
-> (iii) `scripts/verify-visual-parity.sh` comparando as duas listas de quads
-> por igualdade exata; (iv) telemetria de frame como notificação no
-> `EventJournal`.
+> ✅ **Fatia (iii) entregue — a paridade visual é um gate.**
+> `scripts/verify-visual-parity.sh` compõe o MESMO cenário nos dois lados — o
+> driver Node resolve o IntGrid pelo AutoTiler real (o papel do adapter) e usa
+> o espelho puro `core/frameDescription.ts`; o Runtime headless compõe via
+> `FrameComposer` no modo `--describe-frame` (Core puro, sem GPU — E4 intacta)
+> — e compara as descrições BYTE a BYTE, sem tolerância. O formato é texto de
+> linha com números "0.###" invariante (JSON esbarraria em formatação de
+> ponto flutuante entre serializadores) e o cenário só usa frações binárias
+> exatas. O cenário fixa as armadilhas da composição: célula parcial da borda,
+> tile -1, ator fora do recorte, ator em meia-célula. Roda no job e2e do CI e
+> o `docs:verify` exige a invocação.
+>
+> **Fatia restante da onda A**: (iv) telemetria de frame como notificação no
+> `EventJournal` — nunca no caminho síncrono do dispatch.
 
 **Objetivo (onda A).** Que exista um processo que desenhe, em janela própria,
 os mesmos stores que os handlers JSON-RPC mutam — e que o que o usuário pinta

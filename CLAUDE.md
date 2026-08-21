@@ -26,6 +26,7 @@ cd engine && dotnet build && dotnet test
 # e2e (raiz)
 ./scripts/verify-phase1.sh .. verify-phase4.sh
 ./scripts/verify-transports.sh                # gRPC quente + fallback GraphQL
+./scripts/verify-visual-parity.sh             # editor e engine compõem o MESMO frame
 npm run docs:verify                           # lint da documentação
 ```
 

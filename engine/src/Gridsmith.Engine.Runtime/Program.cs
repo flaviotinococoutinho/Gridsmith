@@ -26,6 +26,10 @@ for (var i = 0; i < args.Length; i++)
         case "--self-test":
             selfTest = true;
             break;
+        case "--describe-frame":
+            // paridade visual (ADR-022): compõe um frame via FrameComposer a
+            // partir de um cenário JSON e sai — Core puro, sem GPU, sem pipe
+            return FrameDescriber.Run(args[++i]);
         default:
             Console.Error.WriteLine($"[engine] unknown argument: {args[i]}");
             return 2;
