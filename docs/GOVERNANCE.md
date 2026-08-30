@@ -50,7 +50,7 @@ graph LR
 | **E2** | `Ipc` é plano de controle independente do domínio | teste E2 |
 | **E3** | `Graphics` (MonoGame) só conhece `Core` | teste E3 |
 | **E4** | `Runtime` (serviço headless) orquestra `Core`+`Ipc`, nunca `Graphics` — o host gráfico acopla por fora | teste E4 |
-| **E5** | `Core` não referencia MonoGame |
+| **E5** | `Core` não referencia MonoGame | teste E5 |
 | **E6** | Só o **Host gráfico** junta MonoGame com o plano de controle; `Core`, `Ipc` e `Runtime` não arrastam MonoGame (ADR-022) | teste E6 |
 
 ### Frontend (`frontend/test/architecture.test.ts`)
@@ -293,6 +293,7 @@ documento derivado é corrigido (nunca o contrário).
 | Requisitos (funcionais/não funcionais/técnicos) | [`REQUIREMENTS.md`](REQUIREMENTS.md) |
 | Constituição arquitetural (regras normativas) | [`ARCHITECTURE-SPEC.md`](ARCHITECTURE-SPEC.md) |
 | Jornada Alpha | o teste e2e da jornada + [`ALPHA-0.1.md`](ALPHA-0.1.md) |
+| Estado das pendências | a fila viva de [`DEVELOPMENT-PLAN.md`](DEVELOPMENT-PLAN.md) §7 — cujas evidências de ausência o `docs:verify` reexecuta |
 
 Responsabilidade por documento (sem duplicação de conteúdo — use links):
 `README` entrada/execução · `ARCHITECTURE` topologia/funcionamento ·
@@ -304,5 +305,7 @@ A verificação automática (`npm run docs:verify`, script `scripts/verify-docs.
 impõe parte destas regras: links internos válidos, documentos obrigatórios
 presentes, scripts `verify-phase*.sh` referenciados existentes, ausência de
 referências transitórias (branches/sessões de geração), comandos `npm run`
-documentados que existam nos `package.json`, e ausência de contagens de teste
-fixadas manualmente.
+documentados que existam nos `package.json`, ausência de contagens de teste
+fixadas manualmente, e a **evidência de ausência** da fila de pendências — as
+marcas `ausente:` / `inexistente:` são buscas REEXECUTADAS, então uma pendência
+já entregue faz falhar a linha que continua negando a existência dela.

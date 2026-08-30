@@ -92,6 +92,7 @@ algo violando uma destas linhas está errando, não melhorando.
    ./scripts/verify-phase1.sh && ./scripts/verify-phase2.sh \
      && ./scripts/verify-phase3.sh && ./scripts/verify-phase4.sh
    ./scripts/verify-transports.sh
+   ./scripts/verify-visual-parity.sh
    npm run docs:verify
    ```
 4. **Commits** em pt-BR descritivo, explicando o PORQUÊ; docs atualizadas no
@@ -110,6 +111,12 @@ algo violando uma destas linhas está errando, não melhorando.
    das frentes no `VIABILITY-PLAN` > as tabelas de diagnóstico daquele
    documento. As tabelas são registro histórico e estão explicitamente
    marcadas como tal.
+8. **Entregou uma pendência? Feche a linha dela na fila (§7)** no mesmo PR. Se
+   a entrada carregava marca de ausência (`ausente:` / `inexistente:`), o
+   `docs:verify` vai falhar assim que o código existir — é o lembrete, não um
+   obstáculo: risque a linha, descreva o que ficou entregue e o que restou. Uma
+   pendência entregue que continua listada como inexistente manda o próximo
+   leitor construir de novo o que já está pronto.
 
 ## 6. O que já está entregue (snapshot)
 
@@ -185,23 +192,41 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 - **degrada-experiência** — a jornada passa, mas com dano visível.
 - **dívida-técnica** — invisível ao usuário hoje; encarece tudo depois.
 
+**A evidência de ausência é executável.** "Auditada" era, até aqui, uma
+promessa com prazo de validade: quando alguém entregava a pendência, a linha
+continuava afirmando que a coisa não existe, e o CI concordava em silêncio —
+foi o que aconteceu com o tileset, negado por duas fatias depois de já
+atravessar as três camadas. Agora as buscas citadas voltam a ser executadas
+pelo `npm run docs:verify`:
+
+```text
+`ausente: <literal> @ <caminho>[, <caminho>]`   → a busca literal tem de vir vazia
+`inexistente: <caminho>`                        → o caminho não pode ter nascido
+```
+
+Quando a marca falha, a fila mentiu: ou a pendência foi entregue, ou a
+evidência escolhida parou de sustentá-la — e as duas exigem reauditar a linha.
+A marca **não** prova a ausência do comportamento (um `writeFile` some se
+alguém trocar por stream); ela trava a evidência que a entrada citou, que é o
+que estava apodrecendo sem aviso.
+
 ### 7.1. Bloqueia a jornada
 
 | # | Pendência | Evidência | Onde no plano |
 |---|---|---|---|
 | ~~B1~~ | ✅ **Entregue (F1 onda A completa).** O host desenha em janela própria (ADR-022), o atlas é canônico e atravessa o fio (`tileset/define`→`tileset/apply`), o canvas e o host amostram a MESMA tabela e degradam juntos, a paridade visual é gate no CI (descrição byte a byte) e o runtime reporta o que desenhou (ADR-023). **Resta**: embutir a janela no painel — é a onda B, não B1 | — | — |
-| B2 | **Tileset/atlas não existe em nenhuma camada** — "pinte significado, derive arte" termina em `tileId` inteiro | busca por `tileset`/`atlas` em `middleware/src`, `frontend/src` e `contracts/` não retorna nada | F1 (receita §9.6) |
+| ~~B2~~ | ✅ **Entregue (F1 onda A, fatias i–ii).** "Pinte significado, derive arte" não termina mais em `tileId` inteiro: `tileset/define`/`tileset/remove` são canônicos com o DoD completo, o documento v5 carrega a coleção, o atlas atravessa o fio (`tileset/apply`) e canvas e host amostram a MESMA tabela em grade — degradando juntos pelo mesmo hash quando ela não cobre | — | — |
 | B3 | **P0.5 — preview EMBUTIDO** (janela do host composta no painel do editor; run/pause/stop, live edit, overlays). A onda A destravou tudo o que vem antes: existe janela desenhando, e a telemetria que um overlay consumiria já chega ao processo principal do editor | a janela do host é própria, supervisionada pelo Electron; `preview.embedded` segue desabilitada no perfil por decisão da ADR-022 | F1, onda B |
-| B4 | **P0.7 — undo/redo global** no nível do comando canônico | `CommandHistory` declara no cabeçalho que é só o relógio lógico; undo segue local ao IntGrid | E8 + E9 (receita §9.4) |
+| ~~B4~~ | ✅ **Entregue (E9).** O undo/redo é canônico no nível do comando: os inversos são despachados pelo MESMO caminho (a engine vê a reversão como qualquer edição), com CAS por `historyCursor`, coalescing por gesto e a aba Histórico operável — agente e humano compartilham um histórico só. O cabeçalho do `CommandHistory` hoje diz "relógio lógico **E** undo/redo". **Resta**: o acorde `Ctrl+Z` ainda aponta ao rascunho local, de propósito, até a pintura virar `level/patch` (D11) | — | — |
 | B5 | **Placement de câmera e luz com handles no canvas** | a vista do editor de níveis não menciona câmera nem luz; `camera/configure`, `light/add` e `light/remove` existem completos no canônico, sem UI | cauda pós-E10 — os registros que faltavam (painel, ferramenta, seleção, inspector) já existem; falta a vista |
 | B6 | **Archetype só carrega posição** — transform/sprite/animação/colisão não cruzam o fio | os parâmetros de spawn na engine são `(EntityId, ArchetypeId, Position)`; o `ActorStore` guarda só archetypes e posições | F7 + F1 (sem tileset nada vira sprite) |
-| B7 | **F2 residual (a)**: o store de sessão vive só em memória — reiniciar o middleware apaga o projeto | não há nenhuma escrita em disco no `ProjectSessionManager` | F2 residual (gate de milestone) |
-| B8 | **F3a residual**: a rota de conceitos (`editorConcepts`) não atravessa nenhuma borda do app | os únicos consumidores são o MCP e dois drivers de teste; o app sobe o middleware com `--no-mcp` | F3a — **destravada** pela E10 (há registro onde pendurar a rota) |
+| B7 | **F2 residual (a)**: o store de sessão vive só em memória — reiniciar o middleware apaga o projeto | não há escrita em disco no gerente de sessão: `ausente: writeFile @ middleware/src/canonical/ProjectSessionManager.ts` | F2 residual (gate de milestone) |
+| B8 | **F3a residual**: a rota de conceitos (`editorConcepts`) não atravessa nenhuma borda do app | os únicos consumidores são o MCP e dois drivers de teste; o app sobe o middleware com `--no-mcp` (`ausente: editorConcepts @ frontend/src, contracts`) | F3a — **destravada** pela E10 (há registro onde pendurar a rota) |
 | ~~B9~~ (parte) | ✅ **Entregue (E10).** Registro de painéis, serviço de seleção e inspector por contribuições (`core/workbench/`), com o rail derivado do registro e a razão da governança preservada em cada seção. **Resta**: o inspector ainda é de LEITURA (escrita = D6) e câmera/luz seguem sem vista (B5) | — | — |
 | B10 (parte) | **F6**: o grid não publicado, o undo local e o zoom/pan ainda vivem no closure da vista. A E10 tirou de lá a SELEÇÃO e fez a casca remontar só na troca de painel — um resync remoto deixou de destruir a pintura —, mas o documento continua recriado a cada mount | a vista instancia `IntGridDocument` na montagem; a seleção agora é `workbench.selection` | F6 (o que falta é a pintura virar `level/patch` canônico) |
 | B11 | **F6: pintar não suja o documento** — fechar ou trocar descarta a pintura sem diálogo | `commandApplied` só dispara em evento de Blueprint; não existe marcação de sujeira local | F6 |
-| B12 | **F7 inteira**: CRUD assimétrico, sem camadas em `LevelSpec`, campos nunca cruzam o runtime, pipeline de assets sem porta no app | os mesmos kinds do diagnóstico continuam em `commandShape.ts`; `middleware/src/application/` não existe | F7 → E5/E6/E8/E9 |
-| B13 | **P0.9 — empacotamento** (executável por plataforma, bundling, smoke do artefato, release alpha) | nenhuma configuração de Electron Builder/Forge; o workflow de CI não tem job de artefato | **órfã** — só existe como P0.9 da milestone |
+| B12 | **F7 inteira**: CRUD assimétrico, sem camadas em `LevelSpec`, campos nunca cruzam o runtime, pipeline de assets sem porta no app | os mesmos kinds do diagnóstico continuam em `commandShape.ts`; `inexistente: middleware/src/application` | F7 → E5/E6/E8/E9 |
+| B13 | **P0.9 — empacotamento** (executável por plataforma, bundling, smoke do artefato, release alpha) | `ausente: electron-builder @ package.json, frontend/package.json`; o workflow de CI não tem job de artefato | **órfã** — só existe como P0.9 da milestone |
 | B14 | **P0.1 — caminhos empacotados** na supervisão (fecha junto com P0.9) | idem acima | **órfã** (P0.9) |
 
 ### 7.2. Degrada a experiência
@@ -211,16 +236,16 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 | D1 | Menu "Recentes" nativo | o menu nativo tem só Arquivo/Editar/Exibir; os recentes só aparecem na tela inicial | **órfã** |
 | ~~D2~~ | ✅ **Entregue (E10).** `workbenchLayout` puro (tamanho + visibilidade por área, clamp por limites, serialização versionada com fail-safe) + alças de arrasto e persistência na casca | — | — |
 | D3 | Razões da governança traduzidas — os perfis já estão em pt-BR; o inglês vem das razões GERADAS pelo governor | mensagens geradas em inglês exibidas em tooltip | F4 (razão como código estável + `vocabulary.ts`) |
-| D4 | Edição da paleta de tipos (a paleta é constante de build, não dado do projeto) | a vista importa uma paleta fixa; nenhum comando canônico de paleta | F7 + E9 (`level/palette`, v4) |
-| D5 | Diretório `examples/` versionado e a ação "Abrir exemplo" | o diretório não existe; o modelo da tela inicial tem o flag e ninguém o satisfaz | F8 residual |
+| D4 (parte) | A metade canônica **existe** (E9): `level/palette` com inverso, a paleta dentro do documento (v4) e viajando na projeção `levels`. **Falta a vista LER o que o documento diz** — ela ainda desenha a constante de build, então um projeto cuja paleta divergir (agente, edição à mão, template futuro) é exibido com nomes e cores que não são os dele. Depois disso, editar a paleta é despachar o comando que já existe | `LEVEL_PALETTE` importada de `core/levelPresets` alimenta swatches, cores, atalhos e rótulos; `ausente: level.palette @ frontend/src` | F7 + F6 (a vista) — o comando já está pronto |
+| D5 | Diretório `examples/` versionado e a ação "Abrir exemplo" | `inexistente: examples`; o modelo da tela inicial tem o flag e ninguém o satisfaz | F8 residual |
 | D6 (parte) | Inspector de entidades: a **leitura** entrou na E10 (seções por tipo de seleção, com governança e razão). **Falta a escrita** — editar um campo tem de virar comando canônico | `entity.identity`/`entity.transform` renderizam; nenhum campo é editável | F7 (campos tipados) |
 | D7 | F2 residual (c): trocar de projeto com trabalho sujo descarta sem diálogo | os ramos `new`/`open` não passam por `requestClose()` | F2 residual |
-| D8 | F3a residual: nenhuma view consome `constraints` — a UI não antecipa teto de luzes/células/atores | o merge existe no governor; nenhuma vista lê o registro | F3a (parte "consumo") |
+| D8 | F3a residual: nenhuma view consome `constraints` — a UI não antecipa teto de luzes/células/atores | o merge existe no governor; nenhuma vista lê o registro (`ausente: constraints @ frontend/src/renderer`) | F3a (parte "consumo") |
 | D9 | F4: a governança é resolvida UMA vez no boot — o rail congela se a engine subir ou cair depois | só há uma chamada de `experience()`, dentro do boot | F4 |
 | D10 | F5 residual: status `failed` na projeção, reidratação abortando no primeiro erro sem trilha por item, fila única na fronteira do adapter | registrado no blockquote da frente F5 | F5 residual |
 | D11 (parte) | F6: o Ctrl+Z **continua indo ao rascunho local**, mas agora por decisão declarada e verificável: o closure `activeEditor` morreu, o acorde tem dono único (regra F6) e o histórico canônico ficou operável na aba Histórico, com CAS por `historyCursor`. Apontar o Ctrl+Z ao documento antes de a pintura virar `level/patch` tiraria o desfazer da pincelada | `level.undoDraft` reivindica `Ctrl+Z`; `document.undo` existe sem atalho | F6 (pintura canônica) |
 | D12 | E5 pendente: publicação de artefato em duas fases, tombstones e rollback | o `ArtifactStore` só tem `publish` monofásico | E5 (receita §9.2) |
-| D13 | E6 pendente: camada de aplicação de assets + superfície fria GraphQL | `middleware/src/application/` não existe | E6 |
+| D13 | E6 pendente: camada de aplicação de assets + superfície fria GraphQL | `inexistente: middleware/src/application` | E6 |
 | ~~D14~~ | ✅ **Entregue (E7).** Blueprint v3: `metadata` (nome, resolução de referência, convenção espacial declarada), `GridCoordinates` canônico e migração 2 → 3 com os quatro ramos por impressão digital | — | — |
 | D22 | A luz dos templates fica 8 px fora do centro geométrico do nível (`[136, 80]` onde o centro é `[128, 72]`) — a expressão original aplica a fórmula de centro de célula a um índice fracionário | `legacyLevelCenterPx` em `ProjectTemplates.ts`, com o desvio documentado | **órfã** — revelada pela E7 e deixada fora dela de propósito: corrigi-la move a luz de todo projeto novo, o que não pertence a um PR de migração |
 | ~~D15~~ | ✅ **Entregue (E8).** Domínio transacional (`planBatch`/`commitBatch`/`fork` com `mutationVersion` como CAS interno, `applyWithInverse`, inverso por kind, barreiras, rejeição de no-op), quatro kinds in-place e proveniência carimbada pela borda | — | — |
@@ -240,10 +265,10 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 | ~~T3~~ | ✅ **Entregue (E4).** A contradição fechou pela criação dos schemas, não pela edição do texto | — | — |
 | T4 | F2 residual: laço de reescrita do autosave (não existe `lifecycle.autosaved()`) | o tick compara com o instante do último save explícito, que o autosave não atualiza | F2 residual |
 | T5 | F8/F2 borda: a reconciliação de status ignora o retorno de `requestClose()` e fecha o projeto em silêncio | chamada bare, descartando a decisão | F2 residual |
-| T6 | F4: `featureLabel` exportado e sem consumidor | só a definição aparece na busca | F4 |
-| T7 | Render/edição fora da main thread (workers) | nenhum `new Worker` no frontend; só comentários prometendo portabilidade | OPP-01 (P1) |
-| T8 | E2E visual (Playwright + Electron) da jornada de aceite | nenhuma dependência de Playwright no repositório | **órfã** — é a prova de produto prometida junto de P0.9 |
-| T9 | Riscos técnicos ativos: coerência de MMF no Windows sem binding nativo; shaders sem compilação no CI | o único workflow não tem job de mgcb/Wine | OPP-12, OPP-09 |
+| T6 | F4: `featureLabel` exportado e sem consumidor | só a definição aparece na busca: `ausente: featureLabel( @ frontend/src` | F4 |
+| T7 | Render/edição fora da main thread (workers) | `ausente: new Worker @ frontend/src`; só comentários prometendo portabilidade | OPP-01 (P1) |
+| T8 | E2E visual (Playwright + Electron) da jornada de aceite | `ausente: playwright @ package.json, frontend/package.json, middleware/package.json` | **órfã** — é a prova de produto prometida junto de P0.9 |
+| T9 | Riscos técnicos ativos: coerência de MMF no Windows sem binding nativo; shaders sem compilação no CI | o único workflow não tem job de compilação de shader: `ausente: mgcb @ .github/workflows/ci.yml` | OPP-12, OPP-09 |
 | T10 | Escala de mapa acima de 64k células por streaming/chunks | nenhuma implementação de chunk no middleware ou na engine | OPP-10 (Fase 5) |
 | T11 | Rigging/FABRIK, Timeline, Máquina de estados e World map: núcleos prontos sem vista | os módulos puros existem; nenhuma vista os monta | P1 da milestone |
 | T12 | Backlog sem início: harness de física, agente revisor de blueprint, regras de terreno por borda (Wang), fixtures de replay como regressão de conteúdo | o AutoTiler menciona Wang só em comentário; o `HookBus` tem a infra de filters sem nenhum lint de domínio registrado | OPPORTUNITIES (P1/P2) |
@@ -256,9 +281,9 @@ Auditadas contra o código; cada linha tem evidência verificável. **Gravidade*
 ## 8. Ordem recomendada de ataque
 
 Duas trilhas independentes. A trilha de **domínio** é uma cadeia (cada etapa
-depende da anterior); a trilha de **runtime visual** (F1) é ortogonal e pode
-começar a qualquer momento — é a raiz nunca atacada, e é ela que faz o produto
-parecer um editor de jogos em vez de um editor de JSON.
+depende da anterior); a trilha de **runtime visual** (F1) é ortogonal — era a
+raiz nunca atacada, e a onda A a atacou: hoje existe um processo que desenha, e
+o que ele desenha é verificado no CI.
 
 ```mermaid
 flowchart TD
@@ -275,9 +300,11 @@ flowchart TD
   E10 --> CAUDA
   F1A["F1 onda A — host gráfico<br/>+ tileset/atlas + telemetria"] --> F1B["F1 onda B — preview embutido"]
   F1B --> P09["P0.9 — empacotamento"]
+  classDef entregue fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+  class E4,E7,E8,E9,E10,F1A entregue
 ```
 
-*Mostra as duas trilhas do plano: a cadeia de domínio E4→E10 com a F6 e a cauda, e a trilha ortogonal do host gráfico F1 que desemboca no empacotamento.*
+*Mostra as duas trilhas do plano — a cadeia de domínio E4→E10 com a F6 e a cauda, e a trilha ortogonal do host gráfico F1 que desemboca no empacotamento — com as etapas já entregues em verde.*
 
 **E4 entregue.** A rede está no lugar: cada kind novo agora precisa do schema e
 do membro do enum, ou o CI quebra com o nome do kind órfão.
@@ -301,11 +328,33 @@ alvo do Ctrl+Z segue no rascunho local **de propósito**: apontá-lo ao document
 antes de a pintura virar `level/patch` tiraria o desfazer da pincelada, e é
 essa a última milha da frente F6.
 
-**Próximo passo natural: F6** (tirar o documento IntGrid do closure e publicar
-cada gesto como `level/patch`), que fecha B10/B11/D11 e é o que a E10 deixou a
-um passo. A rota de conceitos **F3a** também destravou. Em paralelo, E5 e E6
-continuam liberadas — e F1 nunca esteve bloqueada, e segue sendo a raiz nunca
-atacada: é ela que faz o produto parecer um editor de jogos.
+**F1 onda A entregue.** A raiz foi atacada e fechada: existe um processo que
+desenha (ADR-022), o atlas é canônico e atravessa o fio, a paridade visual é
+**gate no CI** — as duas descrições de frame comparadas byte a byte — e o
+runtime reporta o que desenhou (ADR-023). O produto deixou de ser um editor de
+JSON.
+
+### 8.1. As três frentes abertas — e a recomendação
+
+Com a onda A fechada, três frentes disputam a vez. Nenhuma bloqueia a outra:
+
+| Frente | O que compra | O que custa |
+|---|---|---|
+| **F1 onda B** — preview embutido | fecha B3 e é o último passo antes do empacotamento (P0.9): a janela do host composta no painel, com run/pause/stop e overlays consumindo a telemetria que a fatia (iv) já entrega | é a parte **frágil por plataforma** — compor janela nativa dentro do Electron diverge em Linux, Windows e macOS, e a ADR-022 mantém `preview.embedded` desabilitada até ela existir |
+| **F6** — pintura canônica | fecha B10/B11/D11: o gesto vira `level/patch`, o `Ctrl+Z` passa a apontar ao documento, pintar passa a sujar o projeto de verdade e o desfazer deixa de ter dois donos | mexe na vista mais viva do editor; exige coalescing por gesto (que a E9 já tem) sem perder a granularidade da pincelada |
+| **Cauda da Fase A** | B6 (sprite no archetype, documento v6 já reservado), D5 (`examples/` + "Abrir exemplo"), a metade da vista de D4 | cada um é pequeno e independente; nenhum move a agulha sozinho |
+
+**Recomendação: F6.** É o último lugar onde o editor mantém uma verdade FORA
+do modelo canônico — e o diferencial nº 1 do produto ([`PRODUCT-STRATEGY.md`](PRODUCT-STRATEGY.md)
+§3) é justamente que humano e agente compartilhem um funil só. Enquanto pintar
+contorna esse funil, a promessa vale para tudo menos para a ação mais frequente
+do editor. Ela também é a mais barata das três, destrava a metade da vista de
+D4 e é o passo que a E10 deixou a um movimento de distância.
+
+A onda B fica em segundo não por valor — ela é que fecha a jornada — mas por
+risco: é a única frente cuja dificuldade é de plataforma, não de desenho, e
+convém entrar nela com o modelo canônico já sem exceções. A rota de conceitos
+**F3a** e as etapas **E5**/**E6** seguem liberadas para quem quiser paralelismo.
 
 ## 9. Receitas executáveis
 
@@ -827,7 +876,12 @@ no canvas do editor e o que a engine desenha venham da MESMA tabela de atlas.
 [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §4 (frente F1) e a regra E4 dos testes
 de arquitetura da engine.
 
-**Passos.**
+**Passos.** *(Escritos ANTES da execução e mantidos como registro. A onda A
+está entregue, e dois passos não sobreviveram ao contato com a realidade: o
+**7** pedia checksum de framebuffer com tolerância — virou comparação byte a
+byte da DESCRIÇÃO do frame (ADR-022) — e o **9** descreve como presente a barra
+de status chamando de "Runtime MonoGame" um processo headless, que a onda A
+corrigiu. Para o que de fato existe, leia os ✅ acima.)*
 
 1. **ADR primeiro.** Escreva o ADR que fixa: o host é **composição, nunca
    domínio**; o `Runtime` continua sem referência a `Graphics`; a capability de

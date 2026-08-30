@@ -55,5 +55,8 @@ npm run docs:verify                           # lint da documentação
 - Contratos alterados atualizam `contracts/` E os dois lados do fio; teste de
   paridade quebra se a cópia em `dist/` divergir (rode `npm run build`).
 - NÃO fixe contagens de teste em docs (o CI conta; `docs:verify` bloqueia).
+- Entregou pendência da fila (`docs/DEVELOPMENT-PLAN.md` §7)? Risque a linha no
+  MESMO PR: as marcas `ausente:`/`inexistente:` são buscas reexecutadas pelo
+  `docs:verify`, e ele falha quando o código passa a existir.
 - Diagramas SEMPRE em Mermaid (nunca arte ASCII).
 - Commits em pt-BR descritivo; rode as suítes + `docs:verify` antes de push.
