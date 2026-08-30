@@ -618,6 +618,26 @@ for (const file of walk(root)) {
   // Roda sobre `noCode` para que a SINTAXE possa ser documentada em bloco de
   // código sem virar uma busca por "<literal>" em "<caminho>".
   lintAbsenceClaims(rel, noCode);
+
+  // 8. linha em branco DENTRO de uma tabela.
+  //
+  // Em GFM a linha em branco encerra a tabela: as linhas seguintes deixam de
+  // ser tabela e viram parágrafo solto, sem cabeçalho. O diff parece inofensivo
+  // (uma linha vazia) e o estrago só aparece no render — foi assim que a
+  // resolução automática de um conflito partiu a fila de pendências em três
+  // pedaços neste mesmo repositório.
+  const tableLines = noCode.split(/\r?\n/);
+  for (let i = 1; i < tableLines.length - 1; i++) {
+    if (
+      tableLines[i].trim() === "" &&
+      tableLines[i - 1].startsWith("|") &&
+      tableLines[i + 1].startsWith("|")
+    ) {
+      errors.push(
+        `${rel}:${i + 1}: linha em branco dentro de uma tabela — em GFM isso ENCERRA a tabela e as linhas seguintes viram parágrafo`,
+      );
+    }
+  }
 }
 
 if (errors.length === 0) {
