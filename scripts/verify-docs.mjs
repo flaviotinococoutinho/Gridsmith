@@ -16,7 +16,10 @@
  *  - NÃO há referências transitórias a branches/sessões de geração;
  *  - todo comando `npm run <x>` documentado existe em algum package.json;
  *  - o workflow de CI executa os gates de transports e de documentação;
- *  - NÃO há contagens de teste fixadas manualmente (devem vir do CI).
+ *  - NÃO há contagens de teste fixadas manualmente (devem vir do CI);
+ *  - a evidência de AUSÊNCIA da fila de pendências continua de pé: as marcas
+ *    `ausente: <literal> @ <caminhos>` e `inexistente: <caminho>` são buscas
+ *    reexecutadas, e uma pendência que já foi entregue falha aqui.
  *
  * Uso: `npm run docs:verify` (ou `node scripts/verify-docs.mjs`) na raiz.
  * Sai com código 1 se houver qualquer violação.
@@ -364,6 +367,98 @@ lintJsonSchemas();
 lintSchemaIndex();
 lintCommandKindParity();
 
+// ---------------------------------------------------------------------------
+// Evidência de ausência executável
+//
+// A fila de pendências abre prometendo que "cada linha tem evidência
+// verificável". A promessa valia até alguém IMPLEMENTAR a pendência: a entrada
+// seguia afirmando que o conceito não existe em camada nenhuma, o CI concordava
+// em silêncio e o próximo leitor iria construir o que já estava construído. Foi
+// exatamente o que aconteceu com o tileset — a fila negou por duas fatias um
+// conceito que já atravessava as três camadas e os contratos.
+//
+// Aqui a busca citada volta a ser EXECUTADA: `ausente: <literal> @ <caminhos>`
+// refaz a busca literal, `inexistente: <caminho>` reafirma que o caminho não
+// nasceu. Quando a marca falha, a fila mentiu — e a violação é do DOCUMENTO,
+// nunca do código.
+//
+// O que a marca prova é limitado, e a limitação é deliberada: ela NÃO prova a
+// ausência do comportamento (um `writeFile` some se alguém trocar por stream),
+// ela trava a EVIDÊNCIA que a entrada escolheu citar. Quando o token aparece,
+// das duas uma — a pendência foi entregue, ou a evidência parou de sustentá-la.
+// As duas exigem revisitar a linha, que é todo o objetivo.
+// ---------------------------------------------------------------------------
+
+/** Extensões de texto varridas pela evidência de ausência. */
+const SEARCHABLE_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".js", ".mjs", ".cjs", ".json", ".cs", ".csproj", ".sln",
+  ".sh", ".yml", ".yaml", ".proto", ".graphql", ".html", ".css", ".md", ".txt",
+]);
+
+const absenceRe = /`ausente:\s*([^`@]+?)\s*@\s*([^`]+?)`/g;
+const nonexistentRe = /`inexistente:\s*([^`\s]+?)`/g;
+
+/** Arquivos de texto sob `target` (que pode ser arquivo ou diretório). */
+function collectSearchable(target, acc = []) {
+  const stat = fs.statSync(target);
+  if (stat.isFile()) {
+    acc.push(target);
+    return acc;
+  }
+  for (const e of fs.readdirSync(target, { withFileTypes: true })) {
+    if (IGNORE.has(e.name)) continue;
+    const full = path.join(target, e.name);
+    if (e.isDirectory()) collectSearchable(full, acc);
+    else if (SEARCHABLE_EXTENSIONS.has(path.extname(e.name))) acc.push(full);
+  }
+  return acc;
+}
+
+/** Reexecuta as buscas que o documento cita como evidência de ausência. */
+function lintAbsenceClaims(rel, noCode) {
+  for (const m of noCode.matchAll(absenceRe)) {
+    const literal = m[1].trim();
+    const targets = m[2].split(",").map((p) => p.trim()).filter(Boolean);
+    if (!literal || targets.length === 0) {
+      errors.push(`${rel}: marca de ausência malformada -> ${m[0]}`);
+      continue;
+    }
+    for (const target of targets) {
+      const abs = path.join(root, target);
+      // Um caminho que não existe tornaria a afirmação verdadeira por vacuidade
+      // — o modo mais silencioso de a evidência apodrecer.
+      if (!fs.existsSync(abs)) {
+        errors.push(`${rel}: evidência de ausência aponta para caminho inexistente -> ${target}`);
+        continue;
+      }
+      const hits = [];
+      for (const file of collectSearchable(abs)) {
+        // O próprio documento declara o literal; varrê-lo acusaria a si mesmo.
+        if (path.relative(root, file) === rel) continue;
+        if (fs.readFileSync(file, "utf8").includes(literal)) {
+          hits.push(path.relative(root, file));
+          if (hits.length === 3) break;
+        }
+      }
+      if (hits.length > 0) {
+        errors.push(
+          `${rel}: a fila afirma ausência de "${literal}" em ${target}, mas ele existe ` +
+            `(${hits.join(", ")}${hits.length === 3 ? ", ..." : ""}) — a entrada precisa ser reauditada`,
+        );
+      }
+    }
+  }
+
+  for (const m of noCode.matchAll(nonexistentRe)) {
+    const target = m[1].trim();
+    if (fs.existsSync(path.join(root, target))) {
+      errors.push(
+        `${rel}: a fila afirma que "${target}" não existe, mas ele existe — a entrada precisa ser reauditada`,
+      );
+    }
+  }
+}
+
 // O baseline versionado é uma evidência executável, não uma tabela copiada à
 // mão: exige a matriz 3 transports × 2 payloads × 4 operações, percentis
 // finitos, fluxo de 1.000 eventos e zero erro/perda/resync no run oficial.
@@ -518,6 +613,11 @@ for (const file of walk(root)) {
   for (const m of raw.matchAll(testCountRe)) {
     errors.push(`${rel}: contagem de testes fixada manualmente -> "${m[0].trim()}" (derive do CI)`);
   }
+
+  // 7. evidência de ausência: as buscas citadas pela fila são reexecutadas.
+  // Roda sobre `noCode` para que a SINTAXE possa ser documentada em bloco de
+  // código sem virar uma busca por "<literal>" em "<caminho>".
+  lintAbsenceClaims(rel, noCode);
 }
 
 if (errors.length === 0) {

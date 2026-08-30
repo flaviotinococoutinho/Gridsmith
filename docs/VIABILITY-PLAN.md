@@ -247,8 +247,11 @@ Isso fechou cinco achados e deixou quatro com a metade do middleware pronta.
 O efeito por frente:
 
 > **Leia esta tabela como registro histórico.** Ela é o retrato do momento da
-> reverificação e NÃO foi reescrita a cada entrega — as frentes F5, F8, F3a e
-> a Onda 1 (E1–E3) mudaram o código depois dela. O correções estão no
+> reverificação e NÃO foi reescrita a cada entrega — as frentes F5, F8, F3a, a
+> Onda 1 (E1–E3), a cadeia de domínio (E4, E7, E8, E9, E10) e a **onda A da
+> F1** mudaram o código depois dela. Em particular, tudo que a linha da F1
+> afirma como inexistente (host gráfico, tileset/atlas, telemetria de volta)
+> **existe hoje** — veja o blockquote da §4 F1. O correções estão no
 > blockquote logo abaixo da tabela e, com mais detalhe, nos blockquotes de
 > cada frente na §4. **Ordem de confiança: o código > os blockquotes > esta
 > tabela.**
@@ -292,6 +295,27 @@ O efeito por frente:
 ### F1 — Host gráfico MonoGame acoplável + contrato de conteúdo visual (tileset/atlas) + telemetria de frame
 
 > Complexidade **alta** · **exige ADR**
+>
+> ✅ **ONDA A ENTREGUE.** O que está abaixo é o plano ORIGINAL da frente,
+> mantido como registro. A execução está em
+> [`DEVELOPMENT-PLAN.md`](DEVELOPMENT-PLAN.md) §9.6, e três pontos divergiram
+> deste texto — em todos, o que vale é a decisão registrada, não o plano:
+>
+> - **A paridade visual é verificada na DESCRIÇÃO do frame, não no
+>   framebuffer** (ADR-022). O checksum FNV-1a de região amostrada "dentro de
+>   tolerância" pedia Xvfb + `.xnb` compilados com Wine, e a tolerância que
+>   llvmpipe obriga passaria a aceitar justamente as divergências que o teste
+>   deveria pegar. Hoje as duas listas de quads são comparadas **byte a byte**,
+>   sem tolerância, e o gate roda no CI sem GPU.
+> - **A telemetria chama-se `frame/telemetry`**, não `engine/telemetry_frame`,
+>   é emitida pelo **Host** (o Runtime headless não tem frames para reportar) e
+>   é **coalescida** antes do diário (ADR-023): o `EventJournal` é um anel com
+>   promessa de não perder evento, e uma amostra por segundo gastaria a janela
+>   inteira em minutos, expulsando os comandos.
+> - **`lighting/set_lut` não entrou** na onda A — segue pendente.
+>
+> Falta a **onda B** (preview embutido), e é só ela que mantém
+> `preview.embedded` desabilitada no perfil.
 
 **Problema.** O processo que a status bar chama de "Runtime MonoGame: Pronto" é um servidor JSON-RPC headless que nunca carrega MonoGame, e não existe conceito de tileset/atlas em nenhuma camada — logo nada do que o usuário pinta pode virar pixel, nem no editor (5 cores chapadas em levelPresets.ts:27-33) nem no jogo. Sem isso, "pinte significado, derive arte" termina em `tileId: 100`, o painel "Pré-visualização do jogo" é uma promessa habilitada por uma capability que é só uma string do perfil (monogame.ts:74/83), e o canal engine→editor só transporta ping e log (EnginePipeServer.ts:106/136/144), tornando qualquer overlay de debug impossível.
 
@@ -637,7 +661,7 @@ Após a reverificação, a ordem **por complexidade** mudou nas duas pontas:
 
 | Posição | Frente | Movimento |
 |---|---|---|
-| 1 | **F1** host gráfico + tileset/atlas + telemetria | inalterada no topo — única frente que atravessa os três processos e cria um conceito canônico inexistente em qualquer camada |
+| 1 | **F1** host gráfico + tileset/atlas + telemetria | **onda A entregue** — era o topo por atravessar os três processos e criar um conceito canônico que não existia em camada nenhuma; hoje o conceito existe nas três e a paridade do que é desenhado é gate no CI. Resta a onda B (preview embutido), cuja dificuldade é de **plataforma**, não de desenho |
 | 2 | **F7** modelo canônico editável completo | mantém — cada kind novo arrasta o DoD inteiro; ficou um pouco mais barata porque o Blueprint v2 provou o trilho de migração |
 | 3 | **F3** manifesto vivo atravessa as bordas | custo **estável** (a leitura de "custo subiu" foi refutada na §4, F3: as superfícies novas são escopadas à sessão de projeto e não precisam carregar conceitos). F3a saiu: limites reais em `constraints` com namespace + correlação `lightId`↔slot; falta a rota de `editorConcepts` e o consumo pela UI |
 | 4 | **F4** superfícies geradas pelo manifesto | sem alteração; segue bloqueada por F3 |
@@ -724,14 +748,23 @@ UI apenas aumenta a quantidade de trabalho que se perde. F8 fecha o ciclo por se
 a que o usuário vê primeiro — deixá-la por último garante que a primeira sessão
 curada exercite tudo que as sete frentes anteriores construíram.
 
-**ADRs necessários (quatro).**
+**ADRs necessários (quatro).** Os números abaixo eram uma PREVISÃO desta
+análise; a numeração real foi atribuída na ordem em que as decisões foram
+tomadas, e duas delas couberam a números que este plano tinha reservado para
+outra coisa. A coluna "registrado como" é a verdade — o
+[índice de ADRs](adr/README.md) manda:
 
-| ADR | Decisão | Frente |
+| Decisão prevista | Frente | Registrado como |
 |---|---|---|
-| ADR-019 | Host gráfico acoplável e contrato de conteúdo visual | F1 |
-| ADR-020 | Identidade e ciclo de vida da sessão do Blueprint | F2 |
-| ADR-021 | Manifesto vivo como projeção consultável e contratos dos comandos canônicos | F3 |
-| ADR-022 | Camadas, CRUD simétrico e migração de `schemaVersion` | F7 |
+| Host gráfico acoplável e contrato de conteúdo visual | F1 | **ADR-022** (host gráfico como composição) + **ADR-023** (telemetria de frame no diário) |
+| Identidade e ciclo de vida da sessão do Blueprint | F2 | **ADR-020** — o único cujo número previsto acertou |
+| Manifesto vivo como projeção consultável e contratos dos comandos canônicos | F3 | ainda **não escrito** — a metade dos contratos foi entregue sem ADR pelo lint da E4; a projeção consultável segue pendente (T2 residual) |
+| Camadas, CRUD simétrico e migração de `schemaVersion` | F7 | ainda **não escrito** — a migração ganhou trilho testado nas E7/E9 (v3, v4, v5); camadas e CRUD simétrico continuam pendentes |
+
+> **Atenção ao ler o número.** ADR-019 é o *freeze medido dos transports* e
+> ADR-021 está reservada ao *regime de curadoria*
+> ([`DEVELOPMENT-PLAN.md`](DEVELOPMENT-PLAN.md) §10) — nenhum dos dois é o que
+> esta tabela previa.
 
 F4, F5, F6 e F8 são execução dentro das decisões vigentes e não exigem ADR.
 
