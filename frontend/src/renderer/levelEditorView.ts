@@ -29,6 +29,11 @@ import { fallbackTileColor, tileRegion, type TilesetTable } from "../core/tilese
 import { presentError } from "../core/errorCatalog.js";
 import { projectionLabel } from "../core/vocabulary.js";
 import {
+  keepActiveValue,
+  resolveLevelPalette,
+  type ResolvedPaletteEntry,
+} from "../core/levelPalette.js";
+import {
   PaintGesture,
   planGestureCommand,
   rememberOwnSequence,
@@ -71,6 +76,7 @@ interface HydratedLevel {
   readonly tileSize?: number;
   readonly seed?: number;
   readonly rules?: ReturnType<typeof defaultLevelRules>;
+  readonly palette?: ReadonlyArray<{ value: number; name: string; color: string }>;
   readonly tilesetId?: string;
 }
 
@@ -187,22 +193,45 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
 
   toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
 
+  /**
+   * Paleta CORRENTE: o que o documento diz, com a constante de build como
+   * fallback. Ela muda quando o nível é hidratado ou reidratado, então os
+   * swatches são redesenhados em vez de criados uma vez na montagem.
+   */
+  let palette: readonly ResolvedPaletteEntry[] = resolveLevelPalette(undefined, LEVEL_PALETTE);
+  const paletteHost = document.createElement("span");
+  paletteHost.className = "palette";
+  toolbar.append(paletteHost);
   const swatches = new Map<number, HTMLButtonElement>();
-  for (const entry of LEVEL_PALETTE) {
-    const swatch = document.createElement("button");
-    swatch.className = "palette-swatch";
-    swatch.style.background = entry.color;
-    swatch.title = `${entry.name} (tecla ${entry.shortcut})`;
-    swatch.setAttribute("aria-label", entry.name);
-    swatch.addEventListener("click", () => selectValue(entry.value));
-    swatches.set(entry.value, swatch);
-    toolbar.append(swatch);
-  }
+
   const selectValue = (value: number): void => {
     activeValue = value;
     for (const [v, s] of swatches) s.setAttribute("aria-pressed", String(v === value));
   };
-  selectValue(1);
+
+  function renderPalette(): void {
+    paletteHost.replaceChildren();
+    swatches.clear();
+    for (const entry of palette) {
+      const swatch = document.createElement("button");
+      swatch.className = "palette-swatch";
+      swatch.style.background = entry.color;
+      swatch.title = entry.shortcut ? `${entry.name} (tecla ${entry.shortcut})` : entry.name;
+      swatch.setAttribute("aria-label", entry.name);
+      swatch.addEventListener("click", () => selectValue(entry.value));
+      swatches.set(entry.value, swatch);
+      paletteHost.append(swatch);
+    }
+    selectValue(keepActiveValue(palette, activeValue));
+  }
+
+  /** Adota a paleta do documento (ou o fallback) e redesenha o que depende dela. */
+  function applyPalette(documentPalette: HydratedLevel["palette"]): void {
+    palette = resolveLevelPalette(documentPalette, LEVEL_PALETTE);
+    renderPalette();
+  }
+
+  renderPalette();
 
   toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
 
@@ -305,7 +334,8 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
 
-  const meaningColors = new Map(LEVEL_PALETTE.map((p) => [p.value, p.color]));
+  const meaningColor = (value: number): string =>
+    palette.find((entry) => entry.value === value)?.color ?? "#888";
 
   // arrasto de retângulo/linha: âncora + célula corrente para o ghost
   let dragAnchor: CellPoint | undefined;
@@ -354,7 +384,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
           }
         } else {
           const value = doc.valueAt(x, y);
-          if (value !== 0) fill = meaningColors.get(value) ?? "#888";
+          if (value !== 0) fill = meaningColor(value);
         }
         context.fillStyle = fill;
         context.fillRect(screen.x, screen.y, size - gap, size - gap);
@@ -364,7 +394,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     // ghost do retângulo/linha em andamento (semitransparente na cor ativa)
     if (dragAnchor && dragCurrent) {
       context.globalAlpha = 0.55;
-      context.fillStyle = meaningColors.get(activeValue) ?? "#888";
+      context.fillStyle = meaningColor(activeValue);
       const size = tileSize * zoom;
       for (const [x, y] of dragCells(currentTool(), dragAnchor, dragCurrent)) {
         const screen = viewport.worldToScreen(x * tileSize, y * tileSize);
@@ -563,6 +593,8 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       const existing = pickLevel(result.levels ?? [], levelId);
       if (!existing) return;
       doc = new IntGridDocument(existing.width, existing.height, existing.intGrid);
+      // a paleta pode ter mudado junto (level/palette de outra borda)
+      applyPalette(existing.palette);
       onEdited();
     } catch {
       // gateway fora do ar: o canvas segue com o que tem, e o status já contou
@@ -630,7 +662,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   // depois dos comandos e das ferramentas para nunca roubar um atalho global
   ctx.setKeyHandler((stroke) => {
     if (stroke.ctrlKey === true || stroke.metaKey === true || stroke.altKey === true) return false;
-    const entry = LEVEL_PALETTE.find((p) => p.shortcut === stroke.key);
+    const entry = palette.find((p) => p.shortcut === stroke.key);
     if (!entry) return false;
     selectValue(entry.value);
     return true;
@@ -691,7 +723,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         workbench.activateTool(value > 0 ? "pencil" : "eraser");
         status.textContent =
           value > 0
-            ? `Significado "${LEVEL_PALETTE.find((p) => p.value === value)?.name ?? value}" selecionado.`
+            ? `Significado "${palette.find((p) => p.value === value)?.name ?? value}" selecionado.`
             : "Célula vazia: borracha selecionada.";
       }
       return;
@@ -823,6 +855,10 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         if (typeof existing.seed === "number") seed = existing.seed;
         if (Array.isArray(existing.rules) && existing.rules.length > 0) rules = existing.rules;
         doc = new IntGridDocument(existing.width, existing.height, existing.intGrid);
+        // o projeto ABERTO dita os significados: desenhar a constante de build
+        // sobre um documento que declara outra paleta era a interface
+        // afirmando o que o projeto não diz
+        applyPalette(existing.palette);
         levelInBlueprint = true;
         viewport.fit(doc.width, doc.height, tileSize);
         onEdited();
