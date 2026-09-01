@@ -163,9 +163,10 @@ O produto passa a produzir uma captura de tela honesta.
 | ~~F6~~ ✅ **entregue** (B10/B11/D11) | Pintura virou `level/patch` canônico; o Ctrl+Z liga no histórico da E9; pintar suja o projeto porque emite evento |
 | D5 | Projeto de exemplo versionado — a primeira coisa que um avaliador abre |
 
-**Restam dois itens e meio** para a saída da Fase A: B6, D5 e a metade da
-vista de D4. Nenhum é estrutural — a F6 fechou o último ponto em que o editor
-mantinha uma verdade fora do funil canônico. A ordem recomendada está em
+**Restam dois itens** para a saída da Fase A: B6 e D5. Nenhum é estrutural — a
+F6 fechou o último ponto em que o editor mantinha uma verdade fora do funil
+canônico, e a leitura da paleta (D4) tirou da interface a última afirmação que
+o documento podia contradizer. A ordem recomendada está em
 [`DEVELOPMENT-PLAN.md`](DEVELOPMENT-PLAN.md) §8.1.
 
 **Saída da Fase A:** os passos 2–8 da jornada do ALPHA rodam com a MESMA arte

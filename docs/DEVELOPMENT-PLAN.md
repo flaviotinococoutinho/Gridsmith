@@ -218,6 +218,13 @@ A marca **não** prova a ausência do comportamento (um `writeFile` some se
 alguém trocar por stream); ela trava a evidência que a entrada citou, que é o
 que estava apodrecendo sem aviso.
 
+O falso NEGATIVO já aconteceu e vale registrar: a D4 citava
+`ausente: level.palette @ frontend/src`, e a entrega leu o campo como
+`existing.palette` — a marca não disparou, e a linha foi riscada à mão. A lição
+não é abandonar a marca, é escolher o literal com cuidado: uma marca ancorada
+num nome que a implementação futura *talvez* use vale menos que uma ancorada em
+algo que a entrega necessariamente cria ou destrói.
+
 ### 7.1. Bloqueia a jornada
 
 | # | Pendência | Evidência | Onde no plano |
@@ -244,7 +251,7 @@ que estava apodrecendo sem aviso.
 | D1 | Menu "Recentes" nativo | o menu nativo tem só Arquivo/Editar/Exibir; os recentes só aparecem na tela inicial | **órfã** |
 | ~~D2~~ | ✅ **Entregue (E10).** `workbenchLayout` puro (tamanho + visibilidade por área, clamp por limites, serialização versionada com fail-safe) + alças de arrasto e persistência na casca | — | — |
 | D3 | Razões da governança traduzidas — os perfis já estão em pt-BR; o inglês vem das razões GERADAS pelo governor | mensagens geradas em inglês exibidas em tooltip | F4 (razão como código estável + `vocabulary.ts`) |
-| D4 (parte) | A metade canônica **existe** (E9): `level/palette` com inverso, a paleta dentro do documento (v4) e viajando na projeção `levels`. **Falta a vista LER o que o documento diz** — ela ainda desenha a constante de build, então um projeto cuja paleta divergir (agente, edição à mão, template futuro) é exibido com nomes e cores que não são os dele. Depois disso, editar a paleta é despachar o comando que já existe | `LEVEL_PALETTE` importada de `core/levelPresets` alimenta swatches, cores, atalhos e rótulos; `ausente: level.palette @ frontend/src` | F7 + F6 (a vista) — o comando já está pronto |
+| D4 (parte) | ✅ **A leitura entregue**: a vista resolve a paleta do DOCUMENTO (`core/levelPalette.ts`), com a constante de build só como fallback — swatches, cores, dígitos e rótulos derivam dela, e o atalho é posicional para que um documento que nomeie os valores 5 e 7 continue alcançável por 1 e 2. **Falta a EDIÇÃO**: mudar nome/cor de um significado ainda não tem UI, e é só despachar o `level/palette` que já existe com inverso | nenhum comando de paleta parte da vista: `ausente: dispatch("level/palette" @ frontend/src` — literal ancorado na chamada que a UI de edição obrigatoriamente cria | F7 (a UI de edição) — o comando e a leitura já estão prontos |
 | D5 | Diretório `examples/` versionado e a ação "Abrir exemplo" | `inexistente: examples`; o modelo da tela inicial tem o flag e ninguém o satisfaz | F8 residual |
 | D6 (parte) | Inspector de entidades: a **leitura** entrou na E10 (seções por tipo de seleção, com governança e razão). **Falta a escrita** — editar um campo tem de virar comando canônico | `entity.identity`/`entity.transform` renderizam; nenhum campo é editável | F7 (campos tipados) |
 | D7 | F2 residual (c): trocar de projeto com trabalho sujo descarta sem diálogo | os ramos `new`/`open` não passam por `requestClose()` | F2 residual |
@@ -354,17 +361,17 @@ Restam duas frentes, e elas estão em fases DIFERENTES do caminho comercial:
 
 | Frente | O que compra | O que custa |
 |---|---|---|
-| **Cauda da Fase A** | B6 (sprite no archetype, documento v6 já reservado), D5 (`examples/` + "Abrir exemplo") e a metade da vista de D4 (ler a paleta do documento em vez da constante de build) | cada item é pequeno e independente; juntos fecham o critério de saída da Fase A — "a captura de tela é honesta" |
+| **Cauda da Fase A** | B6 (sprite no archetype, documento v6 já reservado) e D5 (`examples/` + "Abrir exemplo"). A leitura da paleta (D4) já saiu | os dois são pequenos e independentes; juntos fecham o critério de saída da Fase A — "a captura de tela é honesta" |
 | **F1 onda B** — preview embutido | fecha B3 e é o último passo antes do empacotamento (P0.9): a janela do host composta no painel, com run/pause/stop e overlays consumindo a telemetria da fatia (iv) | é a parte **frágil por plataforma** — compor janela nativa dentro do Electron diverge em Linux, Windows e macOS, e a ADR-022 mantém `preview.embedded` desabilitada até ela existir |
 
-**Recomendação: a cauda da Fase A, e nesta ordem — D4 (vista), B6, D5.** A
-razão é de risco, não de tamanho: os três são baratos e fecham uma fase
-inteira, enquanto a onda B é a única frente cuja dificuldade é de plataforma.
-D4 vem primeiro porque é a única das três que corrige uma MENTIRA da interface
-(o editor desenha a paleta de build sobre um documento que pode declarar
-outra); B6 é o que faz o Player aparecer como arte em vez de círculo; D5 dá ao
-avaliador algo para abrir no primeiro minuto. A rota de conceitos **F3a** e as
-etapas **E5**/**E6** seguem liberadas para quem quiser paralelismo.
+**Recomendação: terminar a cauda da Fase A — B6, depois D5.** A razão é de
+risco, não de tamanho: os dois são baratos e fecham uma fase inteira, enquanto
+a onda B é a única frente cuja dificuldade é de plataforma. A leitura da paleta
+(D4) já saiu, e era a que corrigia uma MENTIRA da interface — o editor
+desenhava a paleta de build sobre um documento que pode declarar outra. Falta
+**B6**, que faz o Player aparecer como arte em vez de círculo, e **D5**, que dá
+ao avaliador algo para abrir no primeiro minuto. A rota de conceitos **F3a** e
+as etapas **E5**/**E6** seguem liberadas para quem quiser paralelismo.
 
 ## 9. Receitas executáveis
 

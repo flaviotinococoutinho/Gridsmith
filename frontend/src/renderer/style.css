@@ -99,6 +99,9 @@ button:disabled { color: var(--muted); cursor: not-allowed; }
   flex-wrap: wrap;
 }
 #level-toolbar .sep { width: 1px; height: 1.4rem; background: var(--border); margin: 0 0.3rem; }
+/* o wrapper existe para redesenhar a paleta quando o DOCUMENTO muda; `contents`
+   mantém os swatches como filhos diretos do flex da barra */
+.palette { display: contents; }
 .palette-swatch {
   width: 1.8rem;
   height: 1.8rem;

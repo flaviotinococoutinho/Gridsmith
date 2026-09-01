@@ -285,7 +285,9 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
   operam o histórico CANÔNICO (desde a F6 não existe mais desfazer local)
 - [x] Retângulo (arrasto com ghost), linha (Bresenham, ghost) e conta-gotas
   (pega o significado e volta ao pincel; célula vazia vira borracha)
-- [ ] Edição da paleta de tipos
+- [ ] Edição da paleta de tipos — a LEITURA já saiu: a vista resolve a paleta
+  do documento (`core/levelPalette.ts`), com a constante de build só como
+  fallback e dígitos posicionais; falta a UI que despacha `level/palette`
 - [x] Placement de entidade com handle: ferramenta "Jogador" — clique
   posiciona (snap ao centro da célula), arraste move (`entity/move` canônico
   → `entity/move` na engine, sem respawn), Delete remove; marcadores
