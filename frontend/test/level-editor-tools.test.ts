@@ -35,25 +35,24 @@ test("dragCells: retângulo cobre a área em qualquer ordem de cantos; linha usa
 
 test("applyBrushAt: pencil pinta, eraser zera, flood preenche região; picker/entity são no-op", () => {
   const doc = new IntGridDocument(4, 4);
-  assert.equal(applyBrushAt(doc, "pencil", 1, 1, 5), true);
+  assert.deepEqual(applyBrushAt(doc, "pencil", 1, 1, 5), [{ index: 5, before: 0, after: 5 }]);
   assert.equal(doc.valueAt(1, 1), 5);
-  assert.equal(applyBrushAt(doc, "eraser", 1, 1, 5), true);
+  assert.deepEqual(applyBrushAt(doc, "eraser", 1, 1, 5), [{ index: 5, before: 5, after: 0 }]);
   assert.equal(doc.valueAt(1, 1), 0);
-  assert.equal(applyBrushAt(doc, "flood", 0, 0, 7), true);
+  assert.equal(applyBrushAt(doc, "flood", 0, 0, 7).length, 16);
   assert.equal(doc.valueAt(3, 3), 7); // região conectada inteira
-  assert.equal(applyBrushAt(doc, "picker", 0, 0, 9), false);
-  assert.equal(applyBrushAt(doc, "entity", 0, 0, 9), false);
+  assert.deepEqual(applyBrushAt(doc, "picker", 0, 0, 9), []);
+  assert.deepEqual(applyBrushAt(doc, "entity", 0, 0, 9), []);
 });
 
-test("commitDrag: rect/line viram UMA operação de undo; outras ferramentas são no-op", () => {
+test("commitDrag: rect/line devolvem o lote do gesto; outras ferramentas, nada", () => {
   const doc = new IntGridDocument(6, 6);
-  assert.equal(commitDrag(doc, "rect", { x: 0, y: 0 }, { x: 2, y: 2 }, 3), true);
-  doc.undo();
-  assert.equal(doc.snapshot().every((v) => v === 0), true); // um undo desfez tudo
+  // um arrasto é UM gesto, logo UM comando canônico — o lote sai inteiro
+  assert.equal(commitDrag(doc, "rect", { x: 0, y: 0 }, { x: 2, y: 2 }, 3).length, 9);
 
-  assert.equal(commitDrag(doc, "line", { x: 0, y: 5 }, { x: 5, y: 5 }, 2), true);
+  assert.equal(commitDrag(doc, "line", { x: 0, y: 5 }, { x: 5, y: 5 }, 2).length, 6);
   assert.equal(doc.valueAt(5, 5), 2);
-  assert.equal(commitDrag(doc, "pencil", { x: 0, y: 0 }, { x: 1, y: 1 }, 9), false);
+  assert.deepEqual(commitDrag(doc, "pencil", { x: 0, y: 0 }, { x: 1, y: 1 }, 9), []);
 });
 
 test("cellCenter ancora no centro da célula em pixels do mundo", () => {

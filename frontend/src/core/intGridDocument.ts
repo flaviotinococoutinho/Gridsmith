@@ -1,22 +1,21 @@
 /**
  * Documento de edição de IntGrid — o modelo do painel de níveis LDtk-like.
  *
- * O designer pinta SIGNIFICADO (inteiros) com pincéis; cada operação vira um
- * comando de editor com inverso registrado (undo/redo célula a célula, sem
- * snapshots do grid inteiro). Ao publicar, `toLevelPayload` produz o payload
- * do comando canônico `level/define` — a resolução em tiles acontece no
- * middleware/adapter, nunca aqui.
+ * O designer pinta SIGNIFICADO (inteiros) com pincéis. Cada pincel devolve as
+ * células que MUDOU: é esse lote que o gesto acumula (`paintGesture.ts`) e
+ * despacha como `level/patch` canônico ao fim da pincelada.
+ *
+ * Este documento NÃO tem histórico próprio, e isso é a frente F6 inteira. Ele
+ * já teve — pilha de undo/redo célula a célula —, e era a segunda verdade do
+ * editor: o Ctrl+Z desfazia aqui enquanto o projeto não sabia da pintura. O
+ * desfazer agora é canônico (`document.undo`), e este objeto é só o espelho
+ * local do que o documento tem, mantido em sincronia pela reidratação.
  */
 
 export interface CellChange {
   readonly index: number;
   readonly before: number;
   readonly after: number;
-}
-
-interface EditorOp {
-  readonly label: string;
-  readonly changes: readonly CellChange[];
 }
 
 export interface LevelPayloadOptions {
@@ -30,8 +29,6 @@ export class IntGridDocument {
   readonly width: number;
   readonly height: number;
   private readonly values: Int16Array;
-  private readonly undoStack: EditorOp[] = [];
-  private readonly redoStack: EditorOp[] = [];
 
   constructor(width: number, height: number, initial?: readonly number[]) {
     if (!Number.isInteger(width) || width < 1 || !Number.isInteger(height) || height < 1) {
@@ -58,26 +55,17 @@ export class IntGridDocument {
     return [...this.values];
   }
 
-  get canUndo(): boolean {
-    return this.undoStack.length > 0;
-  }
-
-  get canRedo(): boolean {
-    return this.redoStack.length > 0;
-  }
-
-  /** Pincel pontual. Pintar o valor já presente é no-op (não entra no histórico). */
-  paint(x: number, y: number, value: number): boolean {
+  /** Pincel pontual. Pintar o valor já presente não muda nada (lote vazio). */
+  paint(x: number, y: number, value: number): readonly CellChange[] {
     this.assertInside(x, y);
     this.assertValue(value);
     const index = y * this.width + x;
-    if (this.values[index] === value) return false;
-    this.commit("paint", [{ index, before: this.values[index]!, after: value }]);
-    return true;
+    if (this.values[index] === value) return [];
+    return this.commit([{ index, before: this.values[index]!, after: value }]);
   }
 
   /** Preenchimento retangular (inclusivo; cantos em qualquer ordem). */
-  fillRect(x0: number, y0: number, x1: number, y1: number, value: number): boolean {
+  fillRect(x0: number, y0: number, x1: number, y1: number, value: number): readonly CellChange[] {
     this.assertInside(x0, y0);
     this.assertInside(x1, y1);
     this.assertValue(value);
@@ -93,13 +81,11 @@ export class IntGridDocument {
         }
       }
     }
-    if (changes.length === 0) return false;
-    this.commit("fillRect", changes);
-    return true;
+    return this.commit(changes);
   }
 
   /** Linha de Bresenham entre duas células (inclusiva) — uma única operação de undo. */
-  paintLine(x0: number, y0: number, x1: number, y1: number, value: number): boolean {
+  paintLine(x0: number, y0: number, x1: number, y1: number, value: number): readonly CellChange[] {
     this.assertInside(x0, y0);
     this.assertInside(x1, y1);
     this.assertValue(value);
@@ -113,17 +99,15 @@ export class IntGridDocument {
         changes.push({ index, before: this.values[index]!, after: value });
       }
     }
-    if (changes.length === 0) return false;
-    this.commit("paintLine", changes);
-    return true;
+    return this.commit(changes);
   }
 
   /** Balde: preenche a região 4-conectada com o mesmo valor de origem. */
-  floodFill(x: number, y: number, value: number): boolean {
+  floodFill(x: number, y: number, value: number): readonly CellChange[] {
     this.assertInside(x, y);
     this.assertValue(value);
     const origin = this.values[y * this.width + x]!;
-    if (origin === value) return false;
+    if (origin === value) return [];
 
     const changes: CellChange[] = [];
     const visited = new Uint8Array(this.values.length);
@@ -150,31 +134,10 @@ export class IntGridDocument {
       }
     }
 
-    this.commit("floodFill", changes);
-    return true;
+    return this.commit(changes);
   }
 
-  undo(): boolean {
-    const op = this.undoStack.pop();
-    if (!op) return false;
-    for (const change of op.changes) {
-      this.values[change.index] = change.before;
-    }
-    this.redoStack.push(op);
-    return true;
-  }
-
-  redo(): boolean {
-    const op = this.redoStack.pop();
-    if (!op) return false;
-    for (const change of op.changes) {
-      this.values[change.index] = change.after;
-    }
-    this.undoStack.push(op);
-    return true;
-  }
-
-  /** Payload do comando canônico `level/define` (dispatch via gateway). */
+  /** Payload de `level/define` — o comando que CRIA o nível no projeto. */
   toLevelPayload(options: LevelPayloadOptions): Record<string, unknown> {
     return {
       levelId: options.levelId,
@@ -187,12 +150,11 @@ export class IntGridDocument {
     };
   }
 
-  private commit(label: string, changes: readonly CellChange[]): void {
+  private commit(changes: readonly CellChange[]): readonly CellChange[] {
     for (const change of changes) {
       this.values[change.index] = change.after;
     }
-    this.undoStack.push({ label, changes });
-    this.redoStack.length = 0; // uma edição nova invalida o futuro
+    return changes;
   }
 
   private assertInside(x: number, y: number): void {

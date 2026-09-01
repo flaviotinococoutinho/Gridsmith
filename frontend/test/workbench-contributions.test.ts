@@ -196,12 +196,14 @@ test("um acorde tem UM dono: o segundo pretendente ao Ctrl+Z é recusado", () =>
 });
 
 test("devolver o comando LIBERA o acorde — remontar o painel volta a funcionar", () => {
+  // `entity.remove` é o comando de vida curta que sobrou na vista de níveis: o
+  // Ctrl+Z saiu de lá na F6, quando a pintura virou canônica
   const registry = new CommandRegistry();
-  registry.register(comando("level.undoDraft", ["Ctrl+Z"]));
-  registry.unregister("level.undoDraft");
-  assert.equal(registry.commandForStroke({ key: "z", ctrlKey: true }), undefined);
-  registry.register(comando("level.undoDraft", ["Ctrl+Z"]));
-  assert.equal(registry.commandForStroke({ key: "z", ctrlKey: true })?.id, "level.undoDraft");
+  registry.register(comando("entity.remove", ["Delete"]));
+  registry.unregister("entity.remove");
+  assert.equal(registry.commandForStroke({ key: "Delete" }), undefined);
+  registry.register(comando("entity.remove", ["Delete"]));
+  assert.equal(registry.commandForStroke({ key: "Delete" })?.id, "entity.remove");
 });
 
 test("comando desabilitado ERRA com a razão da governança, em vez de virar no-op", async () => {

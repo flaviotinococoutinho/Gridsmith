@@ -7,7 +7,7 @@
  * snap ao centro da célula e hit-test de marcadores de entidade.
  */
 
-import { IntGridDocument, lineCells } from "./intGridDocument.js";
+import { IntGridDocument, lineCells, type CellChange } from "./intGridDocument.js";
 
 export type LevelTool = "pencil" | "eraser" | "flood" | "rect" | "line" | "picker" | "entity";
 
@@ -32,31 +32,35 @@ export function dragCells(
   return cells;
 }
 
-/** Pincéis pontuais (pencil/eraser/flood). Retorna true se o documento mudou. */
+/**
+ * Pincéis pontuais (pencil/eraser/flood). Devolve as células que MUDARAM — é
+ * esse lote que o gesto acumula para virar `level/patch` (F6); lote vazio
+ * significa que o traço passou por onde já estava pintado assim.
+ */
 export function applyBrushAt(
   doc: IntGridDocument,
   tool: LevelTool,
   x: number,
   y: number,
   activeValue: number,
-): boolean {
+): readonly CellChange[] {
   if (tool === "pencil") return doc.paint(x, y, activeValue);
   if (tool === "eraser") return doc.paint(x, y, 0);
   if (tool === "flood") return doc.floodFill(x, y, activeValue);
-  return false;
+  return [];
 }
 
-/** Commit de um arrasto rect/line como UMA operação de undo. */
+/** Commit de um arrasto rect/line — um gesto só, logo um comando só. */
 export function commitDrag(
   doc: IntGridDocument,
   tool: LevelTool,
   anchor: CellPoint,
   current: CellPoint,
   activeValue: number,
-): boolean {
+): readonly CellChange[] {
   if (tool === "rect") return doc.fillRect(anchor.x, anchor.y, current.x, current.y, activeValue);
   if (tool === "line") return doc.paintLine(anchor.x, anchor.y, current.x, current.y, activeValue);
-  return false;
+  return [];
 }
 
 /** Posição no mundo (pixels) ancorada ao CENTRO da célula. */

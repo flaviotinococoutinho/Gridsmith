@@ -104,7 +104,7 @@ graph TD
   P04["P0.4 Vertical slice de niveis 🔶"]
   P05["P0.5 Preview embutido ⬜"]
   P06["P0.6 Spawn minimo de entidades 🔶"]
-  P07["P0.7 Undo/redo global ⬜"]
+  P07["P0.7 Undo/redo global ✅"]
   P08["P0.8 Diagnosticos como funcionalidade ⬜"]
   P09(["P0.9 Empacotamento ⬜"])
   P01 --> P03
@@ -269,14 +269,20 @@ Layout com navegação real, vocabulário humano, painel inferior e status bar.
   inversíveis e culling de células visíveis (coberto por testes)
 - [x] Vista do editor no workbench: canvas com pincel/borracha/balde
   (arrasto), paleta de significados (nome+cor+valor ativo), pan (botão do
-  meio), zoom (roda), enquadrar, desfazer/refazer, coordenadas do cursor e
-  "Publicar nível" via caminho canônico (`level/define`)
+  meio), zoom (roda), enquadrar, coordenadas do cursor e "Publicar nível" via
+  caminho canônico (`level/define`)
+- [x] **Pintura canônica (F6):** cada gesto — pincelada, arrasto de
+  retângulo/linha, balde — vira UM `level/patch` com `transactionId` (o
+  primeiro gesto de um nível novo vira `level/define`). O desfazer é o do
+  documento; o `IntGridDocument` não tem mais histórico próprio e é reidratado
+  quando a mudança vem de fora
 - [x] Preview de auto-tiling em tempo real ("Ver arte", debounce de 80 ms):
   o AutoTiler é VENDORIZADO como módulo único (a regra R5 garante zero
   dependências) — o preview usa o MESMO resolvedor da projeção, com regras
   default validadas contra o contrato do middleware (`core/levelPresets.ts`
   + teste "preview ≡ publicação")
 - [x] Atalhos do editor: dígitos selecionam o significado; Ctrl+Z/Shift+Z/Y
+  operam o histórico CANÔNICO (desde a F6 não existe mais desfazer local)
 - [x] Retângulo (arrasto com ghost), linha (Bresenham, ghost) e conta-gotas
   (pega o significado e volta ao pincel; célula vazia vira borracha)
 - [ ] Edição da paleta de tipos
@@ -318,10 +324,16 @@ luzes/câmera), seleção cruzada editor↔runtime, erros de projeção visívei
   remover, seleção com anel)
 - [ ] Transform/sprite/animação/colisão no archetype (hoje: posição)
 
-### P0.7 — Undo/redo global ⬜
+### P0.7 — Undo/redo global ✅
 Histórico no nível do comando canônico com inversos explícitos, agrupamento
 por gesto, coalescing de drag, histórico legível ("Moveu Player de (10,4)
 para (12,4)"), proveniência humano/agente. (Promovido de OPP-05.)
+
+A E9 entregou o histórico — inversos despachados pelo mesmo caminho (a engine
+vê a reversão como qualquer edição), CAS por `historyCursor`, coalescing por
+`transactionId` e rótulos em pt-BR. O que faltava era o alvo: enquanto a
+pintura fosse rascunho local, o `Ctrl+Z` do editor não desfazia no documento.
+A **F6** fechou isso ao tornar cada gesto um comando canônico.
 
 ### P0.8 — Diagnósticos como funcionalidade 🔶
 Problems panel consolidando erros/warnings/compatibilidade/pipeline com as
