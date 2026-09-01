@@ -28,6 +28,12 @@ import { LEVEL_PALETTE, TILE_COLORS, defaultLevelRules } from "../core/levelPres
 import { fallbackTileColor, tileRegion, type TilesetTable } from "../core/tilesetAtlas.js";
 import { presentError } from "../core/errorCatalog.js";
 import { projectionLabel } from "../core/vocabulary.js";
+import {
+  PaintGesture,
+  planGestureCommand,
+  rememberOwnSequence,
+  shouldRehydrate,
+} from "../core/paintGesture.js";
 import { LEVEL_EDITOR_PANEL } from "../core/workbench/editorContributions.js";
 import type { KeyStroke } from "../core/workbench/keybindings.js";
 import type { Selection } from "../core/workbench/selectionService.js";
@@ -56,6 +62,18 @@ export interface InspectorDataProvider {
   fields(sectionId: string, selection: Selection): readonly InspectorField[];
 }
 
+/** Nível como a projeção canônica `levels` o entrega. */
+interface HydratedLevel {
+  readonly levelId: string;
+  readonly width: number;
+  readonly height: number;
+  readonly intGrid: number[];
+  readonly tileSize?: number;
+  readonly seed?: number;
+  readonly rules?: ReturnType<typeof defaultLevelRules>;
+  readonly tilesetId?: string;
+}
+
 export interface LevelEditorContext {
   readonly host: HTMLElement;
   /** Registros do workbench: ferramentas, comandos, seleção e governança. */
@@ -70,6 +88,14 @@ export interface LevelEditorContext {
    * rouba um atalho global.
    */
   readonly setKeyHandler: (handler: (stroke: KeyStroke) => boolean) => void;
+  /**
+   * Eventos do documento, repassados pela casca. A vista NÃO assina o IPC
+   * direto: a assinatura do preload não tem cancelamento, e uma por montagem
+   * vazaria um ouvinte a cada troca de painel.
+   */
+  readonly setDocumentListener?: (
+    listener: (event: { kind: string; commandSequence: string }) => void,
+  ) => void;
   /** Nível a abrir; sem ele a vista abre o primeiro nível do projeto. */
   readonly levelId?: string;
 }
@@ -180,16 +206,9 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
 
   toolbar.append(Object.assign(document.createElement("span"), { className: "sep" }));
 
-  const doUndo = (): void => {
-    doc.undo();
-    onEdited();
-  };
-  const doRedo = (): void => {
-    doc.redo();
-    onEdited();
-  };
-  const undoBtn = addButton("Desfazer", doUndo, "Ctrl+Z");
-  const redoBtn = addButton("Refazer", doRedo, "Ctrl+Shift+Z");
+  // Desfazer/refazer NÃO têm botão aqui: a pintura é canônica (F6) e quem
+  // desfaz é o histórico do documento, na barra da casca. Um par local
+  // recriaria a segunda verdade que esta frente acabou de eliminar.
   addButton("Enquadrar", () => {
     viewport.fit(doc.width, doc.height, tileSize);
     repaint();
@@ -375,8 +394,6 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       context.fillText("J", screen.x, screen.y);
     }
 
-    undoBtn.disabled = !doc.canUndo;
-    redoBtn.disabled = !doc.canRedo;
   }
 
   // ---- camada de entidades: hit-test, placement, drag e remoção ----
@@ -462,45 +479,120 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     repaint();
   }
 
+  // ------------------------------------------------- gesto → comando (F6)
+
+  /**
+   * Pincelada em curso. Ela existe entre o `mousedown` e o `mouseup`: durante
+   * o traço o canvas responde localmente (o arrasto toca dezenas de células a
+   * 60 Hz e um comando por célula inundaria o histórico), e no fim o lote
+   * inteiro vira UM comando canônico com `transactionId` — o agrupamento que
+   * a E9 preparou.
+   */
+  let gesture: PaintGesture | undefined;
+  /**
+   * Sequências dos comandos que ESTA vista despachou. O evento de volta é eco
+   * do que o canvas já mostra; reidratar nele faria o editor piscar a cada
+   * traço. O que precisa entrar é o que veio de fora: desfazer canônico,
+   * agente, outra borda.
+   */
+  const ownSequences = new Set<string>();
+  /** Chegou mudança externa no meio de um traço: reidrata quando ele acabar. */
+  let rehydratePending = false;
+  /**
+   * Fila dos despachos de gesto. Duas pinceladas rápidas NÃO podem correr em
+   * paralelo, e por dois motivos de correção: `level/patch` carrega o `before`
+   * de cada célula, então uma chegada fora de ordem seria recusada como
+   * "pintou sobre leitura velha"; e num nível ainda não publicado a segunda
+   * pincelada emitiria um segundo `level/define`, que o domínio recusa como id
+   * duplicado. A reidratação entra na MESMA fila: reler o nível enquanto um
+   * patch está em voo devolveria o grid de antes dele.
+   */
+  let dispatchChain: Promise<void> = Promise.resolve();
+
+  function beginGesture(): void {
+    gesture = new PaintGesture();
+  }
+
+  /** Fecha a pincelada e enfileira o despacho. Sem mudança, nada é despachado. */
+  function endGesture(): void {
+    const finished = gesture;
+    gesture = undefined;
+    // o `catch` protege a FILA: um erro escapando envenenaria a cadeia e todo
+    // gesto seguinte seria descartado em silêncio
+    dispatchChain = dispatchChain.then(() => flushGesture(finished)).catch(() => undefined);
+  }
+
+  async function flushGesture(finished: PaintGesture | undefined): Promise<void> {
+    if (finished) {
+      const command = planGestureCommand({
+        levelId,
+        transactionId: crypto.randomUUID(),
+        changes: finished.changes(),
+        levelInBlueprint,
+        definePayload: () => doc.toLevelPayload({ levelId, tileSize, seed, rules }),
+      });
+      if (command) {
+        try {
+          const outcome = await window.gridsmith.dispatch(command.kind, command.payload);
+          levelInBlueprint = true;
+          const sequence = (outcome as { event?: { commandSequence?: string } } | undefined)?.event
+            ?.commandSequence;
+          if (typeof sequence === "string") rememberOwnSequence(ownSequences, sequence);
+          status.textContent = withProjection("Nível atualizado.", outcome);
+        } catch (err) {
+          // O documento RECUSOU a pincelada (tipicamente: alguém editou a
+          // mesma célula entre a leitura e o gesto). Deixar o canvas mostrando
+          // o traço recusado seria a mentira mais cara do editor — ele exibiria
+          // um nível que o projeto não tem. Reidratar é a resposta honesta.
+          const presented = presentError(err);
+          status.textContent = `${presented.title}: ${presented.cause} ${presented.action}`;
+          rehydratePending = true;
+        }
+      }
+    }
+    if (rehydratePending) {
+      rehydratePending = false;
+      await rehydrateGrid();
+    }
+  }
+
+  /** Relê o grid do documento e substitui o espelho local. */
+  async function rehydrateGrid(): Promise<void> {
+    try {
+      const result = (await window.gridsmith.query("levels")) as { levels?: HydratedLevel[] };
+      const existing = pickLevel(result.levels ?? [], levelId);
+      if (!existing) return;
+      doc = new IntGridDocument(existing.width, existing.height, existing.intGrid);
+      onEdited();
+    } catch {
+      // gateway fora do ar: o canvas segue com o que tem, e o status já contou
+    }
+  }
+
   const applyAt = (offsetX: number, offsetY: number): void => {
     const cell = viewport.screenToCell(offsetX, offsetY, tileSize, doc.width, doc.height);
     if (!cell.inside) return;
-    if (applyBrushAt(doc, currentTool(), cell.x, cell.y, activeValue)) onEdited();
+    const changes = applyBrushAt(doc, currentTool(), cell.x, cell.y, activeValue);
+    if (changes.length === 0) return;
+    // o feedback é imediato e local; o comando sai no FIM do gesto
+    gesture?.record(changes);
+    onEdited();
   };
 
   // ------------------------------------------------ contribuições da vista
 
   /**
    * Comandos de VIDA CURTA: existem enquanto o painel está montado e são
-   * devolvidos ao registro na limpeza. É isso que dá ao Ctrl+Z um dono único —
-   * o registro RECUSA um segundo pretendente ao mesmo acorde, em vez de deixar
-   * os dois conviverem e vencer o último montado.
+   * devolvidos ao registro na limpeza. É isso que dá a um acorde um dono
+   * único — o registro RECUSA um segundo pretendente, em vez de deixar os
+   * dois conviverem e vencer o último montado.
    *
-   * O alvo do Ctrl+Z ainda é o rascunho LOCAL do IntGrid: a pintura só vira
-   * canônica quando cada gesto virar `level/patch` (frente F6). Enquanto isso,
-   * apontá-lo ao histórico do documento tiraria o desfazer da pincelada.
+   * O Ctrl+Z NÃO está mais aqui. A pintura virou comando canônico (F6), então
+   * quem desfaz é `document.undo`, registrado pela casca: o mesmo acorde
+   * desfaz a pincelada, o comando de um agente e a edição de outra borda,
+   * porque agora os três são a mesma coisa.
    */
-  const viewCommandIds = ["level.undoDraft", "level.redoDraft", "entity.remove"] as const;
-  workbench.commands.register({
-    id: "level.undoDraft",
-    label: "Desfazer a edição do nível",
-    category: "Editar",
-    requires: ["level.intgrid-editor"],
-    requiresProject: true,
-    order: 2,
-    keybindings: ["Ctrl+Z"],
-    run: doUndo,
-  });
-  workbench.commands.register({
-    id: "level.redoDraft",
-    label: "Refazer a edição do nível",
-    category: "Editar",
-    requires: ["level.intgrid-editor"],
-    requiresProject: true,
-    order: 3,
-    keybindings: ["Ctrl+Shift+Z", "Ctrl+Y"],
-    run: doRedo,
-  });
+  const viewCommandIds = ["entity.remove"] as const;
   workbench.commands.register({
     id: "entity.remove",
     label: "Remover a entidade selecionada",
@@ -542,6 +634,21 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     if (!entry) return false;
     selectValue(entry.value);
     return true;
+  });
+
+  /**
+   * Mudança que veio de FORA (desfazer canônico, agente, outra borda) tem de
+   * aparecer no canvas — senão o Ctrl+Z canônico desfaria no documento e a
+   * tela continuaria mostrando o traço desfeito. Durante uma pincelada a
+   * reidratação é adiada: puxar o grid no meio do traço faria a pintura do
+   * usuário sumir sob a mão dele.
+   */
+  ctx.setDocumentListener?.((event) => {
+    if (!shouldRehydrate(event.kind, event.commandSequence, ownSequences)) return;
+    rehydratePending = true;
+    // com pincelada em curso, quem reidrata é o fim dela; sem, entra na fila
+    // agora — mas pela fila, nunca por fora dela
+    if (!gesture) endGesture();
   });
 
   // a barra de ferramentas e o realce da seleção acompanham o workbench
@@ -612,12 +719,14 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       if (cell.inside) {
         dragAnchor = { x: cell.x, y: cell.y };
         dragCurrent = { x: cell.x, y: cell.y };
+        beginGesture();
         repaint();
       }
       return;
     }
 
     painting = true;
+    beginGesture();
     applyAt(e.offsetX, e.offsetY);
   });
   canvas.addEventListener("mousemove", (e) => {
@@ -650,13 +759,19 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       });
     }
     if (dragAnchor && dragCurrent) {
-      commitDrag(doc, currentTool(), dragAnchor, dragCurrent, activeValue);
+      const changes = commitDrag(doc, currentTool(), dragAnchor, dragCurrent, activeValue);
       dragAnchor = undefined;
       dragCurrent = undefined;
-      onEdited();
+      if (changes.length > 0) {
+        gesture?.record(changes);
+        onEdited();
+      }
     }
     painting = false;
     panning = false;
+    // fecha a pincelada mesmo quando ela não pintou nada: é aqui que uma
+    // mudança externa represada durante o traço entra
+    endGesture();
   };
   window.addEventListener("mouseup", onMouseUp);
   canvas.addEventListener(
@@ -696,18 +811,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   // para o canvas
   void (async () => {
     try {
-      const result = (await window.gridsmith.query("levels")) as {
-        levels?: Array<{
-          levelId: string;
-          width: number;
-          height: number;
-          intGrid: number[];
-          tileSize?: number;
-          seed?: number;
-          rules?: ReturnType<typeof defaultLevelRules>;
-          tilesetId?: string;
-        }>;
-      };
+      const result = (await window.gridsmith.query("levels")) as { levels?: HydratedLevel[] };
       const existing = pickLevel(result.levels ?? [], ctx.levelId);
       if (existing) {
         // o nível aberto passa a ditar id, escala, seed e regras — publicar

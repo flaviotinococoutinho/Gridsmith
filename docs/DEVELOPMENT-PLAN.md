@@ -178,6 +178,14 @@ E o fio de volta existe (ADR-023): o host reporta o que desenhou — câmera viv
 pós-amortecimento, quads desenhados × pedidos, truncamento — coalescido antes
 do diário para não gastar a janela de resync com um sinal descartável.
 
+**Pintura canônica (F6):** a ação mais frequente do editor entrou no funil.
+Cada gesto — pincelada, arrasto de retângulo/linha, balde — vira UM comando
+canônico com `transactionId`, e é o histórico do documento que o desfaz: o
+`Ctrl+Z` deixou de ter dois donos. O `IntGridDocument` perdeu a pilha de undo
+própria e virou o espelho local do documento, reidratado quando a mudança vem
+de fora (desfazer canônico, agente, outra borda). Pintar passou a sujar o
+projeto sem nenhum rastreador paralelo, porque agora emite evento.
+
 **Infra de qualidade:** regras arquiteturais executáveis nas três camadas +
 regras semânticas; anti-drift de docs (`npm run docs:verify`); e2e das fases
 1–4 + transports; medição Zero-GC determinística.
@@ -223,8 +231,8 @@ que estava apodrecendo sem aviso.
 | B7 | **F2 residual (a)**: o store de sessão vive só em memória — reiniciar o middleware apaga o projeto | não há escrita em disco no gerente de sessão: `ausente: writeFile @ middleware/src/canonical/ProjectSessionManager.ts` | F2 residual (gate de milestone) |
 | B8 | **F3a residual**: a rota de conceitos (`editorConcepts`) não atravessa nenhuma borda do app | os únicos consumidores são o MCP e dois drivers de teste; o app sobe o middleware com `--no-mcp` (`ausente: editorConcepts @ frontend/src, contracts`) | F3a — **destravada** pela E10 (há registro onde pendurar a rota) |
 | ~~B9~~ (parte) | ✅ **Entregue (E10).** Registro de painéis, serviço de seleção e inspector por contribuições (`core/workbench/`), com o rail derivado do registro e a razão da governança preservada em cada seção. **Resta**: o inspector ainda é de LEITURA (escrita = D6) e câmera/luz seguem sem vista (B5) | — | — |
-| B10 (parte) | **F6**: o grid não publicado, o undo local e o zoom/pan ainda vivem no closure da vista. A E10 tirou de lá a SELEÇÃO e fez a casca remontar só na troca de painel — um resync remoto deixou de destruir a pintura —, mas o documento continua recriado a cada mount | a vista instancia `IntGridDocument` na montagem; a seleção agora é `workbench.selection` | F6 (o que falta é a pintura virar `level/patch` canônico) |
-| B11 | **F6: pintar não suja o documento** — fechar ou trocar descarta a pintura sem diálogo | `commandApplied` só dispara em evento de Blueprint; não existe marcação de sujeira local | F6 |
+| ~~B10~~ | ✅ **Entregue (F6).** Cada pincelada vira `level/patch` canônico (ou `level/define`, quando o nível ainda não existe) com `transactionId` do gesto: o grid deixou de ser rascunho e o `IntGridDocument` virou só o espelho local, sem histórico próprio. Uma mudança externa reidrata o canvas. **Zoom e pan seguem no closure — e devem seguir**: são estado de VISTA, não de documento | — | — |
+| ~~B11~~ | ✅ **Entregue (F6), por construção.** Pintar agora emite evento de Blueprint, e é justamente nesse evento que o `commandApplied` do ciclo de vida já marcava sujeira — a pintura passou a sujar o projeto sem nenhum rastreador paralelo, que era a alternativa ruim | — | — |
 | B12 | **F7 inteira**: CRUD assimétrico, sem camadas em `LevelSpec`, campos nunca cruzam o runtime, pipeline de assets sem porta no app | os mesmos kinds do diagnóstico continuam em `commandShape.ts`; `inexistente: middleware/src/application` | F7 → E5/E6/E8/E9 |
 | B13 | **P0.9 — empacotamento** (executável por plataforma, bundling, smoke do artefato, release alpha) | `ausente: electron-builder @ package.json, frontend/package.json`; o workflow de CI não tem job de artefato | **órfã** — só existe como P0.9 da milestone |
 | B14 | **P0.1 — caminhos empacotados** na supervisão (fecha junto com P0.9) | idem acima | **órfã** (P0.9) |
@@ -243,7 +251,7 @@ que estava apodrecendo sem aviso.
 | D8 | F3a residual: nenhuma view consome `constraints` — a UI não antecipa teto de luzes/células/atores | o merge existe no governor; nenhuma vista lê o registro (`ausente: constraints @ frontend/src/renderer`) | F3a (parte "consumo") |
 | D9 | F4: a governança é resolvida UMA vez no boot — o rail congela se a engine subir ou cair depois | só há uma chamada de `experience()`, dentro do boot | F4 |
 | D10 | F5 residual: status `failed` na projeção, reidratação abortando no primeiro erro sem trilha por item, fila única na fronteira do adapter | registrado no blockquote da frente F5 | F5 residual |
-| D11 (parte) | F6: o Ctrl+Z **continua indo ao rascunho local**, mas agora por decisão declarada e verificável: o closure `activeEditor` morreu, o acorde tem dono único (regra F6) e o histórico canônico ficou operável na aba Histórico, com CAS por `historyCursor`. Apontar o Ctrl+Z ao documento antes de a pintura virar `level/patch` tiraria o desfazer da pincelada | `level.undoDraft` reivindica `Ctrl+Z`; `document.undo` existe sem atalho | F6 (pintura canônica) |
+| ~~D11~~ | ✅ **Entregue (F6).** O `Ctrl+Z` é do `document.undo`: o MESMO acorde desfaz a pincelada, o comando do agente e a edição de outra borda, porque os três viraram a mesma coisa. O desfazer continua na granularidade da pincelada — o gesto inteiro é um `transactionId` só, não uma célula nem um traço partido | — | — |
 | D12 | E5 pendente: publicação de artefato em duas fases, tombstones e rollback | o `ArtifactStore` só tem `publish` monofásico | E5 (receita §9.2) |
 | D13 | E6 pendente: camada de aplicação de assets + superfície fria GraphQL | `inexistente: middleware/src/application` | E6 |
 | ~~D14~~ | ✅ **Entregue (E7).** Blueprint v3: `metadata` (nome, resolução de referência, convenção espacial declarada), `GridCoordinates` canônico e migração 2 → 3 com os quatro ramos por impressão digital | — | — |
@@ -301,7 +309,7 @@ flowchart TD
   F1A["F1 onda A — host gráfico<br/>+ tileset/atlas + telemetria"] --> F1B["F1 onda B — preview embutido"]
   F1B --> P09["P0.9 — empacotamento"]
   classDef entregue fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
-  class E4,E7,E8,E9,E10,F1A entregue
+  class E4,E7,E8,E9,E10,F1A,F6 entregue
 ```
 
 *Mostra as duas trilhas do plano — a cadeia de domínio E4→E10 com a F6 e a cauda, e a trilha ortogonal do host gráfico F1 que desemboca no empacotamento — com as etapas já entregues em verde.*
@@ -334,27 +342,29 @@ desenha (ADR-022), o atlas é canônico e atravessa o fio, a paridade visual é
 runtime reporta o que desenhou (ADR-023). O produto deixou de ser um editor de
 JSON.
 
-### 8.1. As três frentes abertas — e a recomendação
+### 8.1. O que está aberto — e a recomendação
 
-Com a onda A fechada, três frentes disputam a vez. Nenhuma bloqueia a outra:
+**F6 entregue.** O editor não tem mais nenhuma verdade fora do modelo
+canônico: a pincelada é um comando, o `Ctrl+Z` é o do documento, e pintar suja
+o projeto porque emite evento. O diferencial nº 1 do produto
+([`PRODUCT-STRATEGY.md`](PRODUCT-STRATEGY.md) §3) — humano e agente no mesmo
+funil — passou a valer também para a ação mais frequente do editor.
+
+Restam duas frentes, e elas estão em fases DIFERENTES do caminho comercial:
 
 | Frente | O que compra | O que custa |
 |---|---|---|
-| **F1 onda B** — preview embutido | fecha B3 e é o último passo antes do empacotamento (P0.9): a janela do host composta no painel, com run/pause/stop e overlays consumindo a telemetria que a fatia (iv) já entrega | é a parte **frágil por plataforma** — compor janela nativa dentro do Electron diverge em Linux, Windows e macOS, e a ADR-022 mantém `preview.embedded` desabilitada até ela existir |
-| **F6** — pintura canônica | fecha B10/B11/D11: o gesto vira `level/patch`, o `Ctrl+Z` passa a apontar ao documento, pintar passa a sujar o projeto de verdade e o desfazer deixa de ter dois donos | mexe na vista mais viva do editor; exige coalescing por gesto (que a E9 já tem) sem perder a granularidade da pincelada |
-| **Cauda da Fase A** | B6 (sprite no archetype, documento v6 já reservado), D5 (`examples/` + "Abrir exemplo"), a metade da vista de D4 | cada um é pequeno e independente; nenhum move a agulha sozinho |
+| **Cauda da Fase A** | B6 (sprite no archetype, documento v6 já reservado), D5 (`examples/` + "Abrir exemplo") e a metade da vista de D4 (ler a paleta do documento em vez da constante de build) | cada item é pequeno e independente; juntos fecham o critério de saída da Fase A — "a captura de tela é honesta" |
+| **F1 onda B** — preview embutido | fecha B3 e é o último passo antes do empacotamento (P0.9): a janela do host composta no painel, com run/pause/stop e overlays consumindo a telemetria da fatia (iv) | é a parte **frágil por plataforma** — compor janela nativa dentro do Electron diverge em Linux, Windows e macOS, e a ADR-022 mantém `preview.embedded` desabilitada até ela existir |
 
-**Recomendação: F6.** É o último lugar onde o editor mantém uma verdade FORA
-do modelo canônico — e o diferencial nº 1 do produto ([`PRODUCT-STRATEGY.md`](PRODUCT-STRATEGY.md)
-§3) é justamente que humano e agente compartilhem um funil só. Enquanto pintar
-contorna esse funil, a promessa vale para tudo menos para a ação mais frequente
-do editor. Ela também é a mais barata das três, destrava a metade da vista de
-D4 e é o passo que a E10 deixou a um movimento de distância.
-
-A onda B fica em segundo não por valor — ela é que fecha a jornada — mas por
-risco: é a única frente cuja dificuldade é de plataforma, não de desenho, e
-convém entrar nela com o modelo canônico já sem exceções. A rota de conceitos
-**F3a** e as etapas **E5**/**E6** seguem liberadas para quem quiser paralelismo.
+**Recomendação: a cauda da Fase A, e nesta ordem — D4 (vista), B6, D5.** A
+razão é de risco, não de tamanho: os três são baratos e fecham uma fase
+inteira, enquanto a onda B é a única frente cuja dificuldade é de plataforma.
+D4 vem primeiro porque é a única das três que corrige uma MENTIRA da interface
+(o editor desenha a paleta de build sobre um documento que pode declarar
+outra); B6 é o que faz o Player aparecer como arte em vez de círculo; D5 dá ao
+avaliador algo para abrir no primeiro minuto. A rota de conceitos **F3a** e as
+etapas **E5**/**E6** seguem liberadas para quem quiser paralelismo.
 
 ## 9. Receitas executáveis
 

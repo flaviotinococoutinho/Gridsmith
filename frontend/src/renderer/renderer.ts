@@ -129,9 +129,11 @@ function registerDocumentCommands(): void {
     requires: [],
     requiresProject: true,
     order: 0,
-    // sem atalho DE PROPÓSITO: o Ctrl+Z ainda pertence ao rascunho da vista de
-    // níveis (a pintura não é canônica até a F6), e reivindicá-lo aqui faria o
-    // usuário perder o desfazer da pincelada. O registro impede o empate.
+    // O Ctrl+Z é DAQUI desde a F6: a pintura virou comando canônico, então o
+    // mesmo acorde desfaz a pincelada, o comando do agente e a edição de
+    // outra borda — antes ele pertencia ao rascunho local da vista de níveis,
+    // e desfazer no editor não desfazia no projeto.
+    keybindings: ["Ctrl+Z"],
     run: () => runHistory("undo"),
   });
   model.commands.register({
@@ -141,6 +143,7 @@ function registerDocumentCommands(): void {
     requires: [],
     requiresProject: true,
     order: 1,
+    keybindings: ["Ctrl+Shift+Z", "Ctrl+Y"],
     run: () => runHistory("redo"),
   });
 }
@@ -286,6 +289,12 @@ let cleanupActiveView: (() => void) | undefined;
 let mountedPanel: string | undefined | null = null;
 /** Teclas da vista corrente, consultadas depois de comandos e ferramentas. */
 let viewKeyHandler: ((stroke: KeyStroke) => boolean) | undefined;
+/**
+ * Ouvinte de documento da vista montada. A assinatura de eventos é ÚNICA e
+ * vive aqui: a do preload não tem cancelamento, então uma assinatura por
+ * montagem vazaria um ouvinte a cada troca de painel.
+ */
+let viewDocumentListener: ((event: { kind: string; commandSequence: string }) => void) | undefined;
 
 function renderView(): void {
   const panel = model.currentPanel;
@@ -298,6 +307,7 @@ function renderView(): void {
   const cleanup = cleanupActiveView;
   cleanupActiveView = undefined;
   viewKeyHandler = undefined;
+  viewDocumentListener = undefined;
   inspectorData = undefined;
   cleanup?.();
   host.replaceChildren();
@@ -371,6 +381,9 @@ function renderView(): void {
       },
       setKeyHandler: (handler) => {
         viewKeyHandler = handler;
+      },
+      setDocumentListener: (listener) => {
+        viewDocumentListener = listener;
       },
     });
     return;
@@ -772,6 +785,9 @@ async function boot(): Promise<void> {
     // o documento mudou: o cursor do CAS precisa acompanhar, ou o próximo
     // desfazer seria recusado por estar lendo um estado velho
     void refreshHistory();
+    // e a VISTA precisa saber: depois da F6 o desfazer canônico muda o grid,
+    // e sem este repasse o canvas continuaria mostrando o traço desfeito
+    viewDocumentListener?.(event);
   });
   window.gridsmith.onProjectionResync(({ snapshot }) => {
     projectionSnapshot = snapshot;
