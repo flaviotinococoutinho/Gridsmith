@@ -324,7 +324,12 @@ luzes/câmera), seleção cruzada editor↔runtime, erros de projeção visívei
   zero alocações); sessão que perdeu o spawn trata move como upsert
 - [x] Placement visual no canvas (ferramenta "Jogador": posicionar, arrastar,
   remover, seleção com anel)
-- [ ] Transform/sprite/animação/colisão no archetype (hoje: posição)
+- [x] **Sprite** no archetype (B6, documento v6): `EntityDefinition.sprite`
+  aponta um tile do MESMO atlas dos tilemaps, viaja no `entity/spawn` e chega
+  aos dois desenhos — o host amostra o atlas do ator pelo slot do quad, o
+  canvas do editor pela definição do marcador, e ambos caem na mesma cor lisa
+  quando a tabela não cobre
+- [ ] Transform/animação/colisão no archetype (hoje: posição e sprite)
 
 ### P0.7 — Undo/redo global ✅
 Histórico no nível do comando canônico com inversos explícitos, agrupamento

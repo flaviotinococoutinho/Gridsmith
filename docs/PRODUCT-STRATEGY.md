@@ -159,14 +159,15 @@ O produto passa a produzir uma captura de tela honesta.
 | Item da fila | O que entrega |
 |---|---|
 | ~~B1~~ ✅ **entregue** (F1 onda A completa) | `tileset/define` canônico, atlas nos DOIS lados (canvas e host), paridade por igualdade de listas de quads verificada no CI, telemetria de frame |
-| B6 (parte visual) | O archetype carrega sprite — o Player aparece como arte, não como círculo |
+| ~~B6~~ ✅ **entregue** (parte visual) | O archetype carrega sprite: o Player aparece como arte no canvas do editor E na janela do host, degradando junto quando o atlas não cobre |
 | ~~F6~~ ✅ **entregue** (B10/B11/D11) | Pintura virou `level/patch` canônico; o Ctrl+Z liga no histórico da E9; pintar suja o projeto porque emite evento |
 | D5 | Projeto de exemplo versionado — a primeira coisa que um avaliador abre |
 
-**Restam dois itens** para a saída da Fase A: B6 e D5. Nenhum é estrutural — a
-F6 fechou o último ponto em que o editor mantinha uma verdade fora do funil
-canônico, e a leitura da paleta (D4) tirou da interface a última afirmação que
-o documento podia contradizer. A ordem recomendada está em
+**Resta um item** para a saída da Fase A: D5. Nenhum dos entregues era
+estrutural — a F6 fechou o último ponto em que o editor mantinha uma verdade
+fora do funil canônico, a leitura da paleta (D4) tirou da interface a última
+afirmação que o documento podia contradizer, e a B6 tirou do canvas a última
+que a JANELA podia contradizer. A ordem recomendada está em
 [`DEVELOPMENT-PLAN.md`](DEVELOPMENT-PLAN.md) §8.1.
 
 **Saída da Fase A:** os passos 2–8 da jornada do ALPHA rodam com a MESMA arte
