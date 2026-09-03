@@ -772,6 +772,16 @@ export class BlueprintStore {
               `update the levels first (level/update without tilesetId)`,
           );
         }
+        const referencedBySprites = [...this.entityDefs.values()].filter(
+          (definition) => definition.sprite?.tilesetId === command.tilesetId,
+        );
+        if (referencedBySprites.length > 0) {
+          throw new JsonRpcError(
+            RpcErrorCode.InvalidParams,
+            `Tileset "${command.tilesetId}" is still used by ${referencedBySprites.length} entity definition(s) — ` +
+              `update the definitions first (entitydef/update without sprite)`,
+          );
+        }
         this.tilesets.delete(command.tilesetId);
         return applied({ kind: "tilesetRemoved", tilesetId: command.tilesetId }, [
           { kind: "tileset/define", tileset: previous },
