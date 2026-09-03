@@ -251,7 +251,15 @@ export class MonoGameAdapter implements RuntimeAdapter {
         return {
           event: event.kind,
           status: "skipped",
-          reason: "entity definitions are editorial; instances with archetypeId spawn actors",
+          // A definição sempre foi editorial. Desde a v6 ela pode carregar
+          // SPRITE, e aí a razão genérica esconderia o que o usuário quer
+          // saber: a arte foi aceita pelo documento e ainda não chega ao
+          // runtime. Dizer só "editorial" faria o painel Problemas explicar a
+          // metade errada do silêncio.
+          reason:
+            (event as { definition?: { sprite?: unknown } }).definition?.sprite !== undefined
+              ? "entity definitions are editorial; the sprite is stored but the runtime does not draw it yet"
+              : "entity definitions are editorial; instances with archetypeId spawn actors",
         };
 
       case "tilesetDefined": {
