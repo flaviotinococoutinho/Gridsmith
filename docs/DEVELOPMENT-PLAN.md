@@ -67,7 +67,7 @@ algo violando uma destas linhas está errando, não melhorando.
 | Transports do app | GraphQL baseline completo + gRPC prioritário no caminho quente com fallback imediato e histerese de repromoção | ADR-016/017/018 |
 | Fatiamento do ex-PR de lifecycle | Dez etapas E1–E10 + cauda, cada uma mergeável sozinha; o branch `codex/project-lifecycle-20260719` foi fechado sem merge e permanece como **referência de leitura** (`git show <commit>:<path>`) | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8 |
 | Proto `EventEnvelope` | Os campos 7/8/9 pertencem à projeção (`has_projection`/`projection_status`/`projection_reason`) e são **imutáveis para sempre**; campos de histórico entram **a partir do 10** — a colisão com o ex-PR é binária, não textual | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.1 |
-| Cadeia de versões do documento | v3 na E7 → v4 na E9 → **v5 na F1 onda A** (coleção `tilesets` + `tilesetId` por nível — a fatia do atlas chegou antes da cauda e tomou o número) → v6 reservado para a cauda (`spriteRenderer`); **um bump por PR**; a migração 2→3 tem quatro ramos explícitos, e a 4→5 dá `tilesets: []` sem inventar arte | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.4 + `middleware/test/tileset-canonical.test.ts` |
+| Cadeia de versões do documento | v3 na E7 → v4 na E9 → **v5 na F1 onda A** (coleção `tilesets` + `tilesetId` por nível — a fatia do atlas chegou antes da cauda e tomou o número) → **v6 na B6** (`sprite` na definição de entidade — o número reservado ao `spriteRenderer` da cauda foi gasto nele, e o D18 registra a troca); **um bump por PR**; a migração 2→3 tem quatro ramos explícitos, e a 4→5 dá `tilesets: []` e a 5→6 definições SEM `sprite` — nenhuma migração inventa arte | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.4 + `middleware/test/tileset-canonical.test.ts` |
 | Lista de descarte | A UX do ex-PR que a `main` refez por outro desenho NÃO volta (tela inicial inline, wizard no renderer, catálogo por prefixo de mensagem…); reaproveitar apenas o que a tabela lista | [`VIABILITY-PLAN.md`](VIABILITY-PLAN.md) §8.3 |
 | Regime de curadoria (avaliação da "cebola") | Adotar como **vocabulário + linha de DoD**, sem reorganizar código e sem o termo "temperatura" (colide com "caminho quente"): todo vocabulário curado novo exige versão + proveniência, `reason` quando nega, e teste de consistência com quem o consome | §10 deste documento (ADR-021 pendente de redação) |
 | Medição Zero-GC | Tiered compilation desligada no csproj de teste; a garantia continua intacta | [`GOVERNANCE.md`](GOVERNANCE.md) |
@@ -234,7 +234,7 @@ algo que a entrega necessariamente cria ou destrói.
 | B3 | **P0.5 — preview EMBUTIDO** (janela do host composta no painel do editor; run/pause/stop, live edit, overlays). A onda A destravou tudo o que vem antes: existe janela desenhando, e a telemetria que um overlay consumiria já chega ao processo principal do editor | a janela do host é própria, supervisionada pelo Electron; `preview.embedded` segue desabilitada no perfil por decisão da ADR-022 | F1, onda B |
 | ~~B4~~ | ✅ **Entregue (E9).** O undo/redo é canônico no nível do comando: os inversos são despachados pelo MESMO caminho (a engine vê a reversão como qualquer edição), com CAS por `historyCursor`, coalescing por gesto e a aba Histórico operável — agente e humano compartilham um histórico só. O cabeçalho do `CommandHistory` hoje diz "relógio lógico **E** undo/redo". **Resta**: o acorde `Ctrl+Z` ainda aponta ao rascunho local, de propósito, até a pintura virar `level/patch` (D11) | — | — |
 | B5 | **Placement de câmera e luz com handles no canvas** | a vista do editor de níveis não menciona câmera nem luz; `camera/configure`, `light/add` e `light/remove` existem completos no canônico, sem UI | cauda pós-E10 — os registros que faltavam (painel, ferramenta, seleção, inspector) já existem; falta a vista |
-| B6 (parte) | ✅ **O sprite existe e ATRAVESSA O FIO** (documento v6): `EntityDefinition.sprite` é o par (`tilesetId`, `tileId`) do MESMO atlas dos tilemaps, viaja no `entity/spawn` junto da instância, o `ActorStore` o guarda por slot (limpo no despawn e no reset — slot reutilizado não herda arte alheia) e o `FrameComposer` leva o tile ao quad do ator, com o espelho TS e o cenário do gate de paridade cobrindo ator COM e SEM sprite. **Falta**: o canvas do editor desenhar o mesmo sprite (B6-iii); transform, animação e colisão seguem fora do fio | o canvas ainda desenha o marcador redondo: `ausente: sprite @ frontend/src/renderer/levelEditorView.ts` | B6(iii) o canvas; F7 para o resto do archetype |
+| ~~B6~~ (sprite) | ✅ **Entregue (B6, fatias i–iii).** O ator deixou de ser sempre um círculo: `EntityDefinition.sprite` é o par (`tilesetId`, `tileId`) do MESMO atlas dos tilemaps (documento v6), viaja no `entity/spawn` junto da instância, o `ActorStore` o guarda por slot (limpo no despawn e no reset — slot reutilizado não herda arte alheia), o `FrameComposer` leva o tile ao quad e **os dois desenhos amostram o atlas**: o host pelo `Source` do quad (o slot), o canvas pela definição do marcador — degradando JUNTOS na mesma cor lisa quando a tabela não cobre. **Resta**: transform, animação e colisão do archetype (F7); e o TAMANHO do ator segue constante no host (`actorSize: 16f`) em vez de vir do documento — a arte é a mesma, o enquadramento dela ainda não | — | — |
 | B7 | **F2 residual (a)**: o store de sessão vive só em memória — reiniciar o middleware apaga o projeto | não há escrita em disco no gerente de sessão: `ausente: writeFile @ middleware/src/canonical/ProjectSessionManager.ts` | F2 residual (gate de milestone) |
 | B8 | **F3a residual**: a rota de conceitos (`editorConcepts`) não atravessa nenhuma borda do app | os únicos consumidores são o MCP e dois drivers de teste; o app sobe o middleware com `--no-mcp` (`ausente: editorConcepts @ frontend/src, contracts`) | F3a — **destravada** pela E10 (há registro onde pendurar a rota) |
 | ~~B9~~ (parte) | ✅ **Entregue (E10).** Registro de painéis, serviço de seleção e inspector por contribuições (`core/workbench/`), com o rail derivado do registro e a razão da governança preservada em cada seção. **Resta**: o inspector ainda é de LEITURA (escrita = D6) e câmera/luz seguem sem vista (B5) | — | — |
@@ -287,6 +287,7 @@ algo que a entrega necessariamente cria ou destrói.
 | T10 | Escala de mapa acima de 64k células por streaming/chunks | nenhuma implementação de chunk no middleware ou na engine | OPP-10 (Fase 5) |
 | T11 | Rigging/FABRIK, Timeline, Máquina de estados e World map: núcleos prontos sem vista | os módulos puros existem; nenhuma vista os monta | P1 da milestone |
 | T12 | Backlog sem início: harness de física, agente revisor de blueprint, regras de terreno por borda (Wang), fixtures de replay como regressão de conteúdo | o AutoTiler menciona Wang só em comentário; o `HookBus` tem a infra de filters sem nenhum lint de domínio registrado | OPPORTUNITIES (P1/P2) |
+| T13 | **Reauditar as tabelas MGT/SEM/INT do `VIABILITY-PLAN.md` §6**: elas são mantidas como estado vivo (há linhas 🟢/🟡), mas várias seguem 🔴 depois de a entrega ter fechado o gap. Só a MGT-5 foi atualizada aqui, porque é a que esta fatia fechou | MGT-1 diz "não existe host MonoGame" e o `Gridsmith.Engine.Host` desenha desde a F1 onda A; MGT-12 diz "o canal engine→editor só transporta ping e log" e a telemetria de frame chega ao diário desde a ADR-023. **A marca de ausência não serve aqui**: o defeito é a PRESENÇA de um 🔴 obsoleto, e o `docs:verify` só reexecuta buscas por ausência | cauda — junto da próxima varredura de docs |
 
 > **Pendências órfãs** (B13, B14, D1, T8) não pertencem a nenhuma frente nem
 > etapa. São reais e não têm dono no plano — quem as atacar deve criar a
@@ -311,7 +312,7 @@ flowchart TD
   E9 --> E10["E10 — casca do workbench<br/>(absorve F4)"]
   E10 --> F6["F6 — pintura canonica<br/>(level/patch por gesto)"]
   E10 --> F3a["F3a — rota de conceitos"]
-  E6 --> CAUDA["cauda: asset browser,<br/>spriteRenderer (v6), wizard"]
+  E6 --> CAUDA["cauda: asset browser,<br/>wizard"]
   E10 --> CAUDA
   F1A["F1 onda A — host gráfico<br/>+ tileset/atlas + telemetria"] --> F1B["F1 onda B — preview embutido"]
   F1B --> P09["P0.9 — empacotamento"]
@@ -361,17 +362,19 @@ Restam duas frentes, e elas estão em fases DIFERENTES do caminho comercial:
 
 | Frente | O que compra | O que custa |
 |---|---|---|
-| **Cauda da Fase A** | B6 (sprite no archetype, documento v6 já reservado) e D5 (`examples/` + "Abrir exemplo"). A leitura da paleta (D4) já saiu | os dois são pequenos e independentes; juntos fecham o critério de saída da Fase A — "a captura de tela é honesta" |
+| **Cauda da Fase A** | Resta **D5** (`examples/` + "Abrir exemplo"). A leitura da paleta (D4) e o sprite do ator (B6) já saíram | é o último item da fase; sozinho fecha o critério de saída — "a captura de tela é honesta" |
 | **F1 onda B** — preview embutido | fecha B3 e é o último passo antes do empacotamento (P0.9): a janela do host composta no painel, com run/pause/stop e overlays consumindo a telemetria da fatia (iv) | é a parte **frágil por plataforma** — compor janela nativa dentro do Electron diverge em Linux, Windows e macOS, e a ADR-022 mantém `preview.embedded` desabilitada até ela existir |
 
-**Recomendação: terminar a cauda da Fase A — B6, depois D5.** A razão é de
-risco, não de tamanho: os dois são baratos e fecham uma fase inteira, enquanto
-a onda B é a única frente cuja dificuldade é de plataforma. A leitura da paleta
-(D4) já saiu, e era a que corrigia uma MENTIRA da interface — o editor
-desenhava a paleta de build sobre um documento que pode declarar outra. Falta
-**B6**, que faz o Player aparecer como arte em vez de círculo, e **D5**, que dá
-ao avaliador algo para abrir no primeiro minuto. A rota de conceitos **F3a** e
-as etapas **E5**/**E6** seguem liberadas para quem quiser paralelismo.
+**Recomendação: fechar a cauda da Fase A com D5.** A razão é de risco, não de
+tamanho: ele é barato e fecha uma fase inteira, enquanto a onda B é a única
+frente cuja dificuldade é de plataforma. Os outros dois itens da cauda saíram e
+os dois corrigiam a mesma classe de defeito — a interface afirmando o que o
+projeto não diz. A leitura da paleta (**D4**) parou de desenhar a paleta de
+build sobre um documento que declara outra; o sprite do ator (**B6**) fez o
+Player aparecer como arte em vez de círculo, nos DOIS desenhos. Falta **D5**,
+que dá ao avaliador algo para abrir no primeiro minuto. A rota de conceitos
+**F3a** e as etapas **E5**/**E6** seguem liberadas para quem quiser
+paralelismo.
 
 ## 9. Receitas executáveis
 

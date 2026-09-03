@@ -171,6 +171,39 @@ public class FrameComposerTests
     }
 
     [Fact]
+    public void O_Source_do_quad_e_o_SLOT_que_responde_pelo_atlas_do_ator()
+    {
+        // O host desenha o sprite do ator resolvendo o atlas por `Source`
+        // (GridsmithGame.TryActorSprite): o quad não carrega o id do tileset
+        // para não pôr string em struct Zero-GC. Este teste fixa a PREMISSA
+        // dessa resolução, que o Host — gráfico, fora do CI (regra E4) — não
+        // tem como fixar sozinho: com culling no meio, o índice do quad não é
+        // o do slot, e confundir os dois faria cada ator desenhar a arte de
+        // outro.
+        var atores = new ActorStore(maxActors: 4);
+        atores.Spawn("longe", "player", 9000f, 9000f, "terreno", spriteTileId: 1); // fora da janela
+        atores.Spawn("herói", "player", 0f, 0f, "personagens", spriteTileId: 4);
+        atores.Spawn("caixa", "player", 32f, 0f, "terreno", spriteTileId: 12);
+
+        var quads = new FrameQuad[8];
+        var composicao = FrameComposer.Compose(
+            new TilemapStore(), TilemapHandle.Invalid, atores,
+            new FrameViewport(0f, 0f, 640f, 480f, 1f), actorSize: 20f, quads);
+
+        Assert.Equal(2, composicao.Written); // o distante foi cortado
+        Assert.Equal(1, quads[0].Source);
+        Assert.Equal(2, quads[1].Source);
+        foreach (ref readonly var quad in quads.AsSpan(0, composicao.Written))
+        {
+            var handle = new ActorHandle(quad.Source);
+            Assert.Equal(atores.SpriteTileId(handle), quad.TileId);
+        }
+
+        Assert.Equal("personagens", atores.SpriteTilesetId(new ActorHandle(quads[0].Source)));
+        Assert.Equal("terreno", atores.SpriteTilesetId(new ActorHandle(quads[1].Source)));
+    }
+
+    [Fact]
     public void O_slot_reutilizado_NAO_herda_o_sprite_do_ator_anterior()
     {
         var atores = new ActorStore(maxActors: 1);
