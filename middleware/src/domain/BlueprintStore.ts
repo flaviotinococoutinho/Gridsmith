@@ -316,9 +316,20 @@ export type BlueprintEvent =
       readonly changes: readonly EntityPropertyChange[];
       readonly archetypeId?: string;
     }
-  // evento enriquecido: a projeção precisa do archetype sem consultar o store
-  | { readonly kind: "entityPlaced"; readonly entity: EntityInstance; readonly archetypeId?: string }
-  | { readonly kind: "entityMoved"; readonly entity: EntityInstance; readonly archetypeId?: string }
+  // evento enriquecido: a projeção precisa do archetype E do sprite sem
+  // consultar o store — a borda projeta a partir do evento, não do estado
+  | {
+      readonly kind: "entityPlaced";
+      readonly entity: EntityInstance;
+      readonly archetypeId?: string;
+      readonly sprite?: EntitySprite;
+    }
+  | {
+      readonly kind: "entityMoved";
+      readonly entity: EntityInstance;
+      readonly archetypeId?: string;
+      readonly sprite?: EntitySprite;
+    }
   | { readonly kind: "entityRemoved"; readonly entityId: string }
   | { readonly kind: "tilesetDefined"; readonly tileset: TilesetSpec }
   | { readonly kind: "tilesetRemoved"; readonly tilesetId: string }
@@ -631,6 +642,7 @@ export class BlueprintStore {
             kind: "entityPlaced",
             entity,
             ...(definition.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
+            ...(definition.sprite !== undefined ? { sprite: definition.sprite } : {}),
           },
           [{ kind: "entity/remove", entityId: entity.entityId }],
         );
@@ -660,6 +672,9 @@ export class BlueprintStore {
             kind: "entityMoved",
             entity,
             ...(definition?.archetypeId !== undefined ? { archetypeId: definition.archetypeId } : {}),
+            // mover pode virar upsert numa sessão que perdeu o spawn; sem o
+            // sprite aqui o ator renasceria sem a arte que já tinha
+            ...(definition?.sprite !== undefined ? { sprite: definition.sprite } : {}),
           },
           [{ kind: "entity/move", entityId: entity.entityId, position: current.position }],
         );

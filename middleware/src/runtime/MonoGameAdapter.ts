@@ -251,14 +251,14 @@ export class MonoGameAdapter implements RuntimeAdapter {
         return {
           event: event.kind,
           status: "skipped",
-          // A definição sempre foi editorial. Desde a v6 ela pode carregar
-          // SPRITE, e aí a razão genérica esconderia o que o usuário quer
-          // saber: a arte foi aceita pelo documento e ainda não chega ao
-          // runtime. Dizer só "editorial" faria o painel Problemas explicar a
-          // metade errada do silêncio.
+          // A definição sempre foi editorial, e continua: quem materializa é a
+          // INSTÂNCIA. Desde que o sprite atravessa o fio, dizer aqui que "o
+          // runtime não desenha" seria mentira — ele desenha, quando a
+          // entidade é posicionada. A razão aponta para onde a arte de fato
+          // viaja, em vez de sugerir que ela ficou pelo caminho.
           reason:
             (event as { definition?: { sprite?: unknown } }).definition?.sprite !== undefined
-              ? "entity definitions are editorial; the sprite is stored but the runtime does not draw it yet"
+              ? "entity definitions are editorial; the sprite travels to the runtime when an instance is placed"
               : "entity definitions are editorial; instances with archetypeId spawn actors",
         };
 
@@ -322,6 +322,7 @@ export class MonoGameAdapter implements RuntimeAdapter {
             entityId: event.entity.entityId,
             archetypeId: event.archetypeId,
             position: event.entity.position,
+            ...spriteParams(event.sprite),
           },
         );
         this.spawnedEntityIds.add(event.entity.entityId);
@@ -346,6 +347,7 @@ export class MonoGameAdapter implements RuntimeAdapter {
               entityId: event.entity.entityId,
               archetypeId: event.archetypeId,
               position: event.entity.position,
+              ...spriteParams(event.sprite),
             },
           );
           this.spawnedEntityIds.add(event.entity.entityId);
@@ -515,4 +517,17 @@ function toEngineLight(light: LightSpec): Record<string, unknown> {
     ...(light.innerConeDegrees !== undefined ? { innerConeDegrees: light.innerConeDegrees } : {}),
     ...(light.outerConeDegrees !== undefined ? { outerConeDegrees: light.outerConeDegrees } : {}),
   };
+}
+
+/**
+ * Parâmetros do sprite no spawn (documento v6).
+ *
+ * Ausente vira ausente, não `{tilesetId: null, tileId: -1}`: o store da engine
+ * já normaliza a falta de tileset, e mandar campos nulos faria o payload
+ * afirmar uma escolha que ninguém fez.
+ */
+function spriteParams(sprite?: { tilesetId: string; tileId: number }): Record<string, unknown> {
+  return sprite === undefined
+    ? {}
+    : { spriteTilesetId: sprite.tilesetId, spriteTileId: sprite.tileId };
 }

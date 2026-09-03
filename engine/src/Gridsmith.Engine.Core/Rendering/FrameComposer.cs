@@ -220,12 +220,17 @@ public static class FrameComposer
                 continue;
             }
 
+            // O tile vem do SPRITE da definição (documento v6); `-1` continua
+            // significando "sem arte", e o desenho cai na cor determinística.
+            // Qual atlas usar o host resolve pelo `Source` (o slot), como já
+            // faz com o tilemap — pôr o id do tileset dentro do quad traria uma
+            // string para um struct que existe para não alocar.
             destination[written++] = new FrameQuad(
                 centerX - half,
                 centerY - half,
                 actorSize,
                 actorSize,
-                -1,
+                actors.SpriteTileId(handle),
                 FrameLayer.Actor,
                 slot);
         }

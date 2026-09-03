@@ -29,6 +29,11 @@ export interface FrameActorState {
   /** Posição do CENTRO, em pixels do mundo (ENTITY_ANCHOR = center). */
   readonly x: number;
   readonly y: number;
+  /**
+   * Tile do sprite da definição (documento v6); ausente ou -1 = sem arte, e o
+   * desenho cai na cor determinística — a MESMA dos dois lados.
+   */
+  readonly tileId?: number;
 }
 
 export interface FrameViewportState {
@@ -110,7 +115,8 @@ export function composeFrame(
         y: actor.y - half,
         width: actorSize,
         height: actorSize,
-        tileId: -1, // o archetype ainda não carrega sprite (B6)
+        // o sprite da definição (v6); sem ele, -1 e a cor determinística
+        tileId: actor.tileId ?? -1,
         layer: "actor",
         source: slot,
       });
