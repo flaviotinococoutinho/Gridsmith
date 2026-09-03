@@ -34,7 +34,7 @@ import type {
 } from "../domain/BlueprintStore.js";
 import type { CanonicalOrchestrator, DispatchResult } from "./CanonicalOrchestrator.js";
 
-export const BLUEPRINT_DOCUMENT_VERSION = 5;
+export const BLUEPRINT_DOCUMENT_VERSION = 6;
 
 /**
  * Convenção espacial DECLARADA pelo documento (v3).
@@ -192,6 +192,17 @@ const MIGRATIONS = new Map<number, BlueprintMigration>([
       schemaVersion: 5,
     }),
   ],
+  // 5 → 6: a definição de entidade ganha `sprite` (o par tilesetId+tileId do
+  // atlas da F1). Nenhuma definição existente muda: sem sprite, o ator segue
+  // desenhado pela cor determinística — inventar arte aqui daria ao Player de
+  // todo projeto antigo um desenho que o dono nunca escolheu.
+  [
+    5,
+    (document) => ({
+      ...document,
+      schemaVersion: 6,
+    }),
+  ],
 ]);
 
 /**
@@ -291,8 +302,9 @@ function migrateToV3(document: Record<string, unknown>): Record<string, unknown>
  */
 /**
  * Remove os campos pós-v2 (`palette` e `tilesetId` dos níveis, `tilesets` do
- * topo) — só para efeito de impressão digital: um simulador de v2 construído
- * por um build novo pode carregá-los, e a v2 real nunca os teve.
+ * topo, `sprite` das definições de entidade) — só para efeito de impressão
+ * digital: um simulador de v2 construído por um build novo pode carregá-los, e
+ * a v2 real nunca os teve.
  */
 function withoutPostV2Fields(document: Record<string, unknown>): Record<string, unknown> {
   const levels = Array.isArray(document["levels"]) ? document["levels"] : undefined;
@@ -305,9 +317,30 @@ function withoutPostV2Fields(document: Record<string, unknown>): Record<string, 
         return rest;
       })
     : levels;
-  if (strippedLevels === levels && document["tilesets"] === undefined) return document;
+
+  const entityDefs = Array.isArray(document["entityDefs"]) ? document["entityDefs"] : undefined;
+  const strippedDefs = entityDefs?.some(
+    (raw) => (raw as Record<string, unknown>)["sprite"] !== undefined,
+  )
+    ? entityDefs.map((raw) => {
+        const { sprite: _sprite, ...rest } = raw as Record<string, unknown>;
+        return rest;
+      })
+    : entityDefs;
+
+  if (
+    strippedLevels === levels &&
+    strippedDefs === entityDefs &&
+    document["tilesets"] === undefined
+  ) {
+    return document;
+  }
   const { tilesets: _tilesets, ...rest } = document;
-  return strippedLevels === undefined ? rest : { ...rest, levels: strippedLevels };
+  return {
+    ...rest,
+    ...(strippedLevels === undefined ? {} : { levels: strippedLevels }),
+    ...(strippedDefs === undefined ? {} : { entityDefs: strippedDefs }),
+  };
 }
 
 function withWorldPixelPositions(document: Record<string, unknown>): Record<string, unknown> {
@@ -525,10 +558,13 @@ export function documentToCommands(rawDocument: unknown): BlueprintCommand[] {
     commands.push({ kind: "camera/configure", settings: document.camera });
   }
   for (const light of document.lights ?? []) commands.push({ kind: "light/add", light });
+  // tilesets ANTES de quem os referencia: `level/define` valida o `tilesetId`
+  // do nível, e desde a v6 `entitydef/define` valida o do SPRITE. Definir a
+  // entidade primeiro faria a reidratação de um projeto com sprite falhar por
+  // ordem — o documento estaria correto e o replay o recusaria.
+  for (const tileset of document.tilesets ?? []) commands.push({ kind: "tileset/define", tileset });
   for (const definition of document.entityDefs ?? []) commands.push({ kind: "entitydef/define", definition });
   for (const entity of document.entities ?? []) commands.push({ kind: "entity/place", entity });
-  // tilesets ANTES dos níveis: level/define valida que o tilesetId exista
-  for (const tileset of document.tilesets ?? []) commands.push({ kind: "tileset/define", tileset });
   for (const level of document.levels ?? []) commands.push({ kind: "level/define", level });
   for (const placement of document.placements ?? []) commands.push({ kind: "world/place", placement });
   return commands;

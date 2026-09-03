@@ -561,6 +561,25 @@
             "minLength": 1,
             "description": "Spawn table: sem archetype a entidade é puramente editorial e a projeção explica isso com razão acionável"
           },
+          "sprite": {
+            "type": "object",
+            "description": "Arte da entidade (documento v6): par tilesetId+tileId do MESMO atlas dos tilemaps. O tileset precisa existir e o tileId estar dentro dele — diferente do tile de célula, que é derivado e pode cair na cor determinística, o sprite é escolhido e um índice inválido é engano, não degradação",
+            "properties": {
+              "tilesetId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tileId": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "tilesetId",
+              "tileId"
+            ],
+            "additionalProperties": false
+          },
           "tags": {
             "type": "array",
             "items": {

@@ -76,9 +76,29 @@ export interface EntityFieldDef {
   readonly options?: readonly string[];
 }
 
+/**
+ * Arte de uma definição de entidade (documento v6).
+ *
+ * Reusa DELIBERADAMENTE o atlas que a F1 entregou: o par (`tilesetId`,
+ * `tileId`) já é canônico, já atravessa o fio e já tem a tabela em grade que
+ * canvas e host amostram juntos. Um segundo caminho de arte — caminho de
+ * imagem por entidade, por exemplo — daria ao editor duas formas de dizer a
+ * mesma coisa e duas formas de divergir do que a engine desenha.
+ */
+export interface EntitySprite {
+  readonly tilesetId: string;
+  /** Índice do tile no atlas; a região é fórmula sobre tileSize/columns. */
+  readonly tileId: number;
+}
+
 export interface EntityDefinition {
   readonly entityDefId: string;
   readonly fields: readonly EntityFieldDef[];
+  /**
+   * Arte que o runtime desenha para as instâncias desta definição. Ausente =
+   * sem arte, e o desenho cai na cor determinística — a MESMA dos dois lados.
+   */
+  readonly sprite?: EntitySprite;
   /**
    * Spawn table (ALPHA-0.1 P0.6): archetype do runtime que materializa
    * instâncias desta definição como atores vivos. Sem archetype, a entidade
@@ -501,6 +521,7 @@ export class BlueprintStore {
       case "entitydef/define": {
         const definition = command.definition;
         validateEntityDefinition(definition);
+        this.requireEntitySprite(definition);
         if (this.entityDefs.has(definition.entityDefId)) {
           throw new JsonRpcError(
             RpcErrorCode.DuplicateId,
@@ -526,6 +547,7 @@ export class BlueprintStore {
           valuesEqual(previous, definition),
           `entitydef/update would not change "${definition.entityDefId}"`,
         );
+        this.requireEntitySprite(definition);
 
         const live = [...this.entities.values()].filter(
           (entity) => entity.entityDefId === definition.entityDefId,
@@ -1038,6 +1060,34 @@ export class BlueprintStore {
    * alternativa — aceitar e degradar na projeção — deixaria o erro aparecer
    * longe da causa, num frame desenhado em cor chapada sem explicação.
    */
+  /**
+   * O sprite aponta para arte que EXISTE.
+   *
+   * Aqui a regra é mais dura que a do tilemap, e de propósito. O `tileId` de
+   * uma célula é DERIVADO pelo AutoTiler: um id fora do atlas é possível sem
+   * ninguém ter errado, então os dois lados degradam juntos para a cor
+   * determinística. O sprite é ESCOLHIDO — alguém apontou para um tile. Aceitar
+   * um índice que o atlas não tem transformaria o engano num quadrado colorido
+   * que o usuário passaria a vida tentando entender.
+   */
+  private requireEntitySprite(definition: EntityDefinition): void {
+    const sprite = definition.sprite;
+    if (sprite === undefined) return;
+    const tileset = this.tilesets.get(sprite.tilesetId);
+    if (!tileset) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `Tileset "${sprite.tilesetId}" is not defined — use tileset/define first`,
+      );
+    }
+    if (sprite.tileId >= tileset.tileCount) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `Tile ${sprite.tileId} is outside tileset "${sprite.tilesetId}" (${tileset.tileCount} tiles)`,
+      );
+    }
+  }
+
   private requireTileset(level: LevelSpec): void {
     if (level.tilesetId === undefined) return;
     if (typeof level.tilesetId !== "string" || level.tilesetId.length === 0) {
@@ -1202,6 +1252,23 @@ function validateEntityDefinition(def: EntityDefinition): void {
   }
   if (def.archetypeId !== undefined && (typeof def.archetypeId !== "string" || def.archetypeId.length === 0)) {
     throw new JsonRpcError(RpcErrorCode.InvalidParams, `"archetypeId" must be a non-empty string when present`);
+  }
+  if (def.sprite !== undefined) {
+    if (typeof def.sprite !== "object" || def.sprite === null) {
+      throw new JsonRpcError(RpcErrorCode.InvalidParams, `"sprite" must be an object when present`);
+    }
+    if (typeof def.sprite.tilesetId !== "string" || def.sprite.tilesetId.length === 0) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"sprite.tilesetId" must be a non-empty string`,
+      );
+    }
+    if (!Number.isInteger(def.sprite.tileId) || def.sprite.tileId < 0) {
+      throw new JsonRpcError(
+        RpcErrorCode.InvalidParams,
+        `"sprite.tileId" must be a non-negative integer`,
+      );
+    }
   }
   const seen = new Set<string>();
   for (const field of def.fields) {
