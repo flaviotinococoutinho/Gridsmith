@@ -80,6 +80,16 @@ test("sprite malformado é recusado com a razão do campo", () => {
   );
 });
 
+test("tileset de sprite não pode ser removido enquanto referenciado", () => {
+  const s = store();
+  s.apply({ kind: "entitydef/define", definition: comSprite(12) });
+
+  assert.throws(
+    () => s.apply({ kind: "tileset/remove", tilesetId: "terreno" }),
+    /still used by 1 entity definition/,
+  );
+});
+
 test("o replay define o TILESET antes da definição que o referencia", async () => {
   // sem esta ordem, reabrir um projeto com sprite falharia por ordem: o
   // documento estaria correto e a reidratação o recusaria
