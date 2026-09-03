@@ -29,6 +29,11 @@ public sealed class ActorStore
     private readonly string?[] _archetypeIds;
     private readonly float[] _positionsX;
     private readonly float[] _positionsY;
+    // Arte do ator (documento v6): o par vem da definição de entidade e é o
+    // MESMO atlas dos tilemaps. `-1` = sem arte, e o desenho cai na cor
+    // determinística — a mesma que o canvas do editor usa.
+    private readonly string?[] _spriteTilesetIds;
+    private readonly int[] _spriteTileIds;
     private int _liveCount;
 
     public ActorStore(int maxActors = 256)
@@ -39,13 +44,28 @@ public sealed class ActorStore
         _archetypeIds = new string?[maxActors];
         _positionsX = new float[maxActors];
         _positionsY = new float[maxActors];
+        _spriteTilesetIds = new string?[maxActors];
+        _spriteTileIds = new int[maxActors];
+        Array.Fill(_spriteTileIds, -1);
     }
 
     public int Capacity => _maxActors;
     public int LiveCount => _liveCount;
 
-    /// <summary>Spawna um ator em um slot livre. Ids duplicados são rejeitados.</summary>
-    public ActorHandle Spawn(string entityId, string archetypeId, float x, float y)
+    /// <summary>
+    /// Spawna um ator em um slot livre. Ids duplicados são rejeitados.
+    ///
+    /// O sprite é OPCIONAL e default ausente: entidade sem arte escolhida
+    /// continua desenhada pela cor determinística, e forçar um tile aqui daria
+    /// desenho a quem nunca pediu.
+    /// </summary>
+    public ActorHandle Spawn(
+        string entityId,
+        string archetypeId,
+        float x,
+        float y,
+        string? spriteTilesetId = null,
+        int spriteTileId = -1)
     {
         var free = -1;
         for (var slot = 0; slot < _maxActors; slot++)
@@ -71,9 +91,20 @@ public sealed class ActorStore
         _archetypeIds[free] = archetypeId;
         _positionsX[free] = x;
         _positionsY[free] = y;
+        // sem tileset não há como resolver a região: um tileId solto seria um
+        // índice sem atlas, e o desenho cairia na cor determinística de todo
+        // jeito — normalizar aqui evita que o host precise checar os dois
+        _spriteTilesetIds[free] = spriteTilesetId;
+        _spriteTileIds[free] = string.IsNullOrEmpty(spriteTilesetId) ? -1 : spriteTileId;
         _liveCount++;
         return new ActorHandle(free);
     }
+
+    /// <summary>Atlas do sprite deste ator, ou <c>null</c> quando não tem arte.</summary>
+    public string? SpriteTilesetId(ActorHandle handle) => _spriteTilesetIds[handle.Slot];
+
+    /// <summary>Tile do sprite deste ator; <c>-1</c> = sem arte.</summary>
+    public int SpriteTileId(ActorHandle handle) => _spriteTileIds[handle.Slot];
 
     /// <summary>Libera o slot (reutilizado pelo próximo Spawn).</summary>
     public void Despawn(ActorHandle handle)
@@ -85,6 +116,10 @@ public sealed class ActorStore
 
         _entityIds[handle.Slot] = null;
         _archetypeIds[handle.Slot] = null;
+        // o slot é REUTILIZADO: deixar a arte para trás faria o próximo ator
+        // nascer com o sprite do anterior
+        _spriteTilesetIds[handle.Slot] = null;
+        _spriteTileIds[handle.Slot] = -1;
         _liveCount--;
     }
 
@@ -98,6 +133,10 @@ public sealed class ActorStore
         Array.Clear(_archetypeIds, 0, _archetypeIds.Length);
         Array.Clear(_positionsX, 0, _positionsX.Length);
         Array.Clear(_positionsY, 0, _positionsY.Length);
+        Array.Clear(_spriteTilesetIds, 0, _spriteTilesetIds.Length);
+        // `Array.Clear` zeraria os tiles, e 0 é um tile VÁLIDO: a sessão nova
+        // nasceria com todo slot apontando para o primeiro tile do atlas
+        Array.Fill(_spriteTileIds, -1);
         _liveCount = 0;
     }
 

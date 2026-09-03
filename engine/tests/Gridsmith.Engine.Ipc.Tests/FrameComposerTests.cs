@@ -133,7 +133,57 @@ public class FrameComposerTests
         Assert.Equal(90f, quads[0].X);
         Assert.Equal(190f, quads[0].Y);
         Assert.Equal(FrameLayer.Actor, quads[0].Layer);
-        Assert.Equal(-1, quads[0].TileId); // archetype ainda não carrega sprite (B6)
+        Assert.Equal(-1, quads[0].TileId); // sem sprite escolhido: cor determinística
+    }
+
+    [Fact]
+    public void O_ator_COM_sprite_leva_o_tile_da_definicao_para_o_quad()
+    {
+        // é o que faz o Player aparecer como arte em vez de círculo (B6); o
+        // ESPELHO em frontend/src/core/frameDescription.ts faz o mesmo, e o
+        // gate de paridade compara as duas descrições byte a byte
+        var atores = new ActorStore(maxActors: 4);
+        atores.Spawn("jogador", "player", 100f, 200f, "terreno", spriteTileId: 9);
+        var quads = new FrameQuad[8];
+
+        var composicao = FrameComposer.Compose(
+            new TilemapStore(), TilemapHandle.Invalid, atores,
+            new FrameViewport(100f, 200f, 640f, 480f, 1f), actorSize: 20f, quads);
+
+        Assert.Equal(1, composicao.Written);
+        Assert.Equal(9, quads[0].TileId);
+    }
+
+    [Fact]
+    public void Tile_sem_tileset_NAO_vira_arte_pela_metade()
+    {
+        // um tileId solto seria um índice sem atlas: o host não teria como
+        // resolver a região, e o quad afirmaria uma arte que não existe
+        var atores = new ActorStore(maxActors: 4);
+        atores.Spawn("jogador", "player", 100f, 200f, spriteTilesetId: null, spriteTileId: 9);
+        var quads = new FrameQuad[8];
+
+        FrameComposer.Compose(
+            new TilemapStore(), TilemapHandle.Invalid, atores,
+            new FrameViewport(100f, 200f, 640f, 480f, 1f), actorSize: 20f, quads);
+
+        Assert.Equal(-1, quads[0].TileId);
+    }
+
+    [Fact]
+    public void O_slot_reutilizado_NAO_herda_o_sprite_do_ator_anterior()
+    {
+        var atores = new ActorStore(maxActors: 1);
+        var primeiro = atores.Spawn("a", "player", 0f, 0f, "terreno", spriteTileId: 7);
+        atores.Despawn(primeiro);
+        atores.Spawn("b", "player", 0f, 0f); // mesmo slot, sem sprite
+
+        var quads = new FrameQuad[4];
+        FrameComposer.Compose(
+            new TilemapStore(), TilemapHandle.Invalid, atores,
+            new FrameViewport(0f, 0f, 640f, 480f, 1f), actorSize: 20f, quads);
+
+        Assert.Equal(-1, quads[0].TileId);
     }
 
     [Fact]

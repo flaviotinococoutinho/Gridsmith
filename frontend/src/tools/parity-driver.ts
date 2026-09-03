@@ -62,9 +62,12 @@ const { tiles } = resolveAutoTiles(
 const level: FrameLevelState = { width: WIDTH, height: HEIGHT, tileSize: TILE_SIZE, tiles: [...tiles] };
 
 const actors: FrameActorState[] = [
-  { x: 56, y: 72 }, // centro de célula (ENTITY_ANCHOR = center)
+  // ator COM sprite (documento v6): o tile da definição chega ao quad
+  { x: 56, y: 72, tileId: 9 }, // centro de célula (ENTITY_ANCHOR = center)
+  // ator SEM sprite: continua em -1 e cai na cor determinística — os dois
+  // casos no mesmo cenário, senão o gate passaria cobrindo só um deles
   { x: 100.5, y: 40.25 }, // fração binária exata — âncora desloca o canto
-  { x: 4000, y: 4000 }, // fora do recorte: o culling do ator tem de cortá-lo
+  { x: 4000, y: 4000, tileId: 3 }, // fora do recorte: o culling corta antes da arte
 ];
 
 // recorte que TERMINA no meio de uma célula: exercita a regra da célula
@@ -81,7 +84,16 @@ fs.writeFileSync(
   JSON.stringify(
     {
       level: { width: WIDTH, height: HEIGHT, tileSize: TILE_SIZE, tiles: [...tiles] },
-      actors: actors.map((actor, index) => ({ entityId: `ator-${index}`, x: actor.x, y: actor.y })),
+      actors: actors.map((actor, index) => ({
+        entityId: `ator-${index}`,
+        x: actor.x,
+        y: actor.y,
+        // o cenário carrega o tileset junto: sem ele o store da engine
+        // normaliza o tile para -1, e o gate compararia arte contra ausência
+        ...(actor.tileId === undefined
+          ? {}
+          : { spriteTilesetId: "terreno", spriteTileId: actor.tileId }),
+      })),
       viewport,
       actorSize: ACTOR_SIZE,
     },

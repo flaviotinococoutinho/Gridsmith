@@ -628,7 +628,13 @@ public sealed class EngineService : IDisposable
                 ActorHandle handle;
                 try
                 {
-                    handle = Actors.Spawn(p.EntityId, p.ArchetypeId, p.Position[0], p.Position[1]);
+                    handle = Actors.Spawn(
+                        p.EntityId,
+                        p.ArchetypeId,
+                        p.Position[0],
+                        p.Position[1],
+                        p.SpriteTilesetId,
+                        p.SpriteTileId);
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -1044,7 +1050,14 @@ public sealed class EngineService : IDisposable
 
     public sealed record TilemapInspectParams(string? TilemapId, int[]? Cell);
 
-    public sealed record EntitySpawnParams(string? EntityId, string? ArchetypeId, float[]? Position);
+    public sealed record EntitySpawnParams(
+        string? EntityId,
+        string? ArchetypeId,
+        float[]? Position,
+        // Arte do ator (documento v6). Opcionais: entidade sem sprite escolhido
+        // continua desenhada pela cor determinística.
+        string? SpriteTilesetId = null,
+        int SpriteTileId = -1);
 
     public sealed record EntityInspectParams(string? EntityId);
 }

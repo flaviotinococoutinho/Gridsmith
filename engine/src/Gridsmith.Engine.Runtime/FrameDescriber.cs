@@ -26,7 +26,12 @@ internal static class FrameDescriber
 {
     private sealed record ScenarioLevel(int Width, int Height, int TileSize, int[] Tiles);
 
-    private sealed record ScenarioActor(string EntityId, float X, float Y);
+    private sealed record ScenarioActor(
+        string EntityId,
+        float X,
+        float Y,
+        string? SpriteTilesetId = null,
+        int SpriteTileId = -1);
 
     private sealed record ScenarioViewport(float CenterX, float CenterY, float Width, float Height, float Zoom);
 
@@ -62,7 +67,13 @@ internal static class FrameDescriber
         {
             // spawn em ordem do cenário → slots 0..n-1, a MESMA ordem que o
             // espelho TS usa como `source`
-            actors.Spawn(actor.EntityId, "parity", actor.X, actor.Y);
+            actors.Spawn(
+                actor.EntityId,
+                "parity",
+                actor.X,
+                actor.Y,
+                actor.SpriteTilesetId,
+                actor.SpriteTileId);
         }
 
         var viewport = new FrameViewport(
