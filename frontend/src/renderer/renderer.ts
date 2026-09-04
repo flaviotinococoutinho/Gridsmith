@@ -59,6 +59,8 @@ let lastRuntimeState: ProjectStatusPayload["runtimeState"];
 /** Recentes e templates alimentam a tela inicial; chegam pelo status/IPC. */
 let lastRecents: readonly RecentProject[] = [];
 let lastTemplates: Array<{ id: string; label: string; description: string }> = [];
+/** Sem exemplo instalado a tela inicial não promete o que não pode cumprir. */
+let lastExampleAvailable = false;
 let connected = false;
 /**
  * Estado do histórico canônico (E9). O `historyCursor` é o compare-and-swap:
@@ -318,6 +320,7 @@ function renderView(): void {
       recents: lastRecents,
       templates: lastTemplates,
       connected,
+      exampleAvailable: lastExampleAvailable,
       now: () => Date.now(),
     });
     if (view.visible) {
@@ -355,7 +358,15 @@ function renderView(): void {
             .catch((error: unknown) => showError(error));
         },
         onOpenExample: () => {
-          /* ligado quando o exemplo versionado existir */
+          // o main copia o exemplo versionado e abre a CÓPIA pelo mesmo
+          // caminho canônico; daqui não há nada de especial nele
+          void window.gridsmith
+            .projectCommand("openExample")
+            .then((status) => {
+              dismissError();
+              applyProjectStatus(status);
+            })
+            .catch((error: unknown) => showError(error));
         },
       });
       return;
@@ -810,6 +821,12 @@ async function boot(): Promise<void> {
       lastTemplates = (await window.gridsmith.projectTemplates()).templates;
     } catch {
       // sem templates a tela inicial ainda oferece Novo e Abrir
+    }
+    try {
+      lastExampleAvailable = await window.gridsmith.exampleAvailable();
+    } catch {
+      // sem resposta, o botão não aparece: prometer um exemplo que talvez não
+      // esteja instalado é pior que não oferecê-lo
     }
     applyProjectStatus(await window.gridsmith.projectStatus());
 
