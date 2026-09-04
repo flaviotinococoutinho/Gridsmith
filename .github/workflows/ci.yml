@@ -28,6 +28,11 @@ jobs:
         run: npm run test:project-session
       - name: Teste explícito — paridade de sessão nas três bordas
         run: npm run test:project-session-transports
+      # O exemplo versionado é SERIALIZADO pelo middleware; editá-lo à mão o
+      # faria divergir do gerador em silêncio, e a próxima regeneração
+      # apagaria a edição.
+      - name: Exemplo versionado bate com o gerador
+        run: node ../scripts/make-example-project.mjs --check
 
   frontend:
     name: Frontend (Editor core)
@@ -84,6 +89,10 @@ jobs:
         with:
           node-version: 22
       - run: npm run docs:verify
+      # A arte do exemplo é gerada, não coletada: se o PNG do repositório
+      # deixar de bater com o gerador, ele passou a ter origem desconhecida.
+      - name: Atlas do exemplo bate com o gerador
+        run: node scripts/make-example-atlas.mjs --check
 
   e2e:
     name: Verificação ponta-a-ponta (Fases 1–4 + transports)

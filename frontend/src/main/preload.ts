@@ -65,7 +65,7 @@ export interface GridsmithEditorApi {
    * `templateId` em "new" pula o diálogo de escolha (automação/e2e).
    */
   projectCommand(
-    command: "new" | "open" | "openPath" | "save" | "saveAs" | "close",
+    command: "new" | "open" | "openPath" | "openExample" | "save" | "saveAs" | "close",
     payload?: { filePath?: string; templateId?: string },
   ): Promise<ProjectStatusPayload>;
   projectStatus(): Promise<ProjectStatusPayload>;
@@ -87,6 +87,11 @@ export interface GridsmithEditorApi {
   projectTemplates(): Promise<{
     templates: Array<{ id: string; label: string; description: string }>;
   }>;
+  /**
+   * O exemplo versionado está instalado? A tela inicial só oferece "Abrir
+   * exemplo" quando sim — o botão é derivado desta resposta.
+   */
+  exampleAvailable(): Promise<boolean>;
   onProjectStatus(listener: (status: ProjectStatusPayload) => void): void;
   /** Ações do menu nativo roteadas ao renderer (undo/redo do editor ativo). */
   onMenuAction(listener: (action: "undo" | "redo") => void): void;
@@ -119,6 +124,7 @@ const api: GridsmithEditorApi = {
   redo: (historyCursor?: string) => ipcRenderer.invoke("gridsmith:history-redo", historyCursor),
   readAtlasImage: (imageReference) => ipcRenderer.invoke("gridsmith:atlas-image", imageReference),
   projectTemplates: () => ipcRenderer.invoke("gridsmith:project-templates"),
+  exampleAvailable: () => ipcRenderer.invoke("gridsmith:example-available"),
   onProjectStatus: (listener) => {
     ipcRenderer.on("gridsmith:project-status", (_event, status) => listener(status));
   },

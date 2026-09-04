@@ -204,6 +204,14 @@ O editor começa pelo projeto, não pela conexão a um pipe.
   `app.requestSingleInstanceLock` em `frontend/src/main/appConfig.ts` mata a
   segunda instância e roteia o `argv` para a janela viva
   (`ProjectLaunchRouting.projectPathFromArgs` + `focusExistingProjectWindow`)
+- [x] **Projeto de exemplo versionado** (D5): `examples/plataforma-2d` traz um
+  documento na versão corrente e o atlas ao lado, os dois gerados por script
+  versionado (`scripts/make-example-{atlas,project}.mjs`, com `--check` no CI)
+  e cobertos por `middleware/test/example-project.test.ts`. "Abrir exemplo"
+  **copia** para `Documentos/Gridsmith/` e abre a cópia pelo mesmo `openPath`:
+  o `Ctrl+S` do avaliador nunca alcança o exemplo distribuído, e abrir duas
+  vezes dá dois projetos. A política é núcleo puro
+  (`frontend/src/core/exampleProject.ts`)
 - [ ] Menu "Recentes" nativo — os recentes são rastreados e renderizados na
   tela inicial, mas não há submenu nativo em Arquivo
 
