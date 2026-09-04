@@ -252,7 +252,7 @@ algo que a entrega necessariamente cria ou destrói.
 | ~~D2~~ | ✅ **Entregue (E10).** `workbenchLayout` puro (tamanho + visibilidade por área, clamp por limites, serialização versionada com fail-safe) + alças de arrasto e persistência na casca | — | — |
 | D3 | Razões da governança traduzidas — os perfis já estão em pt-BR; o inglês vem das razões GERADAS pelo governor | mensagens geradas em inglês exibidas em tooltip | F4 (razão como código estável + `vocabulary.ts`) |
 | D4 (parte) | ✅ **A leitura entregue**: a vista resolve a paleta do DOCUMENTO (`core/levelPalette.ts`), com a constante de build só como fallback — swatches, cores, dígitos e rótulos derivam dela, e o atalho é posicional para que um documento que nomeie os valores 5 e 7 continue alcançável por 1 e 2. **Falta a EDIÇÃO**: mudar nome/cor de um significado ainda não tem UI, e é só despachar o `level/palette` que já existe com inverso | nenhum comando de paleta parte da vista: `ausente: dispatch("level/palette" @ frontend/src` — literal ancorado na chamada que a UI de edição obrigatoriamente cria | F7 (a UI de edição) — o comando e a leitura já estão prontos |
-| D5 | Diretório `examples/` versionado e a ação "Abrir exemplo" | `inexistente: examples`; o modelo da tela inicial tem o flag e ninguém o satisfaz | F8 residual |
+| ~~D5~~ | ✅ **Entregue.** `examples/plataforma-2d` traz um documento na versão corrente e o atlas ao lado, os DOIS gerados por script versionado (`--check` no CI impede edição manual silenciosa) e cobertos por teste que falha se o exemplo deixar de abrir, se a imagem sumir ou se o sprite apontar fora do atlas. "Abrir exemplo" **copia** para `Documentos/Gridsmith/` e abre a cópia pelo mesmo `openPath` de sempre: o `Ctrl+S` do avaliador nunca alcança o exemplo distribuído, e abrir duas vezes dá dois projetos | — | — |
 | D6 (parte) | Inspector de entidades: a **leitura** entrou na E10 (seções por tipo de seleção, com governança e razão). **Falta a escrita** — editar um campo tem de virar comando canônico | `entity.identity`/`entity.transform` renderizam; nenhum campo é editável | F7 (campos tipados) |
 | D7 | F2 residual (c): trocar de projeto com trabalho sujo descarta sem diálogo | os ramos `new`/`open` não passam por `requestClose()` | F2 residual |
 | D8 | F3a residual: nenhuma view consome `constraints` — a UI não antecipa teto de luzes/células/atores | o merge existe no governor; nenhuma vista lê o registro (`ausente: constraints @ frontend/src/renderer`) | F3a (parte "consumo") |
@@ -288,6 +288,7 @@ algo que a entrega necessariamente cria ou destrói.
 | T11 | Rigging/FABRIK, Timeline, Máquina de estados e World map: núcleos prontos sem vista | os módulos puros existem; nenhuma vista os monta | P1 da milestone |
 | T12 | Backlog sem início: harness de física, agente revisor de blueprint, regras de terreno por borda (Wang), fixtures de replay como regressão de conteúdo | o AutoTiler menciona Wang só em comentário; o `HookBus` tem a infra de filters sem nenhum lint de domínio registrado | OPPORTUNITIES (P1/P2) |
 | T13 | **Reauditar as tabelas MGT/SEM/INT do `VIABILITY-PLAN.md` §6**: elas são mantidas como estado vivo (há linhas 🟢/🟡), mas várias seguem 🔴 depois de a entrega ter fechado o gap. Só a MGT-5 foi atualizada aqui, porque é a que esta fatia fechou | MGT-1 diz "não existe host MonoGame" e o `Gridsmith.Engine.Host` desenha desde a F1 onda A; MGT-12 diz "o canal engine→editor só transporta ping e log" e a telemetria de frame chega ao diário desde a ADR-023. **A marca de ausência não serve aqui**: o defeito é a PRESENÇA de um 🔴 obsoleto, e o `docs:verify` só reexecuta buscas por ausência | cauda — junto da próxima varredura de docs |
+| T14 | **"Salvar como" não leva os assets do projeto junto**: só o documento é gravado no destino, e a referência do atlas é relativa a ELE — salvar um projeto com arte em outro diretório o deixa sem arte, degradando para a cor determinística sem avisar. Ficou alcançável agora: até a D5 nenhum projeto tinha asset ao lado | `writeDocument(filePath, …)` grava um arquivo só; nada copia `TilesetSpec.image` | F2 residual — junto do menu de recentes |
 
 > **Pendências órfãs** (B13, B14, D1, T8) não pertencem a nenhuma frente nem
 > etapa. São reais e não têm dono no plano — quem as atacar deve criar a
@@ -358,23 +359,25 @@ o projeto porque emite evento. O diferencial nº 1 do produto
 ([`PRODUCT-STRATEGY.md`](PRODUCT-STRATEGY.md) §3) — humano e agente no mesmo
 funil — passou a valer também para a ação mais frequente do editor.
 
-Restam duas frentes, e elas estão em fases DIFERENTES do caminho comercial:
+**A cauda da Fase A fechou.** Os três itens corrigiam a mesma classe de
+defeito — a interface afirmando o que o projeto não diz. A leitura da paleta
+(**D4**) parou de desenhar a paleta de build sobre um documento que declara
+outra; o sprite do ator (**B6**) fez o Player aparecer como arte em vez de
+círculo, nos DOIS desenhos; e o exemplo versionado (**D5**) deu ao avaliador o
+que abrir no primeiro minuto, com atlas e sprite reais — a captura de tela
+passou a ser honesta porque é o produto rodando, não uma maquete.
+
+**A próxima escolha é do dono do repositório, não do plano.** As duas frentes
+abertas não são comparáveis por tamanho: elas compram coisas diferentes, em
+fases diferentes do caminho comercial.
 
 | Frente | O que compra | O que custa |
 |---|---|---|
-| **Cauda da Fase A** | Resta **D5** (`examples/` + "Abrir exemplo"). A leitura da paleta (D4) e o sprite do ator (B6) já saíram | é o último item da fase; sozinho fecha o critério de saída — "a captura de tela é honesta" |
 | **F1 onda B** — preview embutido | fecha B3 e é o último passo antes do empacotamento (P0.9): a janela do host composta no painel, com run/pause/stop e overlays consumindo a telemetria da fatia (iv) | é a parte **frágil por plataforma** — compor janela nativa dentro do Electron diverge em Linux, Windows e macOS, e a ADR-022 mantém `preview.embedded` desabilitada até ela existir |
+| **Fila GTM** ([`PRODUCT-STRATEGY.md`](PRODUCT-STRATEGY.md)) | transforma o que já existe em produto avaliável: a demo agente-nativa gravável, licenciamento, marca e domínio | não move engenharia; e as pendências de marca/licença são do dono, não do código |
 
-**Recomendação: fechar a cauda da Fase A com D5.** A razão é de risco, não de
-tamanho: ele é barato e fecha uma fase inteira, enquanto a onda B é a única
-frente cuja dificuldade é de plataforma. Os outros dois itens da cauda saíram e
-os dois corrigiam a mesma classe de defeito — a interface afirmando o que o
-projeto não diz. A leitura da paleta (**D4**) parou de desenhar a paleta de
-build sobre um documento que declara outra; o sprite do ator (**B6**) fez o
-Player aparecer como arte em vez de círculo, nos DOIS desenhos. Falta **D5**,
-que dá ao avaliador algo para abrir no primeiro minuto. A rota de conceitos
-**F3a** e as etapas **E5**/**E6** seguem liberadas para quem quiser
-paralelismo.
+A rota de conceitos **F3a** e as etapas **E5**/**E6** seguem liberadas para
+quem quiser paralelismo em qualquer um dos cenários.
 
 ## 9. Receitas executáveis
 
