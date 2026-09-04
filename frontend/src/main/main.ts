@@ -64,6 +64,7 @@ import {
   defaultProjectFileName,
   projectNameFromPath,
 } from "../core/projectExtensions.js";
+import { pickExampleDocument, planExampleCopyName } from "../core/exampleProject.js";
 
 // Nome do app EXPLÍCITO, e não derivado do `name` do package.json: é ele que
 // define `app.getPath("userData")`, onde moram os recentes e o estado da
@@ -76,6 +77,16 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 // `.p7m.json` já gravado ficaria inselecionável no diálogo Abrir — não há
 // entrada "Todos os arquivos" para escapar
 const PROJECT_FILTER = [{ name: "Projeto Gridsmith", extensions: [...PROJECT_EXTENSIONS] }];
+
+/**
+ * Exemplo versionado (D5). Mora ao lado dos três pacotes, pela MESMA
+ * convenção de raiz que o supervisor usa para achar a engine compilada.
+ * Ausente, a tela inicial simplesmente não oferece o botão — o modelo já
+ * decide isso pelo `exampleAvailable`, e prometer um exemplo que não está
+ * instalado seria o falso affordance que o gate existe para evitar.
+ */
+const EXAMPLE_DIRECTORY = path.join(dirname, "../../..", "examples/plataforma-2d");
+const EXAMPLE_BASE_NAME = "plataforma-2d";
 
 function pipeNameFromArgs(): string {
   const index = process.argv.indexOf("--pipe");
@@ -509,8 +520,48 @@ void app.whenReady().then(async () => {
     return (["restore", "copy", "ignore", "cancel"] as const)[response] ?? "cancel";
   };
 
+  /**
+   * Copia o exemplo versionado para um lugar GRAVÁVEL e devolve o caminho do
+   * documento copiado.
+   *
+   * Abrir o arquivo original ligaria o `Ctrl+S` do usuário ao exemplo
+   * distribuído: a primeira edição destruiria a cópia de referência (e numa
+   * instalação empacotada nem gravável ela é). Copiando, o exemplo vira um
+   * projeto do usuário como qualquer outro — inclusive nos recentes.
+   */
+  const materializeExample = async (): Promise<string> => {
+    const entries = await fs.promises.readdir(EXAMPLE_DIRECTORY);
+    const documentName = pickExampleDocument(entries);
+    if (!documentName) {
+      throw new Error(
+        "O exemplo instalado não tem um documento de projeto único; reinstale o Gridsmith.",
+      );
+    }
+    const workspace = path.join(app.getPath("documents"), "Gridsmith");
+    await fs.promises.mkdir(workspace, { recursive: true });
+    const directoryName = planExampleCopyName(
+      EXAMPLE_BASE_NAME,
+      await fs.promises.readdir(workspace),
+    );
+    const destination = path.join(workspace, directoryName);
+    // recursivo de propósito: o `assets/` vai junto. Sem a imagem ao lado, o
+    // atlas cairia na cor determinística e o exemplo perderia exatamente a
+    // arte que ele existe para mostrar.
+    //
+    // `force: false` é OBRIGATÓRIO junto de `errorOnExist`: o padrão de `cp` é
+    // sobrescrever, e sozinho o `errorOnExist` é ignorado. Sem ele, um destino
+    // que aparecesse entre a listagem e a cópia levaria as edições do usuário
+    // embora em silêncio — exatamente o que copiar existe para evitar.
+    await fs.promises.cp(EXAMPLE_DIRECTORY, destination, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+    });
+    return path.join(destination, documentName);
+  };
+
   const projectCommand = async (
-    command: "new" | "open" | "openPath" | "save" | "saveAs" | "close",
+    command: "new" | "open" | "openPath" | "openExample" | "save" | "saveAs" | "close",
     payload?: { filePath?: string; templateId?: string },
   ): Promise<ProjectStatusPayload> => {
     switch (command) {
@@ -550,8 +601,14 @@ void app.whenReady().then(async () => {
         break;
       }
       case "open":
-      case "openPath": {
+      case "openPath":
+      case "openExample": {
         let filePath = payload?.filePath;
+        // O exemplo entra pela MESMA porta: copiar e seguir por `openPath`
+        // mantém recuperação, recentes, vínculo com arquivo e reidratação
+        // idênticos aos de qualquer projeto. Um atalho próprio de abertura
+        // criaria um segundo caminho para testar — e para regredir.
+        if (command === "openExample") filePath = await materializeExample();
         if (command === "open") {
           const picked = await dialog.showOpenDialog(window, {
             title: "Abrir projeto Gridsmith",
@@ -685,6 +742,9 @@ void app.whenReady().then(async () => {
   ipcMain.handle("gridsmith:project-command", (_event, command, payload) =>
     projectCommand(command, payload),
   );
+  // A tela inicial só oferece "Abrir exemplo" quando o exemplo está de fato
+  // instalado: o botão é derivado desta resposta, não de uma constante.
+  ipcMain.handle("gridsmith:example-available", () => fs.existsSync(EXAMPLE_DIRECTORY));
 
   // A partir daqui o ciclo de projeto existe: liga o roteador e drena o que
   // chegou antes (argumento de inicialização ou segunda instância precoce).

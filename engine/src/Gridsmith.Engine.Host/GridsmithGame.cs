@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Gridsmith.Engine.Core.Actors;
 using Gridsmith.Engine.Core.Level;
 using Gridsmith.Engine.Core.Rendering;
 using Gridsmith.Engine.Runtime;
@@ -17,11 +18,11 @@ namespace Gridsmith.Engine.Host;
 /// existe a tradução de quads em chamadas de desenho.</para>
 ///
 /// <para><b>Onda A desenha com <see cref="SpriteBatch"/></b>, cujo efeito é
-/// embutido no MonoGame e não passa pelo MGCB. Não é degradação condicional —
-/// é o único caminho desta onda, porque ainda não existe atlas: `tileset/define`
-/// e o <c>DeferredRenderer</c> entram na onda que traz a arte. Um host que
-/// caísse para cor chapada só QUANDO o atlas faltasse criaria dois caminhos, e
-/// o teste de paridade passaria a comparar o degradado.</para>
+/// embutido no MonoGame e não passa pelo MGCB; o <c>DeferredRenderer</c> entra
+/// na onda que traz iluminação. O atlas JÁ existe (`tileset/define`): o tilemap
+/// amostra o do nível e cada ator o da sua definição. A cor chapada não é um
+/// caminho alternativo de desenho — é o que os DOIS lados mostram quando a
+/// tabela não cobre o tile, e o editor cai nela pelas mesmas condições.</para>
 /// </summary>
 public sealed class GridsmithGame : Game
 {
@@ -159,6 +160,11 @@ public sealed class GridsmithGame : Game
                     new Rectangle(sourceX, sourceY, atlasTable.TileSize, atlasTable.TileSize),
                     Color.White);
             }
+            else if (quad.Layer == FrameLayer.Actor
+                && TryActorSprite(in quad, out var actorTexture, out var actorSource))
+            {
+                _batch.Draw(actorTexture, destination, actorSource, Color.White);
+            }
             else
             {
                 _batch.Draw(_pixel, destination, ColorOf(in quad));
@@ -213,8 +219,53 @@ public sealed class GridsmithGame : Game
     }
 
     /// <summary>
-    /// Cor provisória por <c>tileId</c>, determinística. Some quando o atlas
-    /// entrar: aí a cor vira amostragem de textura, nos dois lados do fio.
+    /// Atlas do ator do quad, resolvido pelo <c>Source</c> — que é o SLOT do
+    /// <see cref="Gridsmith.Engine.Core.Actors.ActorStore"/>. O quad não
+    /// carrega o id do tileset de propósito: é um struct que existe para não
+    /// alocar, e enfiar uma string nele trocaria a política Zero-GC por
+    /// conveniência. O slot é a chave — e por ele cada ator pode vir de um
+    /// atlas DIFERENTE do tilemap desenhado.
+    ///
+    /// <para>Qualquer degradação — sem sprite, tileset removido, imagem
+    /// ausente, id fora da faixa — devolve <c>false</c>, e o ator cai na mesma
+    /// cor lisa que o canvas do editor usa (<c>core/entitySprite.ts</c>
+    /// decide igual, com os mesmos dados). Os dois lados degradam JUNTOS.</para>
+    /// </summary>
+    private bool TryActorSprite(in FrameQuad quad, out Texture2D texture, out Rectangle source)
+    {
+        texture = null!;
+        source = default;
+
+        // `-1` é "sem arte" — o valor que o store guarda para o ator sem
+        // sprite e para o tile que veio sem tileset
+        if (quad.TileId < 0)
+        {
+            return false;
+        }
+
+        var handle = new ActorHandle(quad.Source);
+        if (_service.Actors.SpriteTilesetId(handle) is not { Length: > 0 } spriteTilesetId
+            || !_service.Tilesets.TryGet(spriteTilesetId, out var table))
+        {
+            return false;
+        }
+
+        var spriteTexture = TextureFor(table.Image);
+        if (spriteTexture is null || !table.TryRegion(quad.TileId, out var sourceX, out var sourceY))
+        {
+            return false;
+        }
+
+        texture = spriteTexture;
+        source = new Rectangle(sourceX, sourceY, table.TileSize, table.TileSize);
+        return true;
+    }
+
+    /// <summary>
+    /// Cor lisa do quad que o atlas não cobre. Para o tilemap é um hash
+    /// determinístico do <c>tileId</c>; para o ator é uma cor única, a MESMA
+    /// do marcador do editor — distinguir atores por hash faria os dois lados
+    /// inventarem identidade visual justo no caminho degradado.
     /// </summary>
     private static Color ColorOf(in FrameQuad quad)
     {

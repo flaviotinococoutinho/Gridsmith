@@ -26,6 +26,11 @@ import {
 } from "../core/levelEditorTools.js";
 import { LEVEL_PALETTE, TILE_COLORS, defaultLevelRules } from "../core/levelPresets.js";
 import { fallbackTileColor, tileRegion, type TilesetTable } from "../core/tilesetAtlas.js";
+import {
+  requiredTilesetIds,
+  resolveEntityArt,
+  type EntitySpriteRef,
+} from "../core/entitySprite.js";
 import { presentError } from "../core/errorCatalog.js";
 import { projectionLabel } from "../core/vocabulary.js";
 import {
@@ -133,11 +138,20 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     entityDefId: string;
     position: [number, number];
   }
+  /** Definição projetada: o `sprite` é o que diz QUAL arte o ator desenha. */
+  interface EntityDefView {
+    entityDefId: string;
+    archetypeId?: string;
+    sprite?: EntitySpriteRef;
+  }
   // idem: default de projeto vazio, substituído pela definição do projeto
-  let entityDef: { entityDefId: string; archetypeId?: string } = {
+  let entityDef: EntityDefView = {
     entityDefId: "jogador",
     archetypeId: "player",
   };
+  // TODAS as definições, por id: o marcador precisa da arte da SUA definição,
+  // não da que o editor escolheu para colocar
+  const entityDefsById = new Map<string, EntityDefView>();
   const entities = new Map<string, EntityMarker>();
   let entityDefEnsured = false;
   let draggingEntity: EntityMarker | undefined;
@@ -246,34 +260,48 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   // "Pinte significado, derive arte": preview usa o MESMO resolvedor da projeção
   let artPreview = false;
   let previewTiles: Int32Array | undefined;
-  // Atlas do nível aberto (documento v5). `atlasImage === null` registra que a
-  // carga JÁ falhou — a MESMA semântica do cache negativo do host: sem isso o
-  // canvas repediria a imagem por IPC a cada repaint.
-  let tilesetTable: TilesetTable | undefined;
-  let atlasImage: HTMLImageElement | null | undefined;
+  // Atlas CARREGADOS, por tilesetId. O nível desenha o seu (documento v5), mas
+  // cada sprite de entidade (documento v6) pode vir de outro: um cache só do
+  // nível faria o marcador degradar por falta de CARGA, e não por falta de
+  // arte. `image === null` registra que a carga JÁ falhou — a MESMA semântica
+  // do cache negativo do host: sem isso o canvas repediria a imagem por IPC a
+  // cada repaint.
+  interface AtlasEntry {
+    readonly table: TilesetTable;
+    image?: HTMLImageElement | null;
+  }
+  const atlases = new Map<string, AtlasEntry>();
+  let levelTilesetId: string | undefined;
+  const atlasOf = (tilesetId: string): AtlasEntry | undefined => atlases.get(tilesetId);
 
-  function loadAtlas(table: TilesetTable | undefined): void {
-    tilesetTable = table;
-    atlasImage = undefined;
-    if (!table) return;
+  function ensureAtlas(table: TilesetTable): void {
+    const known = atlases.get(table.tilesetId);
+    if (known && known.table.image === table.image) return; // já pedida
+    const entry: AtlasEntry = { table };
+    atlases.set(table.tilesetId, entry);
     void window.gridsmith.readAtlasImage(table.image).then((dataUrl) => {
-      if (tilesetTable?.tilesetId !== table.tilesetId) return; // trocou no meio
+      if (atlases.get(table.tilesetId) !== entry) return; // trocou no meio
       if (!dataUrl) {
-        atlasImage = null; // recusado/ausente: fallback determinístico CONJUNTO
+        entry.image = null; // recusado/ausente: fallback determinístico CONJUNTO
         repaint();
         return;
       }
       const image = new Image();
-      image.onload = () => {
-        atlasImage = image;
+      const settle = (loaded: HTMLImageElement | null): void => {
+        if (atlases.get(table.tilesetId) !== entry) return;
+        entry.image = loaded;
         repaint();
       };
-      image.onerror = () => {
-        atlasImage = null;
-        repaint();
-      };
+      image.onload = () => settle(image);
+      image.onerror = () => settle(null);
       image.src = dataUrl;
     });
+  }
+
+  /** Atlas do NÍVEL: sem tabela o preview volta a TILE_COLORS. */
+  function loadAtlas(table: TilesetTable | undefined): void {
+    levelTilesetId = table?.tilesetId;
+    if (table) ensureAtlas(table);
   }
   let previewTimer: ReturnType<typeof setTimeout> | undefined;
   const previewBtn = addButton(
@@ -347,6 +375,8 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
     const range = viewport.visibleCells(tileSize, doc.width, doc.height);
     const zoom = viewport.current.zoom;
     const gap = zoom > 4 ? 1 : 0;
+    // resolvido UMA vez por frame, como o host faz com a tabela do mapa
+    const levelAtlas = levelTilesetId === undefined ? undefined : atlases.get(levelTilesetId);
 
     for (let y = range.minY; y <= range.maxY; y++) {
       for (let x = range.minX; x <= range.maxX; x++) {
@@ -361,11 +391,11 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
             // o MESMO hash determinístico do host: os dois lados degradam
             // JUNTOS, nunca um fingindo o que o outro não mostra. TILE_COLORS
             // sobrevive apenas como preview de nível SEM tileset.
-            if (tilesetTable) {
-              const region = atlasImage ? tileRegion(tilesetTable, tileId) : undefined;
-              if (atlasImage && region) {
+            if (levelAtlas) {
+              const region = levelAtlas.image ? tileRegion(levelAtlas.table, tileId) : undefined;
+              if (levelAtlas.image && region) {
                 context.drawImage(
-                  atlasImage,
+                  levelAtlas.image,
                   region.x,
                   region.y,
                   region.width,
@@ -403,11 +433,36 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
       context.globalAlpha = 1;
     }
 
-    // marcadores de entidade (círculo com inicial; anel na seleção)
+    // Atores: o SPRITE da definição (documento v6) quando há arte, o marcador
+    // redondo quando não há. A escolha é a MESMA do host — que amostra o atlas
+    // do ator pelo slot do quad e cai na cor lisa em qualquer degradação —, e
+    // a cor do marcador é a mesma cor lisa (`ColorOf` do Actor): os dois lados
+    // mostram a mesma coisa quando a arte falta. O quadrado tem o lado do
+    // diâmetro do marcador, então o hit-test não muda com a arte.
     const selected = selectedEntityId();
     for (const marker of entities.values()) {
       const screen = viewport.worldToScreen(marker.position[0], marker.position[1]);
       const radius = Math.max(5, tileSize * 0.45 * zoom);
+      const art = resolveEntityArt(entityDefsById.get(marker.entityDefId)?.sprite, atlasOf);
+      if (art.kind === "tile") {
+        context.drawImage(
+          art.image,
+          art.region.x,
+          art.region.y,
+          art.region.width,
+          art.region.height,
+          screen.x - radius,
+          screen.y - radius,
+          radius * 2,
+          radius * 2,
+        );
+        if (marker.entityId === selected) {
+          context.lineWidth = 2;
+          context.strokeStyle = "#ffffff";
+          context.strokeRect(screen.x - radius, screen.y - radius, radius * 2, radius * 2);
+        }
+        continue;
+      }
       context.beginPath();
       context.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
       context.fillStyle = "#3aa0f0";
@@ -842,6 +897,7 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
   // Hidratação: nível e entidades já publicados (projeto reaberto) voltam
   // para o canvas
   void (async () => {
+    let openLevelTilesetId: string | undefined;
     try {
       const result = (await window.gridsmith.query("levels")) as { levels?: HydratedLevel[] };
       const existing = pickLevel(result.levels ?? [], ctx.levelId);
@@ -863,36 +919,59 @@ export function mountLevelEditor(ctx: LevelEditorContext): void {
         viewport.fit(doc.width, doc.height, tileSize);
         onEdited();
         status.textContent = "Nível carregado do projeto.";
-
-        // o atlas do nível vem da MESMA consulta canônica que o agente usa;
-        // sem tilesetId (ou sem tabela) o preview continua em TILE_COLORS
         if (typeof existing.tilesetId === "string" && existing.tilesetId.length > 0) {
-          const atlas = (await window.gridsmith.query("tilesets")) as {
-            tilesets?: TilesetTable[];
-          };
-          loadAtlas(atlas.tilesets?.find((t) => t.tilesetId === existing.tilesetId));
+          openLevelTilesetId = existing.tilesetId;
         }
       }
 
-      const placed = (await window.gridsmith.query("entities")) as {
-        entities?: Array<{ entityId: string; entityDefId: string; position: [number, number] }>;
-      };
-      for (const entity of placed.entities ?? []) {
-        entities.set(entity.entityId, {
-          entityId: entity.entityId,
-          entityDefId: entity.entityDefId,
-          position: [...entity.position],
-        });
+      // A camada de entidades hidrata no PRÓPRIO try: o atlas vem depois dela
+      // (precisa saber quais sprites existem), e sem esta separação uma falha
+      // aqui deixaria o NÍVEL sem arte — degradação por acidente de ordem, que
+      // é justamente o que o host não acompanharia.
+      try {
+        const placed = (await window.gridsmith.query("entities")) as {
+          entities?: Array<{ entityId: string; entityDefId: string; position: [number, number] }>;
+        };
+        for (const entity of placed.entities ?? []) {
+          entities.set(entity.entityId, {
+            entityId: entity.entityId,
+            entityDefId: entity.entityDefId,
+            position: [...entity.position],
+          });
+        }
+        const defs = (await window.gridsmith.query("entityDefs")) as {
+          entityDefs?: EntityDefView[];
+        };
+        for (const definition of defs.entityDefs ?? []) {
+          entityDefsById.set(definition.entityDefId, definition);
+        }
+        const chosen = pickEntityDef(defs.entityDefs ?? []);
+        if (chosen) {
+          // usa a definição QUE O PROJETO TEM: criar uma paralela produziria
+          // entidades sem archetypeId, que a projeção recusa com razão
+          entityDef = chosen;
+          entityDefEnsured = true;
+        }
+      } catch {
+        // sem entidades: o nível ainda desenha, e com o atlas dele
       }
-      const defs = (await window.gridsmith.query("entityDefs")) as {
-        entityDefs?: Array<{ entityDefId: string; archetypeId?: string }>;
-      };
-      const chosen = pickEntityDef(defs.entityDefs ?? []);
-      if (chosen) {
-        // usa a definição QUE O PROJETO TEM: criar uma paralela produziria
-        // entidades sem archetypeId, que a projeção recusa com razão
-        entityDef = chosen;
-        entityDefEnsured = true;
+
+      // Os atlas vêm da MESMA consulta canônica que o agente usa, e numa
+      // consulta SÓ: o do nível e o de cada sprite de definição. Pedir os
+      // tilesets antes das definições custaria uma segunda ida ao gateway
+      // para descobrir a arte dos atores.
+      const needed = requiredTilesetIds(openLevelTilesetId, entityDefsById.values());
+      if (needed.length > 0) {
+        const atlas = (await window.gridsmith.query("tilesets")) as {
+          tilesets?: TilesetTable[];
+        };
+        const tables = new Map((atlas.tilesets ?? []).map((table) => [table.tilesetId, table]));
+        // sem tilesetId (ou sem tabela) o preview do nível continua em TILE_COLORS
+        loadAtlas(openLevelTilesetId === undefined ? undefined : tables.get(openLevelTilesetId));
+        for (const tilesetId of needed) {
+          const table = tables.get(tilesetId);
+          if (table) ensureAtlas(table);
+        }
       }
       // a seleção pode ter sobrevivido a uma remoção vinda de outra borda
       workbench.selection.retain((id) => entities.has(id));
